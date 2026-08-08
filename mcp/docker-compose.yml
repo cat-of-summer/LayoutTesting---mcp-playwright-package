@@ -1,0 +1,16 @@
+include:
+  - path: services/nginx/docker-compose.yml
+    project_directory: .
+    env_file: .env
+  - path: services/playwright/docker-compose.yml
+    project_directory: .
+    env_file: .env
+
+services:
+  nginx:
+    environment:
+      - NGINX_CONF=${NGINX_CONF:-playwright}
+      - DIST_PATH=${DIST_PATH:-artifacts}
+      - MCP_PORT=${MCP_PORT:-8931}
+    depends_on:
+      - playwright

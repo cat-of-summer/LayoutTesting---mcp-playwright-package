@@ -1,0 +1,22 @@
+ARG PLAYWRIGHT_VERSION=v1.62.1-noble
+
+FROM mcr.microsoft.com/playwright:${PLAYWRIGHT_VERSION}
+
+ARG PLAYWRIGHT_APT_PACKAGES
+
+
+RUN if [ -n "$PLAYWRIGHT_APT_PACKAGES" ]; then \
+      apt-get update \
+      && apt-get install -y --no-install-recommends ${PLAYWRIGHT_APT_PACKAGES} \
+      && rm -rf /var/lib/apt/lists/*; \
+    fi
+
+ENV TZ=UTC \
+    LANG=C.UTF-8 \
+    LC_ALL=C.UTF-8
+
+ARG PLAYWRIGHT_ENTRYPOINT=services/playwright/entrypoint.playwright.sh
+COPY ${PLAYWRIGHT_ENTRYPOINT} /usr/local/bin/entrypoint.sh
+RUN sed -i 's/\r$//' /usr/local/bin/entrypoint.sh && chmod +x /usr/local/bin/entrypoint.sh
+
+ENTRYPOINT ["/usr/local/bin/entrypoint.sh"]

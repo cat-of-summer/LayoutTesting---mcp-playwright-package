@@ -1,0 +1,6 @@
+.env
+docker-compose.override.yml
+data/node_modules/
+data/dist/
+data/artifacts/*
+!data/artifacts/.gitkeep

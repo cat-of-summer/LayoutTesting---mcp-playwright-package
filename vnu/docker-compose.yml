@@ -1,0 +1,39 @@
+services:
+  vnu:
+    image: ghcr.io/validator/validator:${VNU_VERSION}
+    hostname: vnu${INSTANCE}
+    container_name: vnu${INSTANCE}
+    restart: unless-stopped
+    ports:
+      - "${EXTERNAL_ACCESS}"
+    environment:
+      - CONNECT_TIMEOUT_SECONDS=${VNU_CONNECT_TIMEOUT:-5}
+      - SOCKET_TIMEOUT_SECONDS=${VNU_SOCKET_TIMEOUT:-5}
+    networks:
+      - network
+
+    healthcheck:
+      test: ["CMD-SHELL", "bash -c '</dev/tcp/localhost/8888' 2>/dev/null || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
+
+    labels:
+      - "traefik.enable=${TRAEFIK_ENABLE}"
+      - "traefik.http.routers.vnu${INSTANCE}.rule=Host(`${TRAEFIK_DOMAIN}`)"
+      - "traefik.http.routers.vnu${INSTANCE}.entrypoints=${TRAEFIK_ENTRYPOINT}"
+      - "traefik.http.routers.vnu${INSTANCE}.priority=100"
+      - "traefik.http.routers.vnu${INSTANCE}.service=vnu${INSTANCE}"
+      - "traefik.http.services.vnu${INSTANCE}.loadbalancer.server.port=8888"
+      - "traefik.http.routers.vnu-redirect${INSTANCE}.rule=Host(`${TRAEFIK_DOMAIN}`)"
+      - "traefik.http.routers.vnu-redirect${INSTANCE}.entrypoints=web"
+      - "traefik.http.routers.vnu-redirect${INSTANCE}.priority=10"
+      - "traefik.http.routers.vnu-redirect${INSTANCE}.middlewares=redir-vnu${INSTANCE}@docker"
+      - "traefik.http.middlewares.redir-vnu${INSTANCE}.redirectscheme.scheme=https"
+      - "traefik.http.middlewares.redir-vnu${INSTANCE}.redirectscheme.permanent=true"
+
+networks:
+  network:
+    external: true
+    name: ${NETWORK}

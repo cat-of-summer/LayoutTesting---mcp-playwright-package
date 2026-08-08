@@ -1,0 +1,42 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Фикстура: страница без дефектов</title>
+<style>
+  *, *::before, *::after { box-sizing: border-box; }
+  body { margin: 0; font: 16px/1.6 system-ui, sans-serif; color: #16181d; background: #fff; }
+  main { max-width: 720px; margin: 0 auto; padding: 24px 16px; }
+  h1 { font-size: 24px; margin: 0 0 12px; }
+  p { margin: 0 0 16px; }
+  .actions { display: flex; gap: 12px; flex-wrap: wrap; }
+  .btn { display: inline-flex; align-items: center; justify-content: center;
+         min-width: 120px; min-height: 44px; padding: 0 16px; border: 0; border-radius: 8px;
+         background: #1a4fd6; color: #fff; font-size: 15px; cursor: pointer; text-decoration: none; }
+  .field { display: block; margin-bottom: 6px; font-weight: 600; }
+  input { min-height: 44px; padding: 0 12px; font-size: 15px; border: 1px solid #9aa2b1; border-radius: 8px; width: 100%; }
+  img { max-width: 100%; height: auto; }
+</style>
+</head>
+<body>
+<main>
+  <h1>Контрольная страница стенда</h1>
+  <p>Эта страница не содержит намеренных дефектов. Если проверка находит здесь проблему,
+     значит эвристика ложно срабатывает — а не страница сломана.</p>
+
+  <img src="data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHdpZHRoPSI2ODAiIGhlaWdodD0iMjAwIj48cmVjdCB3aWR0aD0iNjgwIiBoZWlnaHQ9IjIwMCIgZmlsbD0iI2RmZThmZiIvPjwvc3ZnPg=="
+       width="680" height="200" alt="Декоративная заливка">
+
+  <p>
+    <label class="field" for="email">Электронная почта</label>
+    <input id="email" type="email" name="email" placeholder="name@example.com">
+  </p>
+
+  <div class="actions">
+    <button class="btn" type="button">Сохранить</button>
+    <a class="btn" href="#top">Наверх</a>
+  </div>
+</main>
+</body>
+</html>
