@@ -97,6 +97,8 @@ const HELP = `Стенд тестирования вёрстки — CLI
   --dark   --rtl   --forced-colors    --zoom 200   --text-zoom 200   --pseudo
   --dpr 2  --freeze-time              --full=false  (по умолчанию снимок всей страницы)
   --mask ".ads,.clock"                закрасить нестабильные зоны
+  --wait-until domcontentloaded       чего ждать при переходе (load по умолчанию)
+  --timeout 60000                     таймаут навигации, мс
 
 Оси матрицы (списки через запятую):
   --browsers  --viewports  --schemes light,dark  --rtl-axis true,false
@@ -153,6 +155,8 @@ async function main() {
         name: flags.name || 'page',
         mask: list(flags.mask) || [],
         fullPage: flags.full !== 'false',
+        waitUntil: flags['wait-until'] || 'load',
+        timeout: flags.timeout ? Number(flags.timeout) : undefined,
         updateBaseline: bool(flags.update),
       });
       console.log(`Прогон ${report.runId} · ${report.profileKey}`);
@@ -174,6 +178,8 @@ async function main() {
         name: flags.name,
         mask: list(flags.mask) || [],
         fullPage: flags.full !== 'false',
+        waitUntil: flags['wait-until'] || 'load',
+        timeout: flags.timeout ? Number(flags.timeout) : undefined,
         updateBaseline: bool(flags.update),
         threshold: flags.threshold ? Number(flags.threshold) : undefined,
       });
@@ -288,5 +294,7 @@ try {
   console.error(`Ошибка: ${err.message}`);
   process.exitCode = 1;
 } finally {
-  await closeAll();
+  // Браузер может не отдать все хендлы сразу; ждём его, но не бесконечно.
+  await Promise.race([closeAll(), new Promise((r) => setTimeout(r, 10000))]);
+  process.exit(process.exitCode ?? 0);
 }

@@ -38,9 +38,26 @@ else
 fi
 
 # Свои bin-скрипты проекта — в PATH, чтобы `docker compose exec` вызывал их по имени.
-if grep -q '"bin"' package.json 2>/dev/null; then
-  npm link >/dev/null 2>&1 || echo "[playwright] npm link не удался (продолжаю)"
-fi
+# Кладём обёртку в файловую систему контейнера, а не симлинк на смонтированный файл:
+# правка исходника из Windows или IDE сбрасывает бит исполнения, и симлинк умирает.
+node -e '
+  const fs = require("fs"), path = require("path");
+  const pkg = JSON.parse(fs.readFileSync("package.json", "utf8"));
+  const bin = typeof pkg.bin === "string" ? { [pkg.name]: pkg.bin } : (pkg.bin || {});
+  for (const [name, file] of Object.entries(bin)) {
+    const abs = path.resolve(file);
+    if (!fs.existsSync(abs)) continue;
+    const wrapper = "/usr/local/bin/" + name;
+    try {
+      fs.rmSync(wrapper, { force: true });
+      fs.writeFileSync(wrapper, "#!/bin/sh\nexec node " + JSON.stringify(abs) + " \"$@\"\n");
+      fs.chmodSync(wrapper, 0o755);
+      console.log("[playwright] команда " + name + " готова");
+    } catch (e) {
+      console.log("[playwright] не удалось создать команду " + name + ": " + e.message);
+    }
+  }
+' 2>/dev/null || true
 
 case "$MODE" in
   test)

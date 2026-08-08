@@ -421,11 +421,16 @@ export async function createServer() {
         mask: z.array(z.string()).optional(),
         fullPage: z.boolean().optional(),
         updateBaseline: z.boolean().optional(),
+        waitUntil: z
+          .enum(['load', 'domcontentloaded', 'networkidle', 'commit'])
+          .optional()
+          .describe('Чего ждать при переходе. Для тяжёлых боевых сайтов — domcontentloaded'),
+        timeout: z.number().optional().describe('Таймаут навигации, мс'),
         ...profileSchema,
       },
     },
-    async ({ url, checks, name = 'page', mask, fullPage, updateBaseline, ...profile }) => {
-      const report = await runAudit({ url, profile, checks, name, mask, fullPage, updateBaseline });
+    async ({ url, checks, name = 'page', mask, fullPage, updateBaseline, waitUntil, timeout, ...profile }) => {
+      const report = await runAudit({ url, profile, checks, name, mask, fullPage, updateBaseline, waitUntil, timeout });
       return json({
         runId: report.runId,
         profileKey: report.profileKey,

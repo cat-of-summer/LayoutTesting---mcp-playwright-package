@@ -1,0 +1,344 @@
+# Стенд тестирования вёрстки
+
+Проверяет сайты браузером: снимает скриншоты, находит поехавшую вёрстку, битые картинки,
+проблемы доступности и метрики. Работает как MCP-сервер — ИИ-агент пользуется им сам, — и как
+обычная команда в терминале.
+
+---
+
+## Установка
+
+Нужен Docker. Проверьте, что демон запущен:
+
+```sh
+docker info
+```
+
+### 1. Общая сеть и роутер
+
+Стенд живёт в сети `network` вместе с тестируемыми проектами. Если вы уже пользуетесь
+[docker_toolkit](https://github.com/cat-of-summer/docker_toolkit), они подняты — пропустите шаг.
+
+```sh
+cd network  && cp .env.example .env && docker compose up -d
+cd ../traefik && cp .env.example .env && docker compose up -d
+```
+
+Проверка: `docker ps` показывает `network_handler` и `traefik`.
+
+### 2. Валидатор разметки
+
+```sh
+cd ../vnu && cp .env.example .env && docker compose up -d
+```
+
+### 3. Сам стенд
+
+```sh
+cd ../mcp && cp .env.example .env && docker compose up -d --build
+```
+
+Первый запуск идёт несколько минут: качается образ с браузерами и ставятся зависимости.
+Следите за прогрессом:
+
+```sh
+docker compose logs -f playwright
+```
+
+Готово, когда в логе появилось `команда lt готова` и `streamable http на 0.0.0.0:8931/mcp`.
+
+### 4. Проверка
+
+```sh
+curl http://127.0.0.1:8089/health
+docker compose exec playwright lt audit --url http://nginx_layout/fixtures/broken.html --checks all
+```
+
+Второй командой стенд проверяет собственную тестовую страницу, в которую намеренно заложены
+дефекты. Он должен найти их все — это и есть проверка, что установка удалась.
+
+---
+
+## Подключение к ИИ-агенту
+
+### Claude Code
+
+```sh
+claude mcp add --transport http layout http://127.0.0.1:8089/mcp
+```
+
+Проверьте, что подключилось: `claude mcp list` — в списке появится `layout`.
+
+Дальше агенту достаточно сказать словами:
+
+> Проверь вёрстку http://nginx_myshop/ на мобильном и десктопе, покажи что сломано
+
+Агент сам выберет инструменты, снимет скриншоты и вернёт разбор.
+
+### Другие клиенты
+
+Стенд отдаёт стандартный MCP по двум транспортам.
+
+**HTTP** (рекомендуется — браузеры остаются тёплыми между вызовами):
+
+```json
+{
+  "mcpServers": {
+    "layout": { "type": "http", "url": "http://127.0.0.1:8089/mcp" }
+  }
+}
+```
+
+**stdio** (процесс на каждую сессию):
+
+```json
+{
+  "mcpServers": {
+    "layout": {
+      "command": "docker",
+      "args": ["compose", "-f", "/полный/путь/к/mcp/docker-compose.yml",
+               "exec", "-T", "playwright", "npm", "run", "mcp:stdio"]
+    }
+  }
+}
+```
+
+---
+
+## Что дать агенту проверять
+
+Стенд ходит по сети Docker, поэтому адрес — это **имя контейнера**, а не `localhost`.
+
+| Что проверяем | Адрес |
+|---|---|
+| Проект из docker_toolkit | `http://nginx_myshop/` |
+| Свой файл | положить в `mcp/data/fixtures/`, открывать `http://nginx_layout/fixtures/имя.html` |
+| Dev-сервер на вашей машине | `http://host.docker.internal:5173` |
+| Сайт в интернете | обычный адрес, `https://example.com` |
+
+Узнать имя контейнера: `docker ps`.
+
+**Проект в своей сети.** Если тестируемый проект поднят с другим `NETWORK`, подключите к ней
+стенд одной командой:
+
+```sh
+docker network connect network_cryptodb playwright_layout
+```
+
+---
+
+## Работа руками, без агента
+
+Внутри контейнера доступна команда `lt`. Все примеры запускаются из папки `mcp`.
+
+**Посмотреть, что вообще есть:**
+
+```sh
+docker compose exec playwright lt          # полная справка по флагам
+docker compose exec playwright lt info     # пути, адреса, пресеты
+```
+
+**Снять скриншот:**
+
+```sh
+docker compose exec playwright lt shot --url http://nginx_myshop/ --viewport mobile
+```
+
+Ссылка на снимок печатается в ответе — открывается в браузере.
+
+**Проверить страницу целиком:**
+
+```sh
+docker compose exec playwright lt audit --url http://nginx_myshop/ --checks all
+```
+
+**Следить, чтобы вёрстка не поехала после правок:**
+
+```sh
+# первый запуск запоминает эталон
+docker compose exec playwright lt compare --url http://nginx_myshop/ --name main
+
+# после правок — сравнение; печатает процент расхождения и ссылку на карту отличий
+docker compose exec playwright lt compare --url http://nginx_myshop/ --name main
+
+# если изменения задуманы — обновить эталон
+docker compose exec playwright lt compare --url http://nginx_myshop/ --name main --update
+```
+
+**Проверить сразу во всех условиях:**
+
+```sh
+docker compose exec playwright lt matrix --url http://nginx_myshop/ \
+  --viewports mobile,tablet,desktop --schemes light,dark
+```
+
+В конце печатается ссылка на HTML-отчёт: карточки со скриншотами всех сочетаний рядом.
+
+**Зайти внутрь:**
+
+```sh
+docker compose exec playwright bash
+```
+
+`lt` возвращает код `1`, если нашёл проблемы — годится для CI.
+
+---
+
+## Что стенд умеет находить
+
+**Вёрстка** — горизонтальный скролл, элементы за краем экрана, наложение текста на текст,
+обрезанный текст, битые картинки, картинки без размеров (из-за них прыгает страница),
+слишком мелкие кнопки и ссылки, недостаточный контраст.
+
+**Доступность** — два независимых движка правил WCAG: axe-core и pa11y.
+
+**Скорость и прыжки** — CLS, LCP, полный отчёт Lighthouse. CLS показывает, какие именно
+блоки сдвинули страницу при загрузке.
+
+**Разметка** — валидатор W3C: незакрытые теги, дубли `id`, обязательные атрибуты.
+
+**Ошибки** — упавшие запросы, 404, ошибки JavaScript.
+
+**Сравнение с эталоном** — попиксельное, с картинкой отличий.
+
+Полный список инструментов агент видит сам; человеку — `lt` без аргументов.
+
+---
+
+## Условия просмотра
+
+Любую проверку можно запустить в конкретных условиях:
+
+```sh
+--browser chromium|firefox|webkit    движок (webkit ≈ Safari)
+--viewport 375x812                   или mobile, mobile-sm, tablet, laptop, desktop, wide
+--dark                               тёмная тема
+--rtl                                справа налево (арабский, иврит)
+--zoom 200                           страница увеличена вдвое
+--text-zoom 200                      увеличен только шрифт
+--pseudo                             текст длиннее на 40% — как после перевода
+--forced-colors                      режим высокой контрастности Windows
+--dpr 2                              экран Retina
+```
+
+`lt matrix` перемножает эти условия между собой: одним прогоном проверяется страница во всех
+сочетаниях сразу.
+
+---
+
+## Рецепты
+
+**«Проверь, не сломалась ли вёрстка после моих правок»**
+
+```sh
+docker compose exec playwright lt compare --url http://nginx_myshop/ --name main
+```
+
+**«Сайт едет на телефоне»**
+
+```sh
+docker compose exec playwright lt audit --url http://nginx_myshop/ --viewport mobile --checks layout
+```
+
+Смотрите `overflowingElements` — это элементы, вылезшие за экран.
+
+**«Страница прыгает при загрузке»**
+
+```sh
+docker compose exec playwright lt audit --url http://nginx_myshop/ --checks vitals
+```
+
+В `shifts` будет список блоков, которые сдвинули содержимое.
+
+**«Как выглядит в Safari»**
+
+```sh
+docker compose exec playwright lt shot --url http://nginx_myshop/ --browser webkit
+```
+
+**«Проверь тёмную тему»**
+
+```sh
+docker compose exec playwright lt matrix --url http://nginx_myshop/ --schemes light,dark
+```
+
+**«Сайт долго грузится и проверка отваливается»**
+
+```sh
+docker compose exec playwright lt audit --url http://nginx_myshop/ --timeout 60000
+```
+
+Стенд не падает, если страница не догрузилась: проверит то, что отрисовано, и скажет об этом.
+
+---
+
+## Где лежат результаты
+
+Всё внутри `mcp/data`:
+
+- `artifacts/` — скриншоты, отчёты, карты отличий. Открываются на `http://127.0.0.1:8089/`
+- `baselines/` — эталоны для сравнения. Их стоит держать в git
+- `fixtures/` — тестовые страницы, в том числе ваши
+
+Артефакты копятся. Почистить:
+
+```sh
+docker compose exec playwright lt clean --keep 20
+```
+
+---
+
+## Если что-то не работает
+
+**`lt: not found`** — контейнер ещё ставит зависимости. Дождитесь в логе строки
+`команда lt готова`: `docker compose logs -f playwright`.
+
+**Сайт не открывается по имени контейнера** — он в другой сети. Проверьте `docker network ls`
+и подключите: `docker network connect имя_сети playwright_layout`.
+
+**Сравнение показывает отличия, хотя ничего не меняли** — на странице живой контент: часы,
+карусель, реклама. Закройте их маской:
+
+```sh
+docker compose exec playwright lt compare --url ... --name main --mask ".ads,.clock"
+```
+
+**Вместо букв квадраты на скриншоте** — не хватает шрифтов. Проверить:
+`lt shot --url http://nginx_layout/fixtures/fonts.html` — там кириллица, эмодзи и иероглифы.
+Если квадраты, пересоберите: `docker compose up -d --build`.
+
+**Chromium падает на длинных страницах** — не хватает `/dev/shm`. Увеличьте
+`PLAYWRIGHT_SHM_SIZE` в `.env` и пересоберите.
+
+**Матрица съедает память** — каждый браузер весит сотни мегабайт. Уменьшите
+`--concurrency 1`.
+
+**Проверка HTML говорит «vnu недоступен»** — не поднят контейнер `vnu`. Стенд продолжит
+работать со встроенным валидатором, но правил будет меньше.
+
+---
+
+## Настройки
+
+Всё в `mcp/.env`.
+
+| Параметр | Зачем менять |
+|---|---|
+| `EXTERNAL_ACCESS` | порт отчётов на хосте, по умолчанию `8089` |
+| `MCP_ACCESS` | порт MCP напрямую, мимо nginx |
+| `TRAEFIK_DOMAIN` | домен стенда, по умолчанию `layout.localhost` |
+| `PLAYWRIGHT_SHM_SIZE` | память под Chromium, по умолчанию 2 ГБ |
+| `PUBLIC_BASE_URL` | база ссылок на артефакты в ответах агенту |
+
+Версии образов зафиксированы намеренно — стенд должен давать одинаковый результат сегодня и
+через полгода. `PLAYWRIGHT_VERSION` менять только вместе с версией пакета `playwright` в
+`mcp/data/package.json`: браузеры вшиты в образ и по другой версии не найдутся.
+
+---
+
+## Из чего собран
+
+Модули [docker_toolkit](https://github.com/cat-of-summer/docker_toolkit) — `nginx`,
+`playwright`, `vnu`, `network`, `traefik` — запечены в проект: подмодулей нет, всё
+поднимается как есть. Внутри: Playwright с тремя браузерными движками, MCP-сервер на Node,
+nginx для раздачи отчётов, Nu HTML Checker (валидатор W3C).

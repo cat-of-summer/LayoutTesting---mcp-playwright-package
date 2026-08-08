@@ -45,6 +45,62 @@ function collectLayoutIssues(options) {
     style.display !== 'none' &&
     Number(style.opacity) !== 0;
 
+  /**
+   * Приём «скрыто визуально, доступно скринридеру»: крошечная коробка с clip.
+   * Такой узел обрезан намеренно и обрезанным текстом не считается.
+   */
+  const isScreenReaderOnly = (el, style, rect) =>
+    (rect.width <= 2 && rect.height <= 2) ||
+    (style.clipPath && style.clipPath !== 'none') ||
+    (style.clip && style.clip !== 'auto');
+
+  /** Слайдеры и карусели шире своей рамки намеренно — рамка их и обрезает. */
+  const insideScrollClip = (el) => {
+    let node = el.parentElement;
+    while (node && node !== document.documentElement) {
+      const s = getComputedStyle(node);
+      const ox = s.overflowX || s.overflow;
+      if (ox && ox !== 'visible') return true;
+      node = node.parentElement;
+    }
+    return false;
+  };
+
+  /**
+   * Под текстом может лежать изображение — и как CSS-фон, и отдельным <img>
+   * под абсолютным позиционированием. В обоих случаях численный контраст
+   * посчитать нельзя: сравнивать пришлось бы с пикселями фотографии.
+   */
+  const backgroundIsImage = (el, rect) => {
+    let node = el;
+    while (node && node.nodeType === 1) {
+      const s = getComputedStyle(node);
+      // Градиент — не фотография: по нему контраст всё ещё можно оценить.
+      if (s.backgroundImage && s.backgroundImage.includes('url(')) return true;
+      const c = parseColor(s.backgroundColor);
+      if (c && c.a > 0.5) break;
+      node = node.parentElement;
+    }
+    // elementsFromPoint видит только текущий экран. Для элементов ниже сгиба
+    // точка попала бы в чужой узел, поэтому там судим только по CSS-фону.
+    const x = rect.x + rect.width / 2;
+    const y = rect.y + rect.height / 2;
+    if (x < 0 || x > vw || y < 0 || y > vh) return false;
+
+    const stack = document.elementsFromPoint(x, y);
+    const self = stack.indexOf(el);
+    if (self === -1) return false; // элемент чем-то перекрыт — судить не о чем
+
+    for (const under of stack.slice(self + 1)) {
+      if (/^(img|picture|video|canvas|svg)$/i.test(under.tagName)) return true;
+      const s = getComputedStyle(under);
+      if (s.backgroundImage && s.backgroundImage.includes('url(')) return true;
+      const c = parseColor(s.backgroundColor);
+      if (c && c.a > 0.5) return false;
+    }
+    return false;
+  };
+
   const parseColor = (value) => {
     const m = /rgba?\(([^)]+)\)/.exec(value || '');
     if (!m) return null;
@@ -88,6 +144,7 @@ function collectLayoutIssues(options) {
     imagesWithoutDimensions: [],
     tinyTargets: [],
     lowContrast: [],
+    textOverImage: [],
   };
 
   const docEl = document.documentElement;
@@ -112,7 +169,7 @@ function collectLayoutIssues(options) {
     // Горизонтальный вылет за viewport — самая частая поломка адаптива.
     {
       const right = rect.x + rect.width;
-      if (right > vw + 1 || rect.x < -1) {
+      if ((right > vw + 1 || rect.x < -1) && !insideScrollClip(el)) {
         overflowing.push({
           el,
           selector: cssPath(el),
@@ -131,7 +188,7 @@ function collectLayoutIssues(options) {
       const hasOwnText = Array.from(el.childNodes).some(
         (n) => n.nodeType === 3 && n.nodeValue.trim().length > 0,
       );
-      if (hasOwnText && hidesOverflow) {
+      if (hasOwnText && hidesOverflow && !isScreenReaderOnly(el, style, rect)) {
         const clippedX = el.scrollWidth > el.clientWidth + 1;
         const clippedY = el.scrollHeight > el.clientHeight + 1;
         if (clippedX || clippedY) {
@@ -173,7 +230,17 @@ function collectLayoutIssues(options) {
         .join('')
         .trim();
       if (ownText.length > 1) {
-        const fg = parseColor(style.color);
+        const overImage = backgroundIsImage(el, rect);
+        if (overImage && issues.textOverImage.length < maxItems) {
+          issues.textOverImage.push({
+            selector: cssPath(el),
+            text: ownText.slice(0, 60),
+            color: style.color,
+            fontSize: style.fontSize,
+            why: 'текст поверх изображения — контраст числом не измерить, проверьте глазами на скриншоте',
+          });
+        }
+        const fg = overImage ? null : parseColor(style.color);
         if (fg && fg.a > 0.5) {
           const bg = effectiveBackground(el);
           const ratio = contrast(fg, bg);
@@ -239,13 +306,18 @@ function collectLayoutIssues(options) {
 
   // Наложения ищем только среди соседей в потоке: элемент поверх другого
   // через absolute/fixed — обычно замысел, а не поломка.
+  // И только между носителями текста: текст поверх картинки — приём вёрстки,
+  // а вот текст поверх текста читать нельзя, и это всегда дефект.
+  const hasText = (el) =>
+    Array.from(el.childNodes).some((n) => n.nodeType === 3 && n.nodeValue.trim().length > 1);
   const inFlow = visible.filter(
     ({ el, style, rect }) =>
       style.position === 'static' &&
       style.float === 'none' &&
       rect.width > 8 &&
       rect.height > 8 &&
-      el.parentElement,
+      el.parentElement &&
+      hasText(el),
   );
   const byParent = new Map();
   for (const item of inFlow) {

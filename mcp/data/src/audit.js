@@ -39,6 +39,7 @@ export async function runAudit({
   updateBaseline = false,
   threshold = CONFIG.visualThreshold,
   waitUntil = 'load',
+  timeout = CONFIG.defaultTimeout,
   baselineName = null,
 } = {}) {
   const wanted = expandChecks(checks);
@@ -52,7 +53,7 @@ export async function runAudit({
       await installVitalsCollector(session.page);
     }
 
-    const nav = await gotoAndSettle(session, url, { waitUntil });
+    const nav = await gotoAndSettle(session, url, { waitUntil, timeout });
     results.navigation = nav;
 
     const safe = async (label, fn) => {
@@ -162,6 +163,7 @@ export function summarize(results, errors = {}) {
     diffPercentage: results.visual?.diffPercentage ?? null,
     jsErrors: results.logs?.errors?.length ?? 0,
     failedRequests: results.logs?.failedRequests?.length ?? 0,
+    navigationTimedOut: results.navigation?.navigationTimedOut ?? false,
     checkErrors: Object.keys(errors),
   };
   s.verdict = verdictOf(s);
@@ -178,5 +180,6 @@ function verdictOf(s) {
   if (s.visual === 'diff') problems.push(`визуальное расхождение ${s.diffPercentage}%`);
   if (s.jsErrors) problems.push(`ошибок JS: ${s.jsErrors}`);
   if (s.failedRequests) problems.push(`неудачных запросов: ${s.failedRequests}`);
+  if (s.navigationTimedOut) problems.push('страница не догрузилась до конца');
   return problems.length ? problems.join('; ') : 'проблем не найдено';
 }

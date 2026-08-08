@@ -131,16 +131,37 @@ export async function closeSession(id) {
   return true;
 }
 
-export async function gotoAndSettle(session, url, { waitUntil = 'load', stabilizePage = true } = {}) {
-  const response = await session.page.goto(url, { waitUntil, timeout: CONFIG.defaultTimeout });
+export async function gotoAndSettle(
+  session,
+  url,
+  { waitUntil = 'load', stabilizePage = true, timeout = CONFIG.defaultTimeout } = {},
+) {
+  let response = null;
+  let timedOut = false;
+  try {
+    response = await session.page.goto(url, { waitUntil, timeout });
+  } catch (err) {
+    // Боевые сайты сплошь и рядом не доходят до load: висит аналитика, чат,
+    // long-poll. Страница при этом отрисована, и проверять её можно и нужно.
+    if (!/Timeout .* exceeded/i.test(err.message)) throw err;
+    timedOut = true;
+    await session.page.waitForLoadState('domcontentloaded', { timeout: 5000 }).catch(() => {});
+  }
+
   if (stabilizePage) {
     await stabilize(session.page, { pseudoLoc: session.profile.pseudoLoc });
   }
-  return {
+
+  const result = {
     status: response?.status() ?? null,
     url: session.page.url(),
     title: await session.page.title().catch(() => ''),
   };
+  if (timedOut) {
+    result.navigationTimedOut = true;
+    result.note = `Событие "${waitUntil}" не наступило за ${timeout} мс — проверки идут по тому, что отрисовано.`;
+  }
+  return result;
 }
 
 /**
