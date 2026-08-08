@@ -1,0 +1,79 @@
+name: playwright
+priority: 70
+
+match:
+  image: ["mcr.microsoft.com/playwright", "mcr.microsoft.com/playwright:*"]
+  service: [playwright]
+
+families: [debian]
+
+# Ровно те шрифты, что ставил Dockerfile.playwright через PLAYWRIGHT_APT_PACKAGES.
+# Без них кириллица, CJK и эмодзи выходят на скриншотах квадратами, и стенд начинает
+# сообщать о дефектах вёрстки, которых на живой странице нет.
+install:
+  debian:
+    - fonts-noto-core
+    - fonts-noto-color-emoji
+    - fonts-noto-cjk
+    - fonts-liberation
+    - fonts-dejavu-core
+
+# entrypoint.playwright.sh заканчивается `exec npm run mcp:http` и не возвращается, а
+# фаза инициализации ждёт возврата — она повисла бы навсегда. Всё, что скрипт делал
+# при старте, здесь выполнено на сборке, а сервер поднимает supervisor.
+entrypoint: skip
+
+# Пути перечислены поимённо, а не одним data/: рядом лежат node_modules и artifacts,
+# и они утащили бы в контекст сборки гигабайты.
+copy:
+  - {src: data/package.json,        dest: /var/www/html/package.json,        kind: code, optional: false}
+  - {src: data/package-lock.json,   dest: /var/www/html/package-lock.json,   kind: code, optional: false}
+  - {src: data/src,                 dest: /var/www/html/src,                 kind: code, optional: false}
+  - {src: data/bin,                 dest: /var/www/html/bin,                 kind: code, optional: false}
+  - {src: data/fixtures,            dest: /var/www/html/fixtures,            kind: code}
+  - {src: data/baselines,           dest: /var/www/html/baselines,           kind: code}
+  - {src: data/matrix.example.json, dest: /var/www/html/matrix.example.json, kind: code}
+
+post_copy:
+  # npm ci, а не install: lock-файл запечён вместе с кодом, и образ должен давать тот же
+  # набор зависимостей сегодня и через полгода. PUPPETEER_SKIP_* — чтобы pa11y не тянул
+  # собственный Chromium поверх того, что уже лежит в /ms-playwright.
+  - "cd /var/www/html && PUPPETEER_SKIP_DOWNLOAD=1 PUPPETEER_SKIP_CHROMIUM_DOWNLOAD=1 npm ci --omit=dev"
+  - "mkdir -p /var/www/html/artifacts /var/www/html/baselines"
+  # Lighthouse и pa11y поднимают браузер сами и без явного пути качают свой. Штатный
+  # entrypoint искал его при каждом старте; здесь путь фиксируется один раз на сборке.
+  - "ln -sf $(find /ms-playwright -type f -name chrome | head -1) /usr/local/bin/chrome-for-tools"
+  # `lt` как обычная команда внутри контейнера — так же, как обещает README стенда.
+  # Симлинк, а не обёртка: файл запечён в образ, бит исполнения с него уже не слетит.
+  - "chmod +x /var/www/html/bin/lt.mjs && ln -sf /var/www/html/bin/lt.mjs /usr/local/bin/lt"
+
+port:
+  default: 8931
+  configure: {type: env_var, var: MCP_PORT}
+
+supervisor:
+  - name: playwright
+    command: npm run mcp:http
+    directory: /var/www/html
+    priority: 35
+    stopsignal: TERM
+    stopwaitsecs: 20
+    # Сервер держит порт: вторая копия упала бы с EADDRINUSE.
+    scalable: false
+    critical: true
+    environment:
+      MCP_PORT: "{port}"
+      CHROME_PATH: /usr/local/bin/chrome-for-tools
+      PUPPETEER_EXECUTABLE_PATH: /usr/local/bin/chrome-for-tools
+      PUPPETEER_SKIP_DOWNLOAD: "1"
+
+# Готовность проверяется тем же /health, что отдаёт сам сервер: открытый порт ещё не
+# значит, что браузерный пул поднялся.
+readiness:
+  - type: http
+    target: "http://127.0.0.1:{port}/health"
+    timeout: 180
+
+# Код приезжает через copy: выше; бинд из compose здесь только мешал бы.
+mount_kinds:
+  "/var/www/html": skip
