@@ -1,4 +1,4 @@
-[submodule "mcp/data"]
-	path = mcp/data
+[submodule "app/data"]
+	path = app/data
 	url = git@github.com:cat-of-summer/LayoutTesting---mcp-playwright-package.git
 	branch = app

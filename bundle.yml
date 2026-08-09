@@ -10,7 +10,7 @@ image: ghcr.io/cat-of-summer/layouttesting---mcp-playwright-package:latest
 variants: [cpu]
 
 # Браузеры, их системные зависимости и Node уже внутри образа Playwright, и версия
-# закреплена вместе с пакетом playwright в mcp/data/package.json. Собирать это на
+# закреплена вместе с пакетом playwright в app/data/package.json. Собирать это на
 # debian-базе значило бы повторять чужую работу и разъезжаться с ней при обновлении.
 base:
   cpu: mcr.microsoft.com/playwright:v1.62.1-noble
@@ -51,7 +51,10 @@ services:
   network: {enabled: false}
 
   # Рецепты названы явно, чтобы результат не зависел от очков подбора: все три лежат
-  # в recipes/ рядом с этим файлом.
-  mcp_nginx: {recipe: nginx}
-  mcp_playwright: {recipe: playwright}
+  # в recipes/ рядом с этим файлом. Сюда их не перенести — генератор читает рецепты
+  # только из встроенного набора и из каталога с этим именем. playwright и vnu среди
+  # встроенных отсутствуют, а локальный nginx заменяет встроенный целиком: у стенда
+  # набор шаблонов в services/nginx/configs, а не один nginx.conf.
+  app_nginx: {recipe: nginx}
+  app_playwright: {recipe: playwright}
   vnu: {recipe: vnu}

@@ -92,7 +92,7 @@ cd ../vnu && cp .env.example .env && docker compose up -d
 ### 3. Сам стенд
 
 ```sh
-cd ../mcp && cp .env.example .env && docker compose up -d --build
+cd ../app && cp .env.example .env && docker compose up -d --build
 ```
 
 Первый запуск идёт несколько минут: качается образ с браузерами и ставятся зависимости.
@@ -153,7 +153,7 @@ claude mcp add --transport http layout http://127.0.0.1:8089/mcp
   "mcpServers": {
     "layout": {
       "command": "docker",
-      "args": ["compose", "-f", "/полный/путь/к/mcp/docker-compose.yml",
+      "args": ["compose", "-f", "/полный/путь/к/app/docker-compose.yml",
                "exec", "-T", "playwright", "npm", "run", "mcp:stdio"]
     }
   }
@@ -169,7 +169,7 @@ claude mcp add --transport http layout http://127.0.0.1:8089/mcp
 | Что проверяем | Адрес |
 |---|---|
 | Проект из docker_toolkit | `http://nginx_myshop/` |
-| Свой файл | положить в `mcp/data/fixtures/`, открывать `http://nginx_layout/fixtures/имя.html` |
+| Свой файл | положить в `app/data/fixtures/`, открывать `http://nginx_layout/fixtures/имя.html` |
 | Dev-сервер на вашей машине | `http://host.docker.internal:5173` |
 | Сайт в интернете | обычный адрес, `https://example.com` |
 
@@ -186,7 +186,7 @@ docker network connect network_cryptodb playwright_layout
 
 ## Работа руками, без агента
 
-Внутри контейнера доступна команда `lt`. Все примеры ниже запускаются из папки `mcp` и
+Внутри контейнера доступна команда `lt`. Все примеры ниже запускаются из папки `app` и
 обращаются к сервису `playwright` — так устроена сборка из исходников. Если стенд поднят
 [из готового образа](#установка-из-готового-образа), сервис называется `layout`, а команды
 запускаются из папки с его `docker-compose.yml`:
@@ -448,7 +448,7 @@ docker compose exec playwright lt audit --url http://nginx_myshop/ --timeout 600
 
 ## Где лежат результаты
 
-Всё внутри `mcp/data`:
+Всё внутри `app/data`:
 
 - `artifacts/` — скриншоты, отчёты, карты отличий. Открываются на `http://127.0.0.1:8089/`
 - `baselines/` — эталоны для сравнения. Их стоит держать в git
@@ -515,7 +515,7 @@ docker compose exec playwright lt compare --url ... --name main --mask ".ads,.cl
 
 ## Настройки
 
-Всё в `mcp/.env`.
+Всё в `app/.env`.
 
 | Параметр | Зачем менять |
 |---|---|
@@ -527,7 +527,7 @@ docker compose exec playwright lt compare --url ... --name main --mask ".ads,.cl
 
 Версии образов зафиксированы намеренно — стенд должен давать одинаковый результат сегодня и
 через полгода. `PLAYWRIGHT_VERSION` менять только вместе с версией пакета `playwright` в
-`mcp/data/package.json`: браузеры вшиты в образ и по другой версии не найдутся.
+`app/data/package.json`: браузеры вшиты в образ и по другой версии не найдутся.
 
 ---
 
