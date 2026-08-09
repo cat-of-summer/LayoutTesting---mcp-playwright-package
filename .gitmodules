@@ -1,4 +1,4 @@
 [submodule "app/data"]
 	path = app/data
-	url = git@github.com:cat-of-summer/LayoutTesting---mcp-playwright-package.git
+	url = https://github.com/cat-of-summer/LayoutTesting---mcp-playwright-package.git
 	branch = app
