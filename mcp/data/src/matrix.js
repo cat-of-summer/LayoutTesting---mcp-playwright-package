@@ -44,6 +44,7 @@ export async function runMatrix({
   concurrency = 2,
   updateBaseline = false,
   mask = [],
+  hide = [],
   fullPage = true,
   onProgress = null,
 } = {}) {
@@ -67,6 +68,7 @@ export async function runMatrix({
           baselineName: name,
           updateBaseline,
           mask,
+          hide,
           fullPage,
         });
         cells[index] = { profile, key, ok: true, summary: report.summary, results: report.results };

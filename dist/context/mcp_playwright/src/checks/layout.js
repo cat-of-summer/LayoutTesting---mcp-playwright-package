@@ -145,6 +145,8 @@ function collectLayoutIssues(options) {
     tinyTargets: [],
     lowContrast: [],
     textOverImage: [],
+    coveredText: [],
+    deadZIndex: [],
   };
 
   const docEl = document.documentElement;
@@ -219,6 +221,63 @@ function collectLayoutIssues(options) {
           box: box(rect),
           minRequired: minTarget,
         });
+      }
+    }
+
+    // z-index на неспозиционированном элементе не действует — правка, которая
+    // выглядит сделанной, но ничего не меняет. Ложных срабатываний тут нет:
+    // исключение одно, элементы flex/grid-контейнера.
+    if (issues.deadZIndex.length < maxItems && style.zIndex !== 'auto' && style.position === 'static') {
+      const parent = el.parentElement;
+      const flexItem = parent && /flex|grid/.test(getComputedStyle(parent).display);
+      if (!flexItem) {
+        issues.deadZIndex.push({
+          selector: cssPath(el),
+          zIndex: style.zIndex,
+          why: 'z-index применяется только к позиционированным элементам и к элементам flex/grid-контейнера',
+        });
+      }
+    }
+
+    // Текст, закрытый непрозрачным слоем. Частый исход правки оверлеев и «шапок».
+    if (issues.coveredText.length < maxItems) {
+      const ownText = Array.from(el.childNodes)
+        .filter((n) => n.nodeType === 3)
+        .map((n) => n.nodeValue.trim())
+        .join(' ')
+        .trim();
+      const onScreen = rect.top >= 0 && rect.left >= 0 && rect.bottom <= vh && rect.right <= vw;
+      if (ownText.length > 1 && onScreen && rect.width > 4 && rect.height > 4) {
+        const points = [
+          [rect.left + rect.width * 0.15, rect.top + rect.height / 2],
+          [rect.left + rect.width / 2, rect.top + rect.height / 2],
+          [rect.left + rect.width * 0.85, rect.top + rect.height / 2],
+        ];
+        let cover = null;
+        let coveredCount = 0;
+        for (const [x, y] of points) {
+          const top = document.elementsFromPoint(x, y)[0];
+          if (!top || top === el || el.contains(top)) continue;
+          const ts = getComputedStyle(top);
+          const bg = parseColor(ts.backgroundColor);
+          const opaque =
+            /^(img|video|canvas|iframe)$/i.test(top.tagName) ||
+            (bg && bg.a > 0.9) ||
+            (ts.backgroundImage && ts.backgroundImage.includes('url('));
+          if (opaque) {
+            coveredCount += 1;
+            cover = cover || top;
+          }
+        }
+        if (coveredCount === points.length) {
+          issues.coveredText.push({
+            selector: cssPath(el),
+            text: ownText.slice(0, 60),
+            coveredBy: cssPath(cover),
+            box: box(rect),
+            why: 'во всех пробных точках сверху лежит непрозрачный элемент — текст не виден',
+          });
+        }
       }
     }
 
@@ -365,12 +424,12 @@ export async function layoutAudit(page, { minTarget = 24, contrastRatio = 4.5, m
 }
 
 /** Дамп вычисленных стилей — «почему этот блок не там, где я жду». */
-export async function computedStyles(page, selector, props) {
+export async function computedStyles(page, selector, props, { pseudo = null, all = false, maxItems = 20 } = {}) {
   return page.evaluate(
-    ({ selector, props }) => {
-      const el = document.querySelector(selector);
-      if (!el) return { found: false, selector };
-      const style = getComputedStyle(el);
+    ({ selector, props, pseudo, all, maxItems }) => {
+      const nodes = Array.from(document.querySelectorAll(selector));
+      if (!nodes.length) return { found: false, selector, pseudo };
+
       const wanted =
         props && props.length
           ? props
@@ -381,17 +440,33 @@ export async function computedStyles(page, selector, props) {
               'flex', 'flex-direction', 'flex-wrap', 'align-items', 'justify-content', 'gap',
               'grid-template-columns', 'grid-template-rows', 'grid-area',
               'font-family', 'font-size', 'font-weight', 'line-height', 'color',
-              'background-color', 'text-overflow', 'white-space', 'transform', 'opacity',
+              'background-color', 'background-image', 'text-overflow', 'white-space',
+              'transform', 'opacity', 'visibility', 'pointer-events',
+              // Без content псевдоэлемент не отличить от несуществующего.
+              ...(pseudo ? ['content'] : []),
             ];
-      const rect = el.getBoundingClientRect();
-      return {
-        found: true,
-        selector,
-        box: { x: Math.round(rect.x), y: Math.round(rect.y), w: Math.round(rect.width), h: Math.round(rect.height) },
-        scroll: { scrollWidth: el.scrollWidth, scrollHeight: el.scrollHeight, clientWidth: el.clientWidth, clientHeight: el.clientHeight },
-        styles: Object.fromEntries(wanted.map((p) => [p, style.getPropertyValue(p)])),
+
+      const dump = (el) => {
+        const style = getComputedStyle(el, pseudo || undefined);
+        const rect = el.getBoundingClientRect();
+        return {
+          box: { x: Math.round(rect.x), y: Math.round(rect.y), w: Math.round(rect.width), h: Math.round(rect.height) },
+          scroll: { scrollWidth: el.scrollWidth, scrollHeight: el.scrollHeight, clientWidth: el.clientWidth, clientHeight: el.clientHeight },
+          styles: Object.fromEntries(wanted.map((p) => [p, style.getPropertyValue(p)])),
+        };
       };
+
+      const base = { found: true, selector, pseudo: pseudo || null, count: nodes.length };
+      // Псевдоэлемента может не быть вовсе: content: none — значит правило не сработало.
+      if (pseudo && getComputedStyle(nodes[0], pseudo).content === 'none') {
+        base.note = `Псевдоэлемент ${pseudo} не создаётся: content: none.`;
+      }
+      if (!all) {
+        if (nodes.length > 1) base.note = `${base.note ? `${base.note} ` : ''}Совпадений ${nodes.length}, показан первый — передайте all: true для остальных.`;
+        return { ...base, ...dump(nodes[0]) };
+      }
+      return { ...base, matches: nodes.slice(0, maxItems).map(dump) };
     },
-    { selector, props },
+    { selector, props, pseudo, all, maxItems },
   );
 }

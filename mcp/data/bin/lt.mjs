@@ -45,7 +45,23 @@ function profileFrom(flags) {
     pseudoLoc: bool(flags.pseudo),
     deviceScaleFactor: flags.dpr ? Number(flags.dpr) : 1,
     freezeTime: bool(flags['freeze-time']),
+    auth: typeof flags.auth === 'string' ? flags.auth : undefined,
+    extraHTTPHeaders: pairs(flags.header),
+    hostMap: pairs(flags['host-map']),
   };
+}
+
+/** "Ключ: значение,Ключ2: значение2" — заголовки и карта хостов задаются одинаково. */
+function pairs(value) {
+  const items = list(value);
+  if (!items) return undefined;
+  const out = {};
+  for (const item of items) {
+    const idx = item.indexOf(':');
+    if (idx < 1) throw new Error(`Ожидается "имя:значение", получено: ${item}`);
+    out[item.slice(0, idx).trim()] = item.slice(idx + 1).trim();
+  }
+  return out;
 }
 
 function requireUrl(flags) {
@@ -97,6 +113,10 @@ const HELP = `Стенд тестирования вёрстки — CLI
   --dark   --rtl   --forced-colors    --zoom 200   --text-zoom 200   --pseudo
   --dpr 2  --freeze-time              --full=false  (по умолчанию снимок всей страницы)
   --mask ".ads,.clock"                закрасить нестабильные зоны
+  --hide ".cookie,.chat"              убрать с кадра (visibility: hidden, layout не едет)
+  --auth user:pass                    HTTP basic auth
+  --header "Accept-Language: ru"      заголовок ко всем запросам, можно несколько через запятую
+  --host-map "site.local:172.20.0.5"  подмена разрешения имён, только chromium
   --wait-until domcontentloaded       чего ждать при переходе (load по умолчанию)
   --timeout 60000                     таймаут навигации, мс
 
@@ -136,6 +156,7 @@ async function main() {
           fullPage: flags.full !== 'false',
           selector: flags.selector,
           mask: list(flags.mask) || [],
+          hide: list(flags.hide) || [],
         });
         console.log(`Снимок ${shot.width}x${shot.height}`);
         console.log('  файл :', shot.path);
@@ -154,6 +175,7 @@ async function main() {
         checks: list(flags.checks) || [],
         name: flags.name || 'page',
         mask: list(flags.mask) || [],
+        hide: list(flags.hide) || [],
         fullPage: flags.full !== 'false',
         waitUntil: flags['wait-until'] || 'load',
         timeout: flags.timeout ? Number(flags.timeout) : undefined,
@@ -177,6 +199,7 @@ async function main() {
         checks: ['screenshot', 'visual'],
         name: flags.name,
         mask: list(flags.mask) || [],
+        hide: list(flags.hide) || [],
         fullPage: flags.full !== 'false',
         waitUntil: flags['wait-until'] || 'load',
         timeout: flags.timeout ? Number(flags.timeout) : undefined,
@@ -219,6 +242,7 @@ async function main() {
         concurrency: flags.concurrency ? Number(flags.concurrency) : 2,
         updateBaseline: bool(flags.update),
         mask: list(flags.mask) || [],
+        hide: list(flags.hide) || [],
         onProgress: ({ done, total, key }) => process.stderr.write(`  [${done}/${total}] ${key}\n`),
       });
       console.log(`\nМатрица ${result.runId}: комбинаций ${result.total}, с проблемами ${result.withProblems}, не удалось ${result.failed}`);

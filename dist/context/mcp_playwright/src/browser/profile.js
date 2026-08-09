@@ -22,7 +22,31 @@ export const PROFILE_DEFAULTS = {
   userAgent: undefined,
   /** Троттлинг сети и CPU — только chromium (через CDP). */
   throttle: null,
+  /**
+   * Доступ к странице. На пиксели не влияют и в profileKey не входят: иначе
+   * логин и заголовки попадали бы в имена эталонов.
+   */
+  httpCredentials: null,
+  extraHTTPHeaders: null,
+  /** {"www.example.com": "172.20.0.5"} — только chromium, аргумент запуска. */
+  hostMap: null,
 };
+
+/** Сокращение auth: "user:pass" — руками так набирать быстрее, чем объект. */
+export function parseAuth(value) {
+  if (!value) return null;
+  if (typeof value === 'object') return value;
+  const idx = String(value).indexOf(':');
+  if (idx < 1) throw new Error('auth задаётся строкой "пользователь:пароль".');
+  return { username: String(value).slice(0, idx), password: String(value).slice(idx + 1) };
+}
+
+/** Аргумент запуска chromium, подменяющий разрешение имён: стенды за vhost. */
+export function hostResolverRules(hostMap) {
+  const entries = Object.entries(hostMap || {});
+  if (!entries.length) return null;
+  return `--host-resolver-rules=${entries.map(([host, ip]) => `MAP ${host} ${ip}`).join(',')}`;
+}
 
 export function resolveViewport(value) {
   if (!value) return VIEWPORTS.desktop;
@@ -36,7 +60,9 @@ export function resolveViewport(value) {
 }
 
 export function normalizeProfile(input = {}) {
-  const p = { ...PROFILE_DEFAULTS, ...input };
+  const { auth, ...rest } = input;
+  const p = { ...PROFILE_DEFAULTS, ...rest };
+  if (auth) p.httpCredentials = parseAuth(auth);
   p.viewport = resolveViewport(p.viewport);
   const zoom = Number(p.zoom) || 100;
   if (zoom !== 100) {
@@ -79,5 +105,7 @@ export function contextOptions(profile) {
     timezoneId: p.timezoneId,
     userAgent: p.userAgent,
     ignoreHTTPSErrors: true,
+    ...(p.httpCredentials ? { httpCredentials: p.httpCredentials } : {}),
+    ...(p.extraHTTPHeaders ? { extraHTTPHeaders: p.extraHTTPHeaders } : {}),
   };
 }

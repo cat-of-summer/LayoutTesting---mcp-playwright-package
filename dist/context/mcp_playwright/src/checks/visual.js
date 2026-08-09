@@ -5,6 +5,33 @@ import { compare as odiffCompare } from 'odiff-bin';
 import { CONFIG } from '../config.js';
 import { artifactRef, baselinePath, runDir, slug } from '../artifacts.js';
 
+const HIDE_MARK = 'data-lt-hide';
+
+/**
+ * Убирает мешающие слои перед снимком: cookie-баннеры, чаты, всплывашки.
+ * visibility, а не display — чтобы не поехал layout и снимок остался сравнимым
+ * с эталоном, снятым без скрытия.
+ */
+async function withHidden(page, selectors, fn) {
+  if (!selectors || !selectors.length) return fn();
+  await page.evaluate(
+    ([mark, list]) => {
+      const el = document.createElement('style');
+      el.setAttribute(mark, '');
+      el.textContent = `${list.join(',')}{visibility:hidden !important}`;
+      document.head.appendChild(el);
+    },
+    [HIDE_MARK, selectors],
+  );
+  try {
+    return await fn();
+  } finally {
+    await page
+      .evaluate((mark) => document.querySelectorAll(`style[${mark}]`).forEach((n) => n.remove()), HIDE_MARK)
+      .catch(() => {});
+  }
+}
+
 /**
  * Снимок страницы. Маска закрывает заведомо нестабильные зоны (часы, баннеры),
  * иначе они краснят каждый прогон визуальной регрессии.
@@ -16,6 +43,7 @@ export async function takeScreenshot(page, {
   selector = null,
   clip = null,
   mask = [],
+  hide = [],
   omitBackground = false,
 } = {}) {
   const dir = await runDir(runId);
@@ -24,13 +52,15 @@ export async function takeScreenshot(page, {
   const maskLocators = (mask || []).map((sel) => page.locator(sel));
   const common = { path: file, mask: maskLocators, maskColor: '#FF00FF', omitBackground };
 
-  if (selector) {
-    await page.locator(selector).first().screenshot(common);
-  } else if (clip) {
-    await page.screenshot({ ...common, clip });
-  } else {
-    await page.screenshot({ ...common, fullPage });
-  }
+  await withHidden(page, hide, async () => {
+    if (selector) {
+      await page.locator(selector).first().screenshot(common);
+    } else if (clip) {
+      await page.screenshot({ ...common, clip });
+    } else {
+      await page.screenshot({ ...common, fullPage });
+    }
+  });
 
   const meta = await sharp(file).metadata();
   return { ...artifactRef(file), name, width: meta.width, height: meta.height };

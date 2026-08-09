@@ -1,8 +1,9 @@
 import { chromium, firefox, webkit } from 'playwright';
 import { randomUUID } from 'node:crypto';
 import { CONFIG } from '../config.js';
-import { contextOptions, normalizeProfile, profileKey } from './profile.js';
+import { contextOptions, hostResolverRules, normalizeProfile, profileKey } from './profile.js';
 import { applyProfileToPage, applyThrottle, stabilize } from './stabilize.js';
+import { reapplyInjections } from './inject.js';
 
 const ENGINES = { chromium, firefox, webkit };
 
@@ -11,10 +12,19 @@ const browsers = new Map();
 /** Живые сессии MCP: контекст + страница + собранные логи. */
 const sessions = new Map();
 
-export async function getBrowser(name = 'chromium') {
+export async function getBrowser(name = 'chromium', hostMap = null) {
   const engine = ENGINES[name];
   if (!engine) throw new Error(`Неизвестный браузер: ${name}. Доступны: ${Object.keys(ENGINES).join(', ')}`);
-  const existing = browsers.get(name);
+
+  const resolverRules = hostResolverRules(hostMap);
+  if (resolverRules && name !== 'chromium') {
+    throw new Error('hostMap работает только в chromium: это аргумент запуска браузера, у firefox и webkit его нет.');
+  }
+
+  // Подмена разрешения имён задаётся при запуске, а не в контексте, — значит на каждый
+  // набор правил нужен свой процесс браузера. Ключ кэша это учитывает.
+  const key = resolverRules ? `${name}|${resolverRules}` : name;
+  const existing = browsers.get(key);
   if (existing && existing.isConnected()) return existing;
 
   const args = name === 'chromium'
@@ -25,10 +35,11 @@ export async function getBrowser(name = 'chromium') {
         // Сглаживание шрифтов иначе пляшет между прогонами и ломает pixel-diff.
         '--font-render-hinting=none',
         '--disable-lcd-text',
+        ...(resolverRules ? [resolverRules] : []),
       ]
     : [];
   const browser = await engine.launch({ args });
-  browsers.set(name, browser);
+  browsers.set(key, browser);
   return browser;
 }
 
@@ -82,7 +93,7 @@ function attachCollectors(page, store) {
 
 export async function createSession(profileInput = {}) {
   const profile = normalizeProfile(profileInput);
-  const browser = await getBrowser(profile.browser);
+  const browser = await getBrowser(profile.browser, profile.hostMap);
   const context = await newContext(browser, profile);
   context.setDefaultTimeout(CONFIG.defaultTimeout);
   const page = await context.newPage();
@@ -97,6 +108,10 @@ export async function createSession(profileInput = {}) {
     context,
     page,
     logs: { console: [], errors: [], network: [] },
+    /** Патчи CSS/JS, переживающие навигацию, — см. browser/inject.js. */
+    injections: [],
+    /** Правила перехвата запросов — см. browser/routes.js. */
+    routes: [],
     unsupported: context.__ltUnsupported || [],
     createdAt: new Date().toISOString(),
   };
@@ -120,6 +135,8 @@ export function listSessions() {
     url: s.page.url(),
     createdAt: s.createdAt,
     unsupported: s.unsupported,
+    injections: (s.injections || []).length,
+    routes: (s.routes || []).length,
   }));
 }
 
@@ -151,6 +168,10 @@ export async function gotoAndSettle(
   if (stabilizePage) {
     await stabilize(session.page, { pseudoLoc: session.profile.pseudoLoc });
   }
+
+  // Патчи агента возвращаем последними: они должны перебивать и стили страницы,
+  // и служебный CSS стабилизации.
+  await reapplyInjections(session);
 
   const result = {
     status: response?.status() ?? null,

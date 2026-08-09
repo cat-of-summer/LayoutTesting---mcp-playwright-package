@@ -36,6 +36,7 @@ export async function runAudit({
   fullPage = true,
   selector = null,
   mask = [],
+  hide = [],
   updateBaseline = false,
   threshold = CONFIG.visualThreshold,
   waitUntil = 'load',
@@ -77,6 +78,7 @@ export async function runAudit({
           fullPage,
           selector,
           mask,
+          hide,
         }),
       );
     }

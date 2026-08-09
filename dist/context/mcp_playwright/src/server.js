@@ -7,7 +7,12 @@ import { CONFIG, DIRS, BROWSERS, VIEWPORTS } from './config.js';
 import { artifactRef, ensureDirs, listRuns, newRunId, pruneRuns, publicUrl, slug } from './artifacts.js';
 import { createSession, closeSession, getSession, listSessions, gotoAndSettle } from './browser/pool.js';
 import { profileKey } from './browser/profile.js';
+import { evaluateOnPage } from './browser/evaluate.js';
+import { addInjection, clearInjections, listInjections, removeInjection } from './browser/inject.js';
+import { addRoute, clearRoutes, listRoutes } from './browser/routes.js';
 import { layoutAudit, computedStyles } from './checks/layout.js';
+import { matchedRules } from './checks/cssom.js';
+import { elementLayers } from './checks/layers.js';
 import { pageSnapshot } from './checks/snapshot.js';
 import { takeScreenshot, compareWithBaseline, inlineImage, listBaselines } from './checks/visual.js';
 import { runAxe, runPa11y } from './checks/a11y.js';
@@ -37,6 +42,18 @@ const profileSchema = {
     .object({ network: z.string().optional(), cpu: z.number().optional() })
     .optional()
     .describe('Троттлинг (только chromium): network 3g|slow-3g|4g, cpu — множитель замедления'),
+  auth: z
+    .string()
+    .optional()
+    .describe('HTTP basic auth в виде "пользователь:пароль". Логин в самом URL не нужен — он потом лезет во все ответы'),
+  extraHTTPHeaders: z
+    .record(z.string())
+    .optional()
+    .describe('Заголовки ко всем запросам: Accept-Language, X-Forwarded-Proto и прочее'),
+  hostMap: z
+    .record(z.string())
+    .optional()
+    .describe('Подмена разрешения имён: {"www.site.local": "172.20.0.5"} — для стендов за vhost. Только chromium'),
 };
 
 const json = (data) => ({ content: [{ type: 'text', text: JSON.stringify(data, null, 2) }] });
@@ -117,20 +134,70 @@ export async function createServer() {
     'browser_eval',
     {
       title: 'Выполнить JS на странице',
-      description: 'Выполняет выражение или тело функции в контексте страницы и возвращает результат.',
+      description:
+        'Выполняет выражение или тело функции в контексте страницы и возвращает результат. Годится и IIFE, и цепочка через .map(function(){return …}), и несколько инструкций с return в конце. Если результат undefined, об этом сказано явно, а не возвращается пустой ответ.',
       inputSchema: { sessionId: z.string(), expression: z.string() },
     },
-    async ({ sessionId, expression }) => {
-      const { page } = getSession(sessionId);
-      const result = await page.evaluate(
-        (src) => {
-          // eslint-disable-next-line no-new-func
-          const fn = new Function(`return (async () => { ${src.includes('return') ? src : `return (${src})`} })()`);
-          return fn();
-        },
-        expression,
-      );
-      return json({ result });
+    async ({ sessionId, expression }) => json(await evaluateOnPage(getSession(sessionId).page, expression)),
+  );
+
+  server.registerTool(
+    'browser_style',
+    {
+      title: 'Патч CSS/JS на страницу',
+      description:
+        'Вкатывает свой CSS или JS поверх открытой страницы и переприменяет его после каждого перехода. Так проверяют правку на чужом или боевом стенде, ничего там не меняя: добавили правило — сняли скриншот — сравнили.',
+      inputSchema: {
+        sessionId: z.string(),
+        action: z.enum(['add', 'remove', 'clear', 'list']).optional().describe('По умолчанию add'),
+        css: z.string().optional().describe('Текст CSS'),
+        js: z.string().optional().describe('Скрипт, выполняется при добавлении и после каждой навигации'),
+        href: z.string().optional().describe('Подключить таблицу стилей по URL'),
+        id: z.string().optional().describe('Метка патча: повторное добавление с тем же id заменяет прежний'),
+      },
+    },
+    async ({ sessionId, action = 'add', css, js, href, id }) => {
+      const session = getSession(sessionId);
+      switch (action) {
+        case 'add':
+          return json({ added: await addInjection(session, { css, js, href, id }), injections: listInjections(session) });
+        case 'remove':
+          if (!id) throw new Error('Для remove нужен id.');
+          return json({ ...(await removeInjection(session, id)), injections: listInjections(session) });
+        case 'clear':
+          return json({ cleared: await clearInjections(session) });
+        default:
+          return json({ injections: listInjections(session) });
+      }
+    },
+  );
+
+  server.registerTool(
+    'browser_route',
+    {
+      title: 'Перехват запросов',
+      description:
+        'Правила на сетевые запросы страницы: отрезать аналитику и чаты, подменить таблицу стилей или скрипт своей версией, подставить заглушки вместо отсутствующих картинок. Переживает навигацию; в list виден счётчик попаданий, чтобы отличить несработавшее правило от сработавшего.',
+      inputSchema: {
+        sessionId: z.string(),
+        action: z.enum(['add', 'list', 'clear']).optional().describe('По умолчанию add'),
+        pattern: z.string().optional().describe('Glob (**/analytics/**) или регулярное выражение в виде /…/flags'),
+        handler: z
+          .enum(['block', 'fulfill', 'file', 'redirect', 'passthrough'])
+          .optional()
+          .describe('block — оборвать, fulfill — отдать body, file — отдать файл стенда, redirect — увести на url'),
+        body: z.string().optional(),
+        contentType: z.string().optional(),
+        status: z.number().optional(),
+        url: z.string().optional().describe('Куда увести запрос при redirect'),
+        file: z.string().optional().describe('Путь относительно рабочего каталога стенда'),
+      },
+    },
+    async ({ sessionId, action = 'add', ...rest }) => {
+      const session = getSession(sessionId);
+      if (action === 'clear') return json({ cleared: await clearRoutes(session) });
+      if (action === 'list') return json({ routes: listRoutes(session) });
+      return json({ added: await addRoute(session, rest), routes: listRoutes(session) });
     },
   );
 
@@ -197,7 +264,7 @@ export async function createServer() {
     {
       title: 'Эвристики вёрстки',
       description:
-        'Ищет горизонтальный скролл, вылеты за viewport, наложения элементов, обрезанный текст, битые картинки, картинки без размеров, мелкие тач-таргеты и низкий контраст.',
+        'Ищет горизонтальный скролл, вылеты за viewport, наложения элементов, обрезанный текст, текст под непрозрачным слоем, мёртвый z-index (задан на position: static), битые картинки, картинки без размеров, мелкие тач-таргеты и низкий контраст.',
       inputSchema: {
         sessionId: z.string(),
         minTarget: z.number().optional().describe('Минимальный размер тач-таргета, px (по умолчанию 24)'),
@@ -212,10 +279,65 @@ export async function createServer() {
     'computed_styles',
     {
       title: 'Вычисленные стили',
-      description: 'Геометрия и итоговые CSS-свойства элемента — чтобы понять, почему блок не там, где ожидается.',
-      inputSchema: { sessionId: z.string(), selector: z.string(), props: z.array(z.string()).optional() },
+      description:
+        'Геометрия и итоговые CSS-свойства элемента — чтобы понять, почему блок не там, где ожидается. Умеет псевдоэлементы (::before, ::after) и разом все совпадения селектора.',
+      inputSchema: {
+        sessionId: z.string(),
+        selector: z.string(),
+        props: z.array(z.string()).optional(),
+        pseudo: z
+          .enum(['::before', '::after', '::marker', '::placeholder', '::selection', '::first-line', '::first-letter'])
+          .optional()
+          .describe('Смотреть псевдоэлемент, а не сам элемент'),
+        all: z.boolean().optional().describe('Все совпадения селектора, а не только первое'),
+        maxItems: z.number().optional(),
+      },
     },
-    async ({ sessionId, selector, props }) => json(await computedStyles(getSession(sessionId).page, selector, props)),
+    async ({ sessionId, selector, props, pseudo, all, maxItems }) =>
+      json(await computedStyles(getSession(sessionId).page, selector, props, { pseudo, all, maxItems })),
+  );
+
+  server.registerTool(
+    'matched_rules',
+    {
+      title: 'Какое правило победило',
+      description:
+        'Все CSS-правила, матчащие элемент: селектор, специфичность, файл и строка, объявления — и по каждому свойству кто победил, а кого перебили. Отвечает на вопрос «почему моя правка не применилась», на который getComputedStyle не отвечает. Понимает псевдоэлементы. Только chromium.',
+      inputSchema: {
+        sessionId: z.string(),
+        selector: z.string(),
+        pseudo: z
+          .enum(['::before', '::after', '::marker', '::placeholder', '::selection', '::first-line', '::first-letter'])
+          .optional(),
+        properties: z
+          .array(z.string())
+          .optional()
+          .describe('Интересующие свойства, например ["z-index","position"]. Без них показываются только конфликты'),
+        maxRules: z.number().optional(),
+      },
+    },
+    async ({ sessionId, selector, pseudo, properties, maxRules }) =>
+      json(await matchedRules(getSession(sessionId).page, { selector, pseudo, properties, maxRules })),
+  );
+
+  server.registerTool(
+    'element_layers',
+    {
+      title: 'Слои и перекрытия',
+      description:
+        'Почему элемента не видно и кто лежит сверху: порядок отрисовки, цепочка стек-контекстов над элементом, перекрывающие соседи и что реально нарисовано в его точках. Отдельно предупреждает про z-index на position: static и про z-index, который считается внутри чужого стек-контекста.',
+      inputSchema: {
+        sessionId: z.string(),
+        selector: z.string(),
+        pseudo: z
+          .enum(['::before', '::after', '::marker', '::placeholder'])
+          .optional()
+          .describe('Разбирать псевдоэлемент, а не сам элемент'),
+        maxItems: z.number().optional(),
+      },
+    },
+    async ({ sessionId, selector, pseudo, maxItems }) =>
+      json(await elementLayers(getSession(sessionId).page, { selector, pseudo, maxItems })),
   );
 
   // ---------- Скриншоты и визуальная регрессия ----------
@@ -225,18 +347,22 @@ export async function createServer() {
     {
       title: 'Скриншот',
       description:
-        'Снимок страницы или элемента. Возвращает путь и URL; картинку в ответ вкладывает только при inline=true.',
+        'Снимок страницы или элемента. Возвращает путь и URL; картинку в ответ вкладывает только при inline=true. Снимок по selector — это область элемента: наехавшие на неё чужие блоки в кадр попадут.',
       inputSchema: {
         sessionId: z.string(),
         name: z.string().optional(),
         fullPage: z.boolean().optional(),
         selector: z.string().optional().describe('Снять только этот элемент'),
         mask: z.array(z.string()).optional().describe('Селекторы нестабильных зон — закрашиваются'),
+        hide: z
+          .array(z.string())
+          .optional()
+          .describe('Убрать с кадра: cookie-баннеры, чаты, всплывашки. Ставит visibility: hidden, layout не едет'),
         inline: z.boolean().optional().describe('Вложить уменьшенную картинку в ответ'),
         runId: z.string().optional(),
       },
     },
-    async ({ sessionId, name = 'screenshot', fullPage = true, selector, mask, inline = false, runId }) => {
+    async ({ sessionId, name = 'screenshot', fullPage = true, selector, mask, hide, inline = false, runId }) => {
       const session = getSession(sessionId);
       const shot = await takeScreenshot(session.page, {
         runId: runId || newRunId(slug(name)),
@@ -244,6 +370,7 @@ export async function createServer() {
         fullPage,
         selector,
         mask,
+        hide,
       });
       const content = [{ type: 'text', text: JSON.stringify(shot, null, 2) }];
       if (inline) {
@@ -266,11 +393,12 @@ export async function createServer() {
         fullPage: z.boolean().optional(),
         selector: z.string().optional(),
         mask: z.array(z.string()).optional(),
+        hide: z.array(z.string()).optional().describe('Убрать с кадра: cookie-баннеры, чаты, всплывашки'),
         threshold: z.number().optional().describe('Допустимое расхождение в процентах пикселей'),
         updateBaseline: z.boolean().optional().describe('Перезаписать эталон текущим снимком'),
       },
     },
-    async ({ sessionId, name, fullPage = true, selector, mask, threshold, updateBaseline }) => {
+    async ({ sessionId, name, fullPage = true, selector, mask, hide, threshold, updateBaseline }) => {
       const session = getSession(sessionId);
       const runId = newRunId(slug(name));
       const shot = await takeScreenshot(session.page, {
@@ -279,6 +407,7 @@ export async function createServer() {
         fullPage,
         selector,
         mask,
+        hide,
       });
       const result = await compareWithBaseline({
         runId,
@@ -419,6 +548,7 @@ export async function createServer() {
         checks: z.array(z.enum([...ALL_CHECKS, 'all'])).optional(),
         name: z.string().optional().describe('Имя прогона; используется в именах файлов и эталонов'),
         mask: z.array(z.string()).optional(),
+        hide: z.array(z.string()).optional().describe('Убрать с кадра: cookie-баннеры, чаты, всплывашки'),
         fullPage: z.boolean().optional(),
         updateBaseline: z.boolean().optional(),
         waitUntil: z
@@ -429,8 +559,8 @@ export async function createServer() {
         ...profileSchema,
       },
     },
-    async ({ url, checks, name = 'page', mask, fullPage, updateBaseline, waitUntil, timeout, ...profile }) => {
-      const report = await runAudit({ url, profile, checks, name, mask, fullPage, updateBaseline, waitUntil, timeout });
+    async ({ url, checks, name = 'page', mask, hide, fullPage, updateBaseline, waitUntil, timeout, ...profile }) => {
+      const report = await runAudit({ url, profile, checks, name, mask, hide, fullPage, updateBaseline, waitUntil, timeout });
       return json({
         runId: report.runId,
         profileKey: report.profileKey,
@@ -463,11 +593,12 @@ export async function createServer() {
         concurrency: z.number().optional().describe('Сколько комбинаций гнать параллельно (по умолчанию 2)'),
         updateBaseline: z.boolean().optional(),
         mask: z.array(z.string()).optional(),
+        hide: z.array(z.string()).optional().describe('Убрать с кадра: cookie-баннеры, чаты, всплывашки'),
       },
     },
     async ({
       url, name = 'matrix', checks, browsers, viewports, colorSchemes, rtl, zooms,
-      forcedColors, pseudoLoc, deviceScaleFactors, concurrency, updateBaseline, mask,
+      forcedColors, pseudoLoc, deviceScaleFactors, concurrency, updateBaseline, mask, hide,
     }) => {
       const result = await runMatrix({
         url,
@@ -476,6 +607,7 @@ export async function createServer() {
         concurrency,
         updateBaseline,
         mask,
+        hide,
         axes: {
           browser: browsers,
           viewport: viewports,
