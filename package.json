@@ -1,0 +1,35 @@
+{
+  "name": "layout-testing-mcp",
+  "version": "0.2.0",
+  "private": true,
+  "type": "module",
+  "description": "MCP-сервер и CLI для тестирования вёрстки в браузере",
+  "bin": {
+    "lt": "./bin/lt.mjs"
+  },
+  "scripts": {
+    "mcp:http": "node src/index.js --transport=http",
+    "mcp:stdio": "node src/index.js --transport=stdio",
+    "lt": "node bin/lt.mjs",
+    "test": "node --test \"test/*.test.js\"",
+    "test:browser": "LT_BROWSER_TESTS=1 node --test \"test/*.test.js\""
+  },
+  "engines": {
+    "node": ">=22"
+  },
+  "dependencies": {
+    "@axe-core/playwright": "^4.12.1",
+    "@modelcontextprotocol/sdk": "^1.30.0",
+    "axe-core": "^4.12.1",
+    "chrome-launcher": "^1.2.1",
+    "html-validate": "^11.6.2",
+    "lighthouse": "^13.4.1",
+    "odiff-bin": "^4.5.0",
+    "pa11y": "^9.1.1",
+    "playwright": "1.62.1",
+    "sharp": "^0.35.3",
+    "stylelint": "^17.14.1",
+    "stylelint-config-standard": "^40.0.0",
+    "zod": "^3.25.76"
+  }
+}

@@ -1,0 +1,59 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<title>Слои, стек-контексты и мёртвый z-index</title>
+<style>
+  body { margin: 0; font: 16px/1.4 system-ui, sans-serif; }
+
+  /* 1. Псевдоэлемент-затемнение поверх фото и под текстом — типовой герой-баннер. */
+  .hero { position: relative; height: 300px; overflow: hidden; color: #fff; }
+  .hero::before {
+    content: '';
+    position: absolute;
+    inset: 0;
+    z-index: 4;
+    pointer-events: none;
+    background: linear-gradient(180deg, rgba(2, 37, 69, 0) 0%, rgba(2, 37, 69, 0.62) 100%);
+  }
+  .hero__photo { position: absolute; inset: 0; background: #3a7d3a; }
+  .hero__title { position: absolute; top: 40%; left: 24px; z-index: 5; margin: 0; }
+  /* Крошки лежат ниже затемнения — при правке z-index именно они пропадают первыми. */
+  .hero__crumbs { position: absolute; top: 12px; left: 24px; z-index: 6; font-size: 12px; }
+
+  /* 2. z-index на статике: свойство задано, но не действует. */
+  .dead-z { z-index: 10; background: #eee; padding: 8px; }
+
+  /* 3. Текст, полностью закрытый непрозрачным соседом. */
+  .covered-wrap { position: relative; height: 80px; }
+  .covered-text { position: absolute; top: 20px; left: 20px; width: 240px; color: #222; }
+  .covered-lid { position: absolute; top: 0; left: 0; width: 320px; height: 80px; background: #ffffff; z-index: 2; }
+
+  /* 4. z-index, запертый в чужом стек-контексте: 999 проигрывает соседу с 2. */
+  .trapped-parent { position: relative; z-index: 1; }
+  .trapped { position: absolute; top: 0; z-index: 999; background: #ffd; }
+  .rival { position: relative; z-index: 2; background: #dfd; }
+</style>
+</head>
+<body>
+
+<section class="hero">
+  <div class="hero__photo"></div>
+  <nav class="hero__crumbs">Главная / Проекты</nav>
+  <h1 class="hero__title">Заголовок поверх затемнения</h1>
+</section>
+
+<p class="dead-z">z-index: 10 при position: static — не делает ничего</p>
+
+<div class="covered-wrap">
+  <p class="covered-text">Этот текст полностью закрыт белой крышкой сверху</p>
+  <div class="covered-lid"></div>
+</div>
+
+<div class="trapped-parent">
+  <div class="trapped">z-index: 999 внутри стек-контекста родителя</div>
+</div>
+<div class="rival">z-index: 2, но выше — стек-контексты считаются отдельно</div>
+
+</body>
+</html>

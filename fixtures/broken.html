@@ -1,0 +1,98 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Фикстура: страница с дефектами вёрстки</title>
+<style>
+  body { margin: 0; font: 16px/1.5 system-ui, sans-serif; color: #16181d; background: #fff; }
+  section { padding: 16px; border-bottom: 1px solid #e3e6ec; }
+  h2 { font-size: 15px; margin: 0 0 10px; color: #5b6270; text-transform: uppercase; letter-spacing: .04em; }
+
+  /* 1. Шире viewport — даёт горизонтальный скролл всему документу. */
+  .too-wide { width: 3000px; height: 60px; background: linear-gradient(90deg, #ffd7d5, #ffb3ae); }
+
+  /* 2. Наложение соседей в потоке. */
+  .stack-a { height: 90px; background: #d6e4ff; }
+  .stack-b { height: 90px; background: #ffe8b3; margin-top: -60px; }
+
+  /* 3. Текст, не влезающий в свою коробку. */
+  .clipped { width: 220px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+             border: 1px solid #c9ced8; padding: 6px; }
+  .clipped-box { width: 220px; height: 40px; overflow: hidden; border: 1px solid #c9ced8; padding: 6px; }
+
+  /* 6. Тач-таргет меньше минимума. */
+  .tiny { width: 20px; height: 20px; padding: 0; font-size: 11px; }
+
+  /* 7. Контраст ниже 4.5:1. */
+  .pale { color: #b6bcc6; background: #ffffff; }
+
+  .cls-slot { min-height: 0; }
+</style>
+</head>
+<body>
+
+<!-- Секция сдвига стоит первой намеренно: CLS засчитывается только для
+     сдвигов в видимой области, внизу длинной страницы он был бы нулевым. -->
+<section id="cls">
+  <h2>10. Сдвиг layout после загрузки</h2>
+  <div class="cls-slot" id="late"></div>
+  <p>Абзац под слотом уезжает вниз, когда баннер доедет.</p>
+</section>
+
+<section id="overflow">
+  <h2>1. Вылет за viewport</h2>
+  <div class="too-wide">Блок шириной 3000px</div>
+</section>
+
+<section id="overlap">
+  <h2>2. Наложение элементов</h2>
+  <div>
+    <div class="stack-a">Верхний блок</div>
+    <div class="stack-b">Нижний блок наезжает на верхний</div>
+  </div>
+</section>
+
+<section id="clipping">
+  <h2>3. Обрезанный текст</h2>
+  <div class="clipped">Очень длинный заголовок карточки, который не помещается в отведённую ширину</div>
+  <div class="clipped-box">Многострочный текст, обрезанный по высоте: вторая и третья строки за границей коробки и пользователю не видны совсем.</div>
+</section>
+
+<section id="images">
+  <h2>4–5. Битая картинка и картинка без размеров</h2>
+  <img src="/fixtures/no-such-image.png" alt="Битая иллюстрация">
+  <img src="data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHdpZHRoPSIzMjAiIGhlaWdodD0iMTIwIj48cmVjdCB3aWR0aD0iMzIwIiBoZWlnaHQ9IjEyMCIgZmlsbD0iI2NmZTNmZiIvPjwvc3ZnPg==">
+  <img src="data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHdpZHRoPSI4MCIgaGVpZ2h0PSI4MCI+PGNpcmNsZSBjeD0iNDAiIGN5PSI0MCIgcj0iMzYiIGZpbGw9IiNmZmQ3ZDUiLz48L3N2Zz4=" width="80" height="80">
+</section>
+
+<section id="targets">
+  <h2>6. Мелкий тач-таргет</h2>
+  <button class="tiny">×</button>
+  <a href="#overflow" style="display:inline-block;width:18px;height:18px;">↑</a>
+</section>
+
+<section id="contrast">
+  <h2>7. Низкий контраст</h2>
+  <p class="pale">Этот текст почти не читается: контраст со светлым фоном ниже требуемых 4.5:1.</p>
+</section>
+
+<section id="a11y">
+  <h2>8–9. Невалидный HTML и проблемы доступности</h2>
+  <p id="dup">Дублирующийся идентификатор — первый.</p>
+  <p id="dup">Дублирующийся идентификатор — второй.</p>
+  <img src="data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHdpZHRoPSI2MCIgaGVpZ2h0PSI2MCI+PHJlY3Qgd2lkdGg9IjYwIiBoZWlnaHQ9IjYwIiBmaWxsPSIjZTBlM2U5Ii8+PC9zdmc+" width="60" height="60">
+  <p><input type="text" name="email" placeholder="Почта"></p>
+  <p><a href="#">здесь</a></p>
+</section>
+
+<script>
+  // Поздняя вставка баннера сдвигает всё, что ниже: это и есть CLS.
+  setTimeout(() => {
+    const slot = document.getElementById('late');
+    slot.innerHTML = '<div style="height:140px;background:#ffe8b3;padding:12px">Баннер, приехавший через 600 мс</div>';
+  }, 600);
+</script>
+
+</body>
+</html>
