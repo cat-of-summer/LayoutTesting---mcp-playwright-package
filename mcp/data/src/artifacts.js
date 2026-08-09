@@ -24,16 +24,31 @@ export async function runDir(runId) {
   return dir;
 }
 
-/** Абсолютный путь -> ссылка, которую отдаёт nginx. */
-export function publicUrl(absPath) {
+function relToArtifacts(absPath) {
   const rel = path.relative(DIRS.artifacts, absPath).split(path.sep).join('/');
-  if (rel.startsWith('..')) return null;
-  return `${CONFIG.publicBaseUrl}/${rel}`;
+  return rel.startsWith('..') ? null : rel;
 }
 
-/** Единый вид ссылки на артефакт в ответах инструментов. */
+/** Абсолютный путь -> ссылка, которую отдаёт nginx наружу. */
+export function publicUrl(absPath) {
+  const rel = relToArtifacts(absPath);
+  return rel === null ? null : `${CONFIG.publicBaseUrl}/${rel}`;
+}
+
+/** Та же ссылка, но пригодная для навигации из браузера самого стенда. */
+export function internalUrl(absPath) {
+  const rel = relToArtifacts(absPath);
+  return rel === null ? null : `${CONFIG.internalBaseUrl}/${rel}`;
+}
+
+/**
+ * Единый вид ссылки на артефакт в ответах инструментов.
+ *
+ * Ссылок две, и это не избыточность: `url` открывается на машине пользователя,
+ * `internalUrl` — из browser_goto, потому что внутри контейнера проброшенного порта нет.
+ */
 export function artifactRef(absPath) {
-  return { path: absPath, url: publicUrl(absPath) };
+  return { path: absPath, url: publicUrl(absPath), internalUrl: internalUrl(absPath) };
 }
 
 export async function ensureDirs() {

@@ -11,7 +11,11 @@
     "mcp:http": "node src/index.js --transport=http",
     "mcp:stdio": "node src/index.js --transport=stdio",
     "lt": "node bin/lt.mjs",
-    "test": "node --test test/"
+    "test": "node --test \"test/*.test.js\"",
+    "test:browser": "LT_BROWSER_TESTS=1 node --test \"test/*.test.js\""
+  },
+  "engines": {
+    "node": ">=22"
   },
   "dependencies": {
     "@axe-core/playwright": "^4.12.1",

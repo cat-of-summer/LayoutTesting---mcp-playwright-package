@@ -1,0 +1,42 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<title>Битые адреса картинок</title>
+<!--
+  Самый дорогой случай: страница отвечает 200, вёрстка на месте, а медиа не доехало —
+  типично, когда база отдаёт абсолютные адреса боевого домена, недостижимого со стенда.
+
+  Снимок при этом «удаётся»: у картинок с заданной пропорцией остаётся коробка нужного
+  размера, и пустые рамки замечаются уже на готовом кадре. Поэтому навигация и снимок
+  обязаны сами сообщать о неудачных запросах.
+
+  Файлы под /missing/ тестовый сервер отдаёт как 404.
+-->
+<style>
+  body { margin: 0; font: 16px/1.5 sans-serif; padding: 24px; }
+  figure { margin: 0 0 24px; }
+  /* Пропорция держит коробку даже у неудавшейся картинки — блок не схлопывается,
+     и по высоте снимка поломку не отличить. */
+  img { display: block; width: 320px; aspect-ratio: 4 / 3; background: #f0efec; }
+</style>
+</head>
+<body>
+  <h1>Страница отвечает 200</h1>
+
+  <figure>
+    <img src="missing/one.jpg" alt="">
+    <figcaption>Снимок первый</figcaption>
+  </figure>
+
+  <figure>
+    <img src="missing/two.jpg" alt="">
+    <figcaption>Снимок второй</figcaption>
+  </figure>
+
+  <figure>
+    <img src="missing/three.jpg" alt="">
+    <figcaption>Снимок третий</figcaption>
+  </figure>
+</body>
+</html>

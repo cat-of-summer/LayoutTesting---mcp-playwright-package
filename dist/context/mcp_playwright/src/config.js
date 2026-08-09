@@ -24,8 +24,17 @@ function safeExecutablePath() {
 
 export const CONFIG = {
   mcpPort: Number(process.env.MCP_PORT || 8931),
-  /** База для публичных ссылок на артефакты; та же, что отдаёт nginx. */
+  /**
+   * База для публичных ссылок на артефакты — с точки зрения того, кто смотрит снаружи:
+   * порт проброшен на хост.
+   */
   publicBaseUrl: (process.env.PUBLIC_BASE_URL || 'http://127.0.0.1:8089').replace(/\/+$/, ''),
+  /**
+   * Тот же nginx, но изнутри контейнера, где проброшенного порта не существует.
+   * Различать обязательно: браузер стенда живёт здесь же, и по публичной ссылке
+   * он получает ECONNREFUSED — открыть собственный артефакт нечем.
+   */
+  internalBaseUrl: (process.env.INTERNAL_BASE_URL || 'http://127.0.0.1').replace(/\/+$/, ''),
   vnuUrl: (process.env.VNU_URL || 'http://vnu_layout:8888').replace(/\/+$/, ''),
   /**
    * Lighthouse и pa11y запускают браузер сами. Спрашиваем путь у Playwright:

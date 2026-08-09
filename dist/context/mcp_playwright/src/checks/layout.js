@@ -4,7 +4,7 @@
  */
 
 function collectLayoutIssues(options) {
-  const { minTarget, contrastRatio, maxItems } = options;
+  const { minTarget, contrastRatio, maxItems, categories } = options;
 
   const cssPath = (el) => {
     if (!el || el.nodeType !== 1) return '';
@@ -37,6 +37,21 @@ function collectLayoutIssues(options) {
     w: Math.round(r.width),
     h: Math.round(r.height),
   });
+
+  /**
+   * Адрес картинки для отчёта. Инлайн-картинка приезжает сюда целиком: страница
+   * с двумя-тремя десятками data:-URI раздувала ответ до мегабайта, и он переставал
+   * помещаться в лимит — отчёт пропадал ровно там, где было что показать.
+   */
+  const shortSrc = (img) => {
+    const src = img.currentSrc || img.src || '';
+    if (!src) return '(пусто)';
+    if (src.startsWith('data:')) {
+      const head = src.slice(0, src.indexOf(',') + 1) || 'data:';
+      return `${head}…(${Math.round(src.length / 1024)} КБ)`;
+    }
+    return src.length > 200 ? `${src.slice(0, 200)}…` : src;
+  };
 
   const isVisible = (el, style, rect) =>
     rect.width > 0 &&
@@ -339,10 +354,10 @@ function collectLayoutIssues(options) {
 
   for (const img of Array.from(document.images)) {
     const rect = img.getBoundingClientRect();
-    if (img.complete && img.naturalWidth === 0) {
+    if (img.complete && img.naturalWidth === 0 && issues.brokenImages.length < maxItems) {
       issues.brokenImages.push({
         selector: cssPath(img),
-        src: img.currentSrc || img.src || '(пусто)',
+        src: shortSrc(img),
         alt: img.getAttribute('alt'),
         box: box(rect),
       });
@@ -353,10 +368,10 @@ function collectLayoutIssues(options) {
     const sized =
       (img.hasAttribute('width') && img.hasAttribute('height')) ||
       (style.aspectRatio && style.aspectRatio !== 'auto');
-    if (!sized && rect.width > 0) {
+    if (!sized && rect.width > 0 && issues.imagesWithoutDimensions.length < maxItems) {
       issues.imagesWithoutDimensions.push({
         selector: cssPath(img),
-        src: img.currentSrc || img.src || '(пусто)',
+        src: shortSrc(img),
         box: box(rect),
         why: 'нет width/height и aspect-ratio — источник сдвига layout при загрузке',
       });
@@ -411,16 +426,42 @@ function collectLayoutIssues(options) {
   const counts = Object.fromEntries(
     Object.entries(issues).map(([k, v]) => [k, Array.isArray(v) ? v.length : v ? 1 : 0]),
   );
+
+  // Счётчики нужны всегда: по ним видно, что категория непустая, даже когда
+  // подробности по ней не запрашивали.
+  const wanted = Array.isArray(categories) && categories.length ? new Set(categories) : null;
+  const shown = wanted
+    ? Object.fromEntries(Object.entries(issues).filter(([k]) => wanted.has(k)))
+    : issues;
+
   return {
     viewport: { width: vw, height: vh },
     total: Object.values(counts).reduce((a, b) => a + b, 0),
     counts,
-    issues,
+    ...(wanted ? { categories: [...wanted] } : {}),
+    issues: shown,
   };
 }
 
-export async function layoutAudit(page, { minTarget = 24, contrastRatio = 4.5, maxItems = 50 } = {}) {
-  return page.evaluate(collectLayoutIssues, { minTarget, contrastRatio, maxItems });
+export const AUDIT_CATEGORIES = [
+  'documentOverflow',
+  'overflowingElements',
+  'overlaps',
+  'clippedText',
+  'brokenImages',
+  'imagesWithoutDimensions',
+  'tinyTargets',
+  'lowContrast',
+  'textOverImage',
+  'coveredText',
+  'deadZIndex',
+];
+
+export async function layoutAudit(
+  page,
+  { minTarget = 24, contrastRatio = 4.5, maxItems = 50, categories = null } = {},
+) {
+  return page.evaluate(collectLayoutIssues, { minTarget, contrastRatio, maxItems, categories });
 }
 
 /** Дамп вычисленных стилей — «почему этот блок не там, где я жду». */

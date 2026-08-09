@@ -105,7 +105,10 @@ export async function applyThrottle(page, profile) {
   return true;
 }
 
-export async function stabilize(page, { pseudoLoc = false, waitFonts = true, settleMs = 150 } = {}) {
+export async function stabilize(
+  page,
+  { pseudoLoc = false, waitFonts = true, settleMs = 150, imagesTimeoutMs = 5000 } = {},
+) {
   await page.addStyleTag({ content: KILL_MOTION_CSS }).catch(() => {});
 
   if (pseudoLoc) {
@@ -121,22 +124,60 @@ export async function stabilize(page, { pseudoLoc = false, waitFonts = true, set
       .catch(() => {});
   }
 
-  // Догоняем ленивые изображения: без прокрутки скриншот полной страницы часть их не увидит.
-  await page
-    .evaluate(async () => {
-      const imgs = Array.from(document.images).filter((i) => !i.complete);
+  const images = await loadLazyImages(page, imagesTimeoutMs);
+
+  if (settleMs) await page.waitForTimeout(settleMs);
+
+  return { images };
+}
+
+/**
+ * Догружает ленивые изображения перед снимком.
+ *
+ * Ждать `load` мало: у картинки с `loading="lazy"` ниже сгиба загрузка вообще не начата,
+ * событие не придёт никогда, и ожидание просто истечёт по таймауту — в кадр попадёт пустая
+ * рамка. Поэтому сначала снимаем ленивость и прокручиваем документ, чтобы браузер сам
+ * запустил загрузку, и только потом ждём.
+ *
+ * Возвращает сводку: сколько не доехало и сколько битых — молча пустой кадр хуже,
+ * чем кадр с честной пометкой.
+ */
+export async function loadLazyImages(page, timeoutMs = 5000) {
+  return page
+    .evaluate(async (timeout) => {
+      const imgs = Array.from(document.images);
+
+      for (const img of imgs) {
+        img.loading = 'eager';
+        img.removeAttribute('loading');
+        img.decoding = 'sync';
+        if ('fetchPriority' in img) img.fetchPriority = 'high';
+      }
+
+      // Прокрутка нужна и после снятия loading: часть скриптов подставляет настоящий
+      // src по IntersectionObserver, и без появления в кадре он не подставится.
+      const startY = window.scrollY;
+      const step = Math.max(200, window.innerHeight);
+      for (let y = 0; y < document.documentElement.scrollHeight; y += step) {
+        window.scrollTo(0, y);
+        await new Promise((r) => requestAnimationFrame(r));
+      }
+      window.scrollTo(0, startY);
+
+      const pending = imgs.filter((i) => !i.complete);
       await Promise.all(
-        imgs.map(
+        pending.map(
           (img) =>
             new Promise((res) => {
               img.addEventListener('load', res, { once: true });
               img.addEventListener('error', res, { once: true });
-              setTimeout(res, 3000);
+              setTimeout(res, timeout);
             }),
         ),
       );
-    })
-    .catch(() => {});
 
-  if (settleMs) await page.waitForTimeout(settleMs);
+      const broken = imgs.filter((i) => i.complete && i.naturalWidth === 0).length;
+      return { total: imgs.length, stillPending: imgs.filter((i) => !i.complete).length, broken };
+    }, timeoutMs)
+    .catch(() => null);
 }

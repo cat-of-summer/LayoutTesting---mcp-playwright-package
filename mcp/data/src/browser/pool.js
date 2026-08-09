@@ -148,6 +148,46 @@ export async function closeSession(id) {
   return true;
 }
 
+/** Логин из адреса убираем: иначе он расползается по отчётам и именам артефактов. */
+export function sanitizeUrl(value) {
+  try {
+    const u = new URL(value);
+    if (!u.username && !u.password) return value;
+    u.username = '';
+    u.password = '';
+    return u.toString();
+  } catch {
+    return value;
+  }
+}
+
+/**
+ * Сводка неудачных запросов страницы.
+ *
+ * Битые картинки не роняют навигацию: страница честно отвечает 200, снимок снимается,
+ * и то, что половина медиа не доехала, выясняется в лучшем случае глазами на готовом
+ * кадре. Поэтому считаем и кладём прямо в ответ навигации и снимка.
+ */
+export function summarizeFailures(entries, { limit = 5 } = {}) {
+  const failed = entries.filter((n) => n.failure || (n.status && n.status >= 400));
+  if (!failed.length) return null;
+
+  const byType = {};
+  for (const item of failed) {
+    byType[item.resourceType || 'other'] = (byType[item.resourceType || 'other'] || 0) + 1;
+  }
+  return {
+    failedRequests: failed.length,
+    byResourceType: byType,
+    firstFailures: failed.slice(0, limit).map((n) => ({
+      url: sanitizeUrl(n.url).slice(0, 200),
+      resourceType: n.resourceType,
+      status: n.status,
+      failure: n.failure,
+    })),
+  };
+}
+
 export async function gotoAndSettle(
   session,
   url,
@@ -155,6 +195,9 @@ export async function gotoAndSettle(
 ) {
   let response = null;
   let timedOut = false;
+  // Отметка в журнале: всё, что после неё, относится к этому переходу, а не к прошлому.
+  const logMark = session.logs.network.length;
+
   try {
     response = await session.page.goto(url, { waitUntil, timeout });
   } catch (err) {
@@ -165,22 +208,37 @@ export async function gotoAndSettle(
     await session.page.waitForLoadState('domcontentloaded', { timeout: 5000 }).catch(() => {});
   }
 
+  let images = null;
   if (stabilizePage) {
-    await stabilize(session.page, { pseudoLoc: session.profile.pseudoLoc });
+    ({ images } = await stabilize(session.page, { pseudoLoc: session.profile.pseudoLoc }));
   }
 
   // Патчи агента возвращаем последними: они должны перебивать и стили страницы,
   // и служебный CSS стабилизации.
   await reapplyInjections(session);
 
+  const status = response?.status() ?? null;
   const result = {
-    status: response?.status() ?? null,
-    url: session.page.url(),
+    status,
+    url: sanitizeUrl(session.page.url()),
     title: await session.page.title().catch(() => ''),
   };
   if (timedOut) {
     result.navigationTimedOut = true;
     result.note = `Событие "${waitUntil}" не наступило за ${timeout} мс — проверки идут по тому, что отрисовано.`;
+  }
+
+  const warnings = summarizeFailures(session.logs.network.slice(logMark));
+  if (warnings || images?.broken || images?.stillPending) {
+    result.warnings = {
+      ...(warnings || {}),
+      ...(images?.broken ? { brokenImages: images.broken } : {}),
+      ...(images?.stillPending ? { imagesStillLoading: images.stillPending } : {}),
+      note: 'Часть ресурсов страницы не загрузилась — снимок будет неполным. Подробности: page_logs.',
+    };
+  }
+  if (status === 401) {
+    result.hint = 'Страница за HTTP-аутентификацией. Передайте auth: "пользователь:пароль" при открытии сессии — в URL логин зашивать не надо.';
   }
   return result;
 }

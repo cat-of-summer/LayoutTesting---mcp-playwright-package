@@ -1,20 +1,38 @@
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { z } from 'zod';
 import path from 'node:path';
-import { readFile } from 'node:fs/promises';
+import { readFile, readdir, stat } from 'node:fs/promises';
+
+/** Расширения, которые нет смысла отдавать как utf8. */
+const IMAGE_MIME = {
+  '.png': 'image/png',
+  '.jpg': 'image/jpeg',
+  '.jpeg': 'image/jpeg',
+  '.webp': 'image/webp',
+  '.gif': 'image/gif',
+  '.avif': 'image/avif',
+};
 
 import { CONFIG, DIRS, BROWSERS, VIEWPORTS } from './config.js';
 import { artifactRef, ensureDirs, listRuns, newRunId, pruneRuns, publicUrl, slug } from './artifacts.js';
-import { createSession, closeSession, getSession, listSessions, gotoAndSettle } from './browser/pool.js';
+import {
+  createSession,
+  closeSession,
+  getSession,
+  listSessions,
+  gotoAndSettle,
+  summarizeFailures,
+} from './browser/pool.js';
 import { profileKey } from './browser/profile.js';
 import { evaluateOnPage } from './browser/evaluate.js';
 import { addInjection, clearInjections, listInjections, removeInjection } from './browser/inject.js';
 import { addRoute, clearRoutes, listRoutes } from './browser/routes.js';
-import { layoutAudit, computedStyles } from './checks/layout.js';
+import { layoutAudit, computedStyles, AUDIT_CATEGORIES } from './checks/layout.js';
 import { matchedRules } from './checks/cssom.js';
 import { elementLayers } from './checks/layers.js';
 import { pageSnapshot } from './checks/snapshot.js';
 import { takeScreenshot, compareWithBaseline, inlineImage, listBaselines } from './checks/visual.js';
+import { buildVisualGuide } from './checks/guide.js';
 import { runAxe, runPa11y } from './checks/a11y.js';
 import { installVitalsCollector, readVitals, runLighthouse } from './checks/perf.js';
 import { validateHtmlWithVnu, validateHtmlLocal, lintCss, readLocalFile } from './checks/static.js';
@@ -177,20 +195,29 @@ export async function createServer() {
     {
       title: 'Перехват запросов',
       description:
-        'Правила на сетевые запросы страницы: отрезать аналитику и чаты, подменить таблицу стилей или скрипт своей версией, подставить заглушки вместо отсутствующих картинок. Переживает навигацию; в list виден счётчик попаданий, чтобы отличить несработавшее правило от сработавшего.',
+        'Правила на сетевые запросы страницы: отрезать аналитику и чаты, подменить таблицу стилей или скрипт своей версией, подставить заглушки вместо отсутствующих картинок, переписать адреса — когда сайт отдаёт абсолютные ссылки на боевой домен. Переживает навигацию; в list виден счётчик попаданий, чтобы отличить несработавшее правило от сработавшего.',
       inputSchema: {
         sessionId: z.string(),
         action: z.enum(['add', 'list', 'clear']).optional().describe('По умолчанию add'),
         pattern: z.string().optional().describe('Glob (**/analytics/**) или регулярное выражение в виде /…/flags'),
         handler: z
-          .enum(['block', 'fulfill', 'file', 'redirect', 'passthrough'])
+          .enum(['block', 'fulfill', 'file', 'redirect', 'rewrite', 'passthrough'])
           .optional()
-          .describe('block — оборвать, fulfill — отдать body, file — отдать файл стенда, redirect — увести на url'),
+          .describe(
+            'block — оборвать, fulfill — отдать body, file — отдать файл стенда, redirect — увести все совпадения на один url, rewrite — заменить кусок адреса, сохранив путь',
+          ),
         body: z.string().optional(),
         contentType: z.string().optional(),
         status: z.number().optional(),
         url: z.string().optional().describe('Куда увести запрос при redirect'),
         file: z.string().optional().describe('Путь относительно рабочего каталога стенда'),
+        from: z
+          .string()
+          .optional()
+          .describe(
+            'Для rewrite: что заменить в адресе. Подстрока или регулярное выражение в виде /…/flags. Например /^https?:\\/\\/site\\.ru/',
+          ),
+        to: z.string().optional().describe('Для rewrite: чем заменить. В регулярном выражении работают $1, $2'),
       },
     },
     async ({ sessionId, action = 'add', ...rest }) => {
@@ -269,10 +296,15 @@ export async function createServer() {
         sessionId: z.string(),
         minTarget: z.number().optional().describe('Минимальный размер тач-таргета, px (по умолчанию 24)'),
         contrastRatio: z.number().optional().describe('Требуемый контраст обычного текста (по умолчанию 4.5)'),
+        maxItems: z.number().optional().describe('Сколько примеров показывать в каждой категории (по умолчанию 50)'),
+        categories: z
+          .array(z.enum(AUDIT_CATEGORIES))
+          .optional()
+          .describe('Подробности только по этим категориям. Счётчики по всем возвращаются всегда'),
       },
     },
-    async ({ sessionId, minTarget, contrastRatio }) =>
-      json(await layoutAudit(getSession(sessionId).page, { minTarget, contrastRatio })),
+    async ({ sessionId, minTarget, contrastRatio, maxItems, categories }) =>
+      json(await layoutAudit(getSession(sessionId).page, { minTarget, contrastRatio, maxItems, categories })),
   );
 
   server.registerTool(
@@ -347,7 +379,7 @@ export async function createServer() {
     {
       title: 'Скриншот',
       description:
-        'Снимок страницы или элемента. Возвращает путь и URL; картинку в ответ вкладывает только при inline=true. Снимок по selector — это область элемента: наехавшие на неё чужие блоки в кадр попадут.',
+        'Снимок страницы или элемента. Возвращает путь и URL; картинку в ответ вкладывает только при inline=true. Снимок по selector — это область элемента: наехавшие на неё чужие блоки в кадр попадут. Если часть ресурсов страницы не загрузилась, в ответе будет warnings — снимок в этом случае неполный.',
       inputSchema: {
         sessionId: z.string(),
         name: z.string().optional(),
@@ -358,11 +390,33 @@ export async function createServer() {
           .array(z.string())
           .optional()
           .describe('Убрать с кадра: cookie-баннеры, чаты, всплывашки. Ставит visibility: hidden, layout не едет'),
+        isolate: z
+          .array(z.string())
+          .optional()
+          .describe(
+            'Оставить в кадре только эти элементы, остальных соседей убрать из потока (display: none). Так снимают пару соседних блоков без остальных — например, чтобы показать наложение',
+          ),
+        format: z.enum(['png', 'jpeg', 'webp']).optional().describe('По умолчанию png'),
+        quality: z.number().optional().describe('Качество jpeg и webp, 1–100 (по умолчанию 80)'),
+        maxWidth: z.number().optional().describe('Уменьшить до этой ширины — для вставки в документы'),
         inline: z.boolean().optional().describe('Вложить уменьшенную картинку в ответ'),
         runId: z.string().optional(),
       },
     },
-    async ({ sessionId, name = 'screenshot', fullPage = true, selector, mask, hide, inline = false, runId }) => {
+    async ({
+      sessionId,
+      name = 'screenshot',
+      fullPage = true,
+      selector,
+      mask,
+      hide,
+      isolate,
+      format,
+      quality,
+      maxWidth,
+      inline = false,
+      runId,
+    }) => {
       const session = getSession(sessionId);
       const shot = await takeScreenshot(session.page, {
         runId: runId || newRunId(slug(name)),
@@ -371,8 +425,18 @@ export async function createServer() {
         selector,
         mask,
         hide,
+        isolate,
+        format,
+        quality,
+        maxWidth,
       });
-      const content = [{ type: 'text', text: JSON.stringify(shot, null, 2) }];
+
+      // Снимок «удался» и при полностью битой странице: сообщаем об этом здесь,
+      // а не оставляем агенту выяснять по пустым рамкам на готовом кадре.
+      const failures = summarizeFailures(session.logs.network);
+      const payload = failures ? { ...shot, warnings: failures } : shot;
+
+      const content = [{ type: 'text', text: JSON.stringify(payload, null, 2) }];
       if (inline) {
         const img = await inlineImage(shot.path);
         content.push({ type: 'image', data: img.data, mimeType: img.mimeType });
@@ -386,7 +450,7 @@ export async function createServer() {
     {
       title: 'Сравнить с эталоном',
       description:
-        'Снимает страницу и сравнивает с эталоном. Если эталона нет, снимок становится эталоном и это сообщается явно.',
+        'Снимает страницу и сравнивает с эталоном. Если эталона нет, снимок становится эталоном и это сообщается явно. Формат и масштаб здесь не настраиваются намеренно: сравнение попиксельное, и любая перекодировка обесценила бы накопленные эталоны.',
       inputSchema: {
         sessionId: z.string(),
         name: z.string().describe('Имя эталона'),
@@ -394,11 +458,15 @@ export async function createServer() {
         selector: z.string().optional(),
         mask: z.array(z.string()).optional(),
         hide: z.array(z.string()).optional().describe('Убрать с кадра: cookie-баннеры, чаты, всплывашки'),
+        isolate: z
+          .array(z.string())
+          .optional()
+          .describe('Оставить в кадре только эти элементы (display: none остальным соседям)'),
         threshold: z.number().optional().describe('Допустимое расхождение в процентах пикселей'),
         updateBaseline: z.boolean().optional().describe('Перезаписать эталон текущим снимком'),
       },
     },
-    async ({ sessionId, name, fullPage = true, selector, mask, hide, threshold, updateBaseline }) => {
+    async ({ sessionId, name, fullPage = true, selector, mask, hide, isolate, threshold, updateBaseline }) => {
       const session = getSession(sessionId);
       const runId = newRunId(slug(name));
       const shot = await takeScreenshot(session.page, {
@@ -408,6 +476,7 @@ export async function createServer() {
         selector,
         mask,
         hide,
+        isolate,
       });
       const result = await compareWithBaseline({
         runId,
@@ -419,6 +488,57 @@ export async function createServer() {
       });
       return json({ runId, ...result });
     },
+  );
+
+  server.registerTool(
+    'visual_guide',
+    {
+      title: 'Визуальный справочник',
+      description:
+        'Собирает один самодостаточный HTML: перечисленные блоки страницы, снятые в нескольких ширинах, с подписями параметров. Документ для человека — контент-менеджеру показать, что даёт каждая комбинация настроек. Картинки вшиты в файл, его можно переслать одним вложением.',
+      inputSchema: {
+        url: z.string().describe('Страница, с которой снимать'),
+        items: z
+          .array(
+            z.object({
+              selector: z.string().describe('Блок, который снимаем'),
+              title: z.string().optional().describe('Заголовок карточки'),
+              params: z.record(z.string()).optional().describe('Подписи вида «Расположение: Горизонтальное»'),
+              note: z.string().optional(),
+              isolate: z
+                .array(z.string())
+                .optional()
+                .describe('Оставить в кадре только это — например блок и его соседа, чтобы показать наложение'),
+              hide: z.array(z.string()).optional(),
+            }),
+          )
+          .describe('Варианты по порядку появления в документе'),
+        title: z.string().optional(),
+        intro: z.string().optional().describe('Абзац-введение под заголовком'),
+        profiles: z
+          .array(z.string())
+          .optional()
+          .describe('Ширины: имена пресетов или WxH. По умолчанию ["desktop","mobile"]'),
+        auth: z.string().optional().describe('HTTP basic auth в виде "пользователь:пароль"'),
+        browser: z.enum(BROWSERS).optional(),
+        format: z.enum(['png', 'jpeg', 'webp']).optional().describe('Формат вшитых картинок, по умолчанию webp'),
+        quality: z.number().optional(),
+        maxWidth: z.number().optional().describe('Ширина вшитых картинок, по умолчанию 1000'),
+      },
+    },
+    async ({ url, items, title, intro, profiles, auth, browser, format, quality, maxWidth }) =>
+      json(
+        await buildVisualGuide({
+          url,
+          items,
+          title,
+          intro,
+          profiles,
+          auth,
+          browser,
+          image: { format, quality, maxWidth },
+        }),
+      ),
   );
 
   server.registerTool(
@@ -672,13 +792,32 @@ export async function createServer() {
     'read_artifact',
     {
       title: 'Прочитать артефакт',
-      description: 'Читает JSON или текстовый файл из каталога артефактов.',
-      inputSchema: { file: z.string().describe('Путь относительно каталога артефактов') },
+      description:
+        'Читает файл из каталога артефактов. Текст и JSON отдаются как есть, картинки и прочие бинарники — в base64: иначе снимок, который стенд сам же и сделал, забрать через MCP нечем.',
+      inputSchema: {
+        file: z.string().describe('Путь относительно каталога артефактов'),
+        encoding: z
+          .enum(['auto', 'utf8', 'base64'])
+          .optional()
+          .describe('auto (по умолчанию) определяет по расширению'),
+      },
     },
-    async ({ file }) => {
+    async ({ file, encoding = 'auto' }) => {
       const abs = path.resolve(DIRS.artifacts, file);
       if (!abs.startsWith(DIRS.artifacts)) throw new Error('Путь выходит за пределы каталога артефактов.');
-      return text(await readFile(abs, 'utf8'));
+
+      const mime = IMAGE_MIME[path.extname(abs).toLowerCase()];
+      const binary = encoding === 'base64' || (encoding === 'auto' && Boolean(mime));
+      if (!binary) return text(await readFile(abs, 'utf8'));
+
+      const buf = await readFile(abs);
+      const payload = { file, bytes: buf.length, mimeType: mime || 'application/octet-stream', encoding: 'base64' };
+      const content = [{ type: 'text', text: JSON.stringify(payload, null, 2) }];
+      // Картинку кладём и как image-контент: агенту чаще нужно на неё посмотреть,
+      // а не разбирать base64 руками.
+      if (mime) content.push({ type: 'image', data: buf.toString('base64'), mimeType: mime });
+      else content.push({ type: 'text', text: buf.toString('base64') });
+      return { content };
     },
   );
 
@@ -686,10 +825,29 @@ export async function createServer() {
     'read_project_file',
     {
       title: 'Прочитать файл стенда',
-      description: 'Читает файл из рабочего каталога стенда — фикстуру, конфиг матрицы, CSS.',
+      description:
+        'Читает файл из рабочего каталога стенда — фикстуру, конфиг матрицы, CSS. Если указан каталог, возвращает его содержимое.',
       inputSchema: { file: z.string() },
     },
-    async ({ file }) => text(await readLocalFile(file)),
+    async ({ file }) => {
+      const abs = path.resolve(DIRS.root, file);
+      if (!abs.startsWith(DIRS.root)) throw new Error('Путь выходит за пределы рабочего каталога стенда.');
+
+      // Каталог вместо файла — обычная опечатка в пути. Сырой EISDIR ничего
+      // не подсказывает, а листинг сразу показывает, что здесь лежит.
+      const info = await stat(abs).catch(() => null);
+      if (!info) {
+        throw new Error(`Нет такого файла: ${file}. Корень стенда — ${DIRS.root}.`);
+      }
+      if (info.isDirectory()) {
+        const entries = await readdir(abs, { withFileTypes: true });
+        return json({
+          directory: file || '.',
+          entries: entries.map((e) => (e.isDirectory() ? `${e.name}/` : e.name)).sort(),
+        });
+      }
+      return text(await readLocalFile(file));
+    },
   );
 
   server.registerTool(
@@ -707,6 +865,9 @@ export async function createServer() {
         version: pkg.version,
         dirs: DIRS,
         publicBaseUrl: CONFIG.publicBaseUrl,
+        internalBaseUrl: CONFIG.internalBaseUrl,
+        baseUrlNote:
+          'publicBaseUrl — для человека снаружи. Внутри стенда проброшенного порта нет: в browser_goto подставляйте internalBaseUrl.',
         vnu: { url: CONFIG.vnuUrl, state: vnu },
         chromePath: CONFIG.chromePath || '(не задан)',
         browsers: BROWSERS,

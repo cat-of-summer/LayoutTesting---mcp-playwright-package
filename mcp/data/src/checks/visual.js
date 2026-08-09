@@ -6,6 +6,77 @@ import { CONFIG } from '../config.js';
 import { artifactRef, baselinePath, runDir, slug } from '../artifacts.js';
 
 const HIDE_MARK = 'data-lt-hide';
+const ISOLATE_MARK = 'data-lt-isolate';
+
+const FORMATS = {
+  png: { ext: 'png', mime: 'image/png' },
+  jpeg: { ext: 'jpg', mime: 'image/jpeg' },
+  webp: { ext: 'webp', mime: 'image/webp' },
+};
+
+/**
+ * Оставляет в кадре только перечисленные элементы, остальных соседей убирает
+ * из потока.
+ *
+ * Отличие от `hide`: тот ставит visibility и место за элементом сохраняет — это верно
+ * для баннеров поверх макета, но бесполезно, когда надо показать пару соседних блоков
+ * без остальных десяти: пустоты между ними останутся. Здесь именно display: none.
+ *
+ * Прячем не всё подряд, а только ветки, которые не ведут к нужным элементам, — иначе
+ * вместе с соседями исчезло бы и содержимое самих оставленных блоков.
+ */
+async function withIsolated(page, rootSelector, keep, fn) {
+  if (!keep || !keep.length) return fn();
+
+  const found = await page.evaluate(
+    ([mark, rootSel, list]) => {
+      const root = rootSel ? document.querySelector(rootSel) : document.body;
+      if (!root) return 0;
+
+      const kept = list.flatMap((sel) => Array.from(root.querySelectorAll(sel)));
+      if (!kept.length) return 0;
+
+      const keptSet = new Set(kept);
+      const ancestors = new Set();
+      for (const el of kept) {
+        let node = el.parentElement;
+        while (node && node !== root.parentElement) {
+          ancestors.add(node);
+          node = node.parentElement;
+        }
+      }
+
+      const style = document.createElement('style');
+      style.setAttribute(`${mark}-style`, '');
+      style.textContent = `[${mark}]{display:none !important}`;
+      document.head.appendChild(style);
+
+      const walk = (node) => {
+        for (const child of Array.from(node.children)) {
+          if (keptSet.has(child)) continue;
+          if (ancestors.has(child)) walk(child);
+          else child.setAttribute(mark, '');
+        }
+      };
+      walk(root);
+      return kept.length;
+    },
+    [ISOLATE_MARK, rootSelector, keep],
+  );
+
+  if (!found) throw new Error(`isolate: ни один из селекторов не найден внутри ${rootSelector || 'body'}.`);
+
+  try {
+    return await fn();
+  } finally {
+    await page
+      .evaluate((mark) => {
+        document.querySelectorAll(`[${mark}]`).forEach((n) => n.removeAttribute(mark));
+        document.querySelectorAll(`style[${mark}-style]`).forEach((n) => n.remove());
+      }, ISOLATE_MARK)
+      .catch(() => {});
+  }
+}
 
 /**
  * Убирает мешающие слои перед снимком: cookie-баннеры, чаты, всплывашки.
@@ -44,26 +115,56 @@ export async function takeScreenshot(page, {
   clip = null,
   mask = [],
   hide = [],
+  isolate = [],
   omitBackground = false,
+  format = 'png',
+  quality = 80,
+  maxWidth = null,
+  timeout = undefined,
 } = {}) {
+  const spec = FORMATS[format];
+  if (!spec) throw new Error(`Неизвестный формат: ${format}. Доступны: ${Object.keys(FORMATS).join(', ')}.`);
+
   const dir = await runDir(runId);
-  const file = path.join(dir, `${slug(name)}.png`);
+  const file = path.join(dir, `${slug(name)}.${spec.ext}`);
 
   const maskLocators = (mask || []).map((sel) => page.locator(sel));
-  const common = { path: file, mask: maskLocators, maskColor: '#FF00FF', omitBackground };
+  const common = {
+    mask: maskLocators,
+    maskColor: '#FF00FF',
+    omitBackground,
+    ...(timeout === undefined ? {} : { timeout }),
+  };
 
-  await withHidden(page, hide, async () => {
-    if (selector) {
-      await page.locator(selector).first().screenshot(common);
-    } else if (clip) {
-      await page.screenshot({ ...common, clip });
-    } else {
-      await page.screenshot({ ...common, fullPage });
-    }
-  });
+  // Снимаем в буфер, а не сразу в файл: перекодировать и уменьшить всё равно нужно
+  // здесь же, и лишний проход через диск ничего не даёт.
+  const raw = await withIsolated(page, selector, isolate, () =>
+    withHidden(page, hide, async () => {
+      if (selector) return page.locator(selector).first().screenshot(common);
+      if (clip) return page.screenshot({ ...common, clip });
+      return page.screenshot({ ...common, fullPage });
+    }),
+  );
 
-  const meta = await sharp(file).metadata();
-  return { ...artifactRef(file), name, width: meta.width, height: meta.height };
+  let pipeline = sharp(raw);
+  if (maxWidth) pipeline = pipeline.resize({ width: maxWidth, withoutEnlargement: true });
+  if (format === 'png') pipeline = pipeline.png({ compressionLevel: 9 });
+  if (format === 'jpeg') pipeline = pipeline.jpeg({ quality });
+  if (format === 'webp') pipeline = pipeline.webp({ quality });
+
+  const out = await pipeline.toBuffer();
+  await fs.writeFile(file, out);
+
+  const meta = await sharp(out).metadata();
+  return {
+    ...artifactRef(file),
+    name,
+    width: meta.width,
+    height: meta.height,
+    format,
+    mimeType: spec.mime,
+    bytes: out.length,
+  };
 }
 
 /** Уменьшенная копия для инлайн-отдачи агенту: полный PNG съедает контекст. */
@@ -73,6 +174,31 @@ export async function inlineImage(absPath, maxWidth = 900) {
     .png({ compressionLevel: 9 })
     .toBuffer();
   return { data: buf.toString('base64'), mimeType: 'image/png', bytes: buf.length };
+}
+
+/**
+ * Картинка как data:-URI — для отчётов, которые должны пересылаться одним файлом.
+ * PNG со скриншотами фотографий весит столько, что документ из пары десятков кадров
+ * перестаёт открываться; webp с ограничением по ширине даёт тот же документ на порядок легче.
+ */
+export async function imageDataUri(absPath, { format = 'webp', quality = 80, maxWidth = 1000 } = {}) {
+  const spec = FORMATS[format];
+  if (!spec) throw new Error(`Неизвестный формат: ${format}.`);
+
+  let pipeline = sharp(absPath);
+  if (maxWidth) pipeline = pipeline.resize({ width: maxWidth, withoutEnlargement: true });
+  if (format === 'png') pipeline = pipeline.png({ compressionLevel: 9 });
+  if (format === 'jpeg') pipeline = pipeline.jpeg({ quality });
+  if (format === 'webp') pipeline = pipeline.webp({ quality });
+
+  const buf = await pipeline.toBuffer();
+  const meta = await sharp(buf).metadata();
+  return {
+    uri: `data:${spec.mime};base64,${buf.toString('base64')}`,
+    width: meta.width,
+    height: meta.height,
+    bytes: buf.length,
+  };
 }
 
 async function exists(p) {

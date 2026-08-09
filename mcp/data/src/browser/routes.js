@@ -38,31 +38,61 @@ export function toMatcher(pattern) {
   return m ? new RegExp(m[1], m[2]) : pattern;
 }
 
+/**
+ * Замена в адресе запроса с сохранением пути.
+ *
+ * `redirect` уводит все совпадения на один фиксированный адрес, и для самого частого
+ * случая — «база отдаёт абсолютные ссылки боевого домена» — он бесполезен: пути у картинок
+ * разные, а подменить надо только хост.
+ *
+ * `from` в виде /…/flags — регулярное выражение (в `to` работают $1, $2), иначе —
+ * подстрока, заменяется везде, где встретилась.
+ */
+export function rewriteUrl(url, from, to) {
+  const matcher = toMatcher(from);
+  return matcher instanceof RegExp ? url.replace(matcher, to) : url.split(from).join(to);
+}
+
 let counter = 0;
 
 export function listRoutes(session) {
-  return (session.routes || []).map(({ id, pattern, handler, hits, target }) => ({
-    id,
-    pattern,
-    handler,
-    target,
-    hits,
-  }));
+  return (session.routes || []).map(
+    ({ id, pattern, handler, hits, rewrites, target, lastRewrite, lastError }) => ({
+      id,
+      pattern,
+      handler,
+      target,
+      hits,
+      // У rewrite попадание в pattern ещё ничего не значит: адрес мог не содержать
+      // то, что заменяем. Без отдельного счётчика правило с полусотней попаданий
+      // и нулём замен выглядит рабочим.
+      ...(handler === 'rewrite' ? { rewrites } : {}),
+      ...(lastRewrite ? { lastRewrite } : {}),
+      ...(lastError ? { lastError } : {}),
+    }),
+  );
 }
 
-export async function addRoute(session, { pattern, handler = 'block', body, contentType, status = 200, url, file }) {
+export async function addRoute(
+  session,
+  { pattern, handler = 'block', body, contentType, status = 200, url, file, from, to },
+) {
   if (!pattern) throw new Error('Нужен pattern.');
   if (handler === 'fulfill' && body === undefined) throw new Error('Для fulfill нужен body.');
   if (handler === 'redirect' && !url) throw new Error('Для redirect нужен url.');
   if (handler === 'file' && !file) throw new Error('Для file нужен file — путь относительно рабочего каталога стенда.');
+  if (handler === 'rewrite' && (!from || to === undefined)) {
+    throw new Error('Для rewrite нужны from и to — что заменить в адресе и на что.');
+  }
 
   session.routes = session.routes || [];
   const entry = {
     id: `route-${(counter += 1)}`,
     pattern,
     handler,
-    target: url || file || null,
+    target: url || file || (handler === 'rewrite' ? `${from} → ${to}` : null),
     hits: 0,
+    rewrites: 0,
   };
 
   const fn = async (route, request) => {
@@ -80,6 +110,18 @@ export async function addRoute(session, { pattern, handler = 'block', body, cont
         });
       case 'redirect':
         return route.continue({ url });
+      case 'rewrite': {
+        const next = rewriteUrl(request.url(), from, to);
+        if (next === request.url()) return route.continue();
+        // Playwright не даёт сменить протокол на лету: без явной ошибки правило
+        // выглядело бы сработавшим, а запрос уходил бы по старому адресу.
+        if (new URL(next).protocol !== new URL(request.url()).protocol) {
+          throw new Error(`rewrite не может сменить протокол: ${request.url()} → ${next}`);
+        }
+        entry.rewrites += 1;
+        entry.lastRewrite = { from: request.url(), to: next };
+        return route.continue({ url: next });
+      }
       case 'passthrough':
         return route.continue();
       default:

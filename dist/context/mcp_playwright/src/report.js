@@ -1,4 +1,5 @@
 import path from 'node:path';
+import { imageDataUri } from './checks/visual.js';
 
 const esc = (v) =>
   String(v ?? '')
@@ -56,18 +57,34 @@ function metricRows(cell) {
   return rows.map(([k, v]) => `<tr><td>${esc(k)}</td><td>${esc(v)}</td></tr>`).join('');
 }
 
-export async function renderMatrixReport({ url, name, cells, runId }) {
-  const cards = cells
-    .map((cell) => {
-      const shot = cell.ok && cell.results?.screenshot?.path;
-      const img = shot
-        ? `<img class="shot" loading="lazy" src="${esc(path.basename(shot))}" alt="${esc(cell.key)}">`
-        : '';
-      const diff = cell.ok && cell.results?.visual?.diff?.path;
-      const diffImg = diff
-        ? `<img class="shot" loading="lazy" src="${esc(path.basename(diff))}" alt="diff ${esc(cell.key)}">`
-        : '';
-      return `<div class="cell">
+/**
+ * Отчёт по умолчанию ссылается на соседние файлы и живёт только внутри своего каталога:
+ * переслать его одним файлом нельзя. inlineImages вшивает картинки в разметку —
+ * тогда отчёт открывается откуда угодно и переживает пересылку.
+ */
+export async function renderMatrixReport({ url, name, cells, runId, inlineImages = false, image = {} }) {
+  const srcFor = async (absPath) => {
+    if (!inlineImages) return esc(path.basename(absPath));
+    const { uri } = await imageDataUri(absPath, {
+      format: image.format || 'webp',
+      quality: image.quality ?? 80,
+      maxWidth: image.maxWidth ?? 1000,
+    });
+    return uri;
+  };
+
+  const cards = (
+    await Promise.all(
+      cells.map(async (cell) => {
+        const shot = cell.ok && cell.results?.screenshot?.path;
+        const img = shot
+          ? `<img class="shot" loading="lazy" src="${await srcFor(shot)}" alt="${esc(cell.key)}">`
+          : '';
+        const diff = cell.ok && cell.results?.visual?.diff?.path;
+        const diffImg = diff
+          ? `<img class="shot" loading="lazy" src="${await srcFor(diff)}" alt="diff ${esc(cell.key)}">`
+          : '';
+        return `<div class="cell">
   <h2>${esc(cell.key)}</h2>
   ${img}${diffImg}
   <div class="body">
@@ -75,8 +92,9 @@ export async function renderMatrixReport({ url, name, cells, runId }) {
     <table>${metricRows(cell)}</table>
   </div>
 </div>`;
-    })
-    .join('\n');
+      }),
+    )
+  ).join('\n');
 
   const problems = cells.filter((c) => c.ok && c.summary.verdict !== 'проблем не найдено').length;
   const failed = cells.filter((c) => !c.ok).length;
