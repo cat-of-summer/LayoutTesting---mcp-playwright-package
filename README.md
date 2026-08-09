@@ -19,11 +19,15 @@
 
 ```sh
 mkdir -p ~/layout && cd ~/layout
-base=https://raw.githubusercontent.com/cat-of-summer/LayoutTesting---mcp-playwright-package/main/dist
+base=https://github.com/cat-of-summer/LayoutTesting---mcp-playwright-package/releases/latest/download
 curl -fsSL -o docker-compose.yml "$base/docker-compose.yml"
 curl -fsSL -o .env               "$base/.env.example"
 docker compose up -d
 ```
+
+Файлы берутся из релиза, а не из ветки: они генерируются при сборке и в git не лежат.
+Релиз выпускается тем же тегом, что и образ, поэтому compose и образ всегда одной версии —
+из ветки они могли разъехаться.
 
 Первый запуск качает образ: внутри три браузерных движка, поэтому он большой. Готово,
 когда `docker compose ps` показывает `healthy`.
@@ -539,14 +543,20 @@ nginx для раздачи отчётов, Nu HTML Checker (валидатор 
 `nginx`, `playwright` и `vnu` сводит в один образ
 [dockerbundle](https://github.com/cat-of-summer/DockerBundle---python): он читает те же
 compose-файлы, что и стенд, и раскладывает сервисы по supervisord. Решения записаны в
-`bundle.yml`, особенности этих трёх сервисов — в `recipes/`. Результат лежит в `dist/` и
-коммитится: так его видно в дифе, и на нём же собирается образ в CI.
+`bundle.yml`, особенности этих трёх сервисов — в `recipes/`. Результат ложится в `dist/` и
+**в git не хранится**: генератор `bundle_v0.1.0` лежит в репозитории, и CI собирает `dist/`
+сам на каждом прогоне. Иначе в дереве жили бы и исходник, и результат — с конфликтами в
+сгенерированных файлах и риском однажды собрать образ из того, чего в `bundle.yml` уже нет.
 
 Перегенерировать после правок:
 
 ```sh
-dockerbundle generate
+./bundle_v0.1.0 generate
 ```
+
+Генератор — ELF под Linux. На Windows запускать через WSL, хостовый Git Bash его не
+выполнит. Версия в имени файла — чтобы обновление генератора было видно в дифе, а не
+меняло поведение сборки молча.
 
 `traefik` и `network` в бандл не входят — они помечены `enabled: false` и живут снаружи.
 

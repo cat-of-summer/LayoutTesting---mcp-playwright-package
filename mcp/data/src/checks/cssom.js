@@ -96,6 +96,41 @@ function sourceOf(header, rule) {
   };
 }
 
+/**
+ * Протокол отдаёт объявления стиля двумя склеенными наборами: сначала авторские, как их
+ * написали в таблице (у них есть range и text), следом — раскрытый набор лонгхендов той же
+ * таблицы (range нет). Для правила `color: red` это буквально одно и то же объявление
+ * дважды, и без разделения оно приезжает в отчёт как конфликт с самим собой.
+ *
+ * Наборы нужны разные и для разного:
+ * — показываем авторский, как это делает панель Styles: человек ищет строку, которую писал;
+ * — в разбор «кто кого перебил» добавляем лонгхенды, которых в авторском тексте нет, иначе
+ *   `margin: 0` из одного правила и `margin-top: 5px` из другого не встретятся ни по одному
+ *   имени свойства и конфликт останется невидимым.
+ *
+ * У правил user-agent авторского набора нет вовсе — там раскрытый и есть единственный.
+ */
+export function splitDeclarations(style) {
+  const all = (style?.cssProperties || []).filter((p) => !p.disabled && p.value !== undefined);
+  const authored = all.filter((p) => p.range);
+  const expanded = all.filter((p) => !p.range);
+
+  const shown = authored.length ? authored : expanded;
+  const shownNames = new Set(shown.map((p) => p.name));
+  const view = (p) => ({
+    name: p.name,
+    value: p.value,
+    important: Boolean(p.important),
+    implicit: Boolean(p.implicit),
+  });
+
+  return {
+    declarations: shown.map(view),
+    // Лонгхенды шорткатов: важность на них протокол проставляет сам, брать её у шортката не нужно.
+    expanded: authored.length ? expanded.filter((p) => !shownNames.has(p.name)).map(view) : [],
+  };
+}
+
 function ruleView(entry, sheets) {
   const { rule, matchingSelectors = [] } = entry;
   const selectors = rule.selectorList?.selectors || [];
@@ -115,9 +150,7 @@ function ruleView(entry, sheets) {
     origin: rule.origin,
     media: (rule.media || []).map((m) => m.text).filter(Boolean),
     source: sourceOf(sheets.get(rule.styleSheetId), rule),
-    declarations: (rule.style?.cssProperties || [])
-      .filter((p) => !p.disabled && p.value !== undefined)
-      .map((p) => ({ name: p.name, value: p.value, important: Boolean(p.important), implicit: Boolean(p.implicit) })),
+    ...splitDeclarations(rule.style),
   };
 }
 
@@ -174,9 +207,7 @@ export async function matchedRules(page, { selector, pseudo, properties, maxRule
           origin: 'inline',
           media: [],
           source: { file: '(атрибут style)', line: null, column: null },
-          declarations: matched.inlineStyle.cssProperties
-            .filter((p) => !p.disabled && p.value !== undefined)
-            .map((p) => ({ name: p.name, value: p.value, important: Boolean(p.important), implicit: Boolean(p.implicit) })),
+          ...splitDeclarations(matched.inlineStyle),
         }
       : null;
 
@@ -184,7 +215,7 @@ export async function matchedRules(page, { selector, pseudo, properties, maxRule
     const wanted = properties && properties.length ? new Set(properties) : null;
 
     const declarations = ordered.flatMap((r) =>
-      r.declarations
+      [...r.declarations, ...r.expanded]
         .filter((d) => (wanted ? wanted.has(d.name) : !d.implicit))
         .map((d) => ({ ...d, from: `${r.selector} [${r.specificity}] ${r.source.file}${r.source.line ? `:${r.source.line}` : ''}` })),
     );
@@ -198,7 +229,9 @@ export async function matchedRules(page, { selector, pseudo, properties, maxRule
       selector,
       pseudo: pseudo || null,
       rulesCount: entries.length,
-      rules: ordered,
+      // Раскрытые лонгхенды нужны были только для разбора конфликтов: в правиле показываем
+      // то, что автор написал.
+      rules: ordered.map(({ expanded, ...rule }) => rule),
       winners: conflicts.slice(0, maxProperties),
       note: ordered.some((r) => r.source?.minified)
         ? 'Часть правил из минифицированной таблицы: строка там всегда первая, ориентируйтесь на колонку.'

@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { computeSpecificity, normalizePseudo, resolveWinners, specificityLabel } from '../src/checks/cssom.js';
+import { computeSpecificity, normalizePseudo, resolveWinners, specificityLabel, splitDeclarations } from '../src/checks/cssom.js';
 
 const spec = (selector) => specificityLabel(computeSpecificity(selector));
 
@@ -62,4 +62,89 @@ test('среди нескольких important выигрывает после�
 test('свойство без конфликта возвращается без перебитых', () => {
   const winners = resolveWinners([{ name: 'position', value: 'relative', important: false, from: '.a' }]);
   assert.deepEqual(winners[0].overridden, []);
+});
+
+/**
+ * Слепки сняты с CSS.getMatchedStylesForNode на chromium: протокол склеивает авторские
+ * объявления (у них есть range) с раскрытым набором лонгхендов (range нет).
+ */
+const range = { startLine: 1, startColumn: 5, endLine: 1, endColumn: 20 };
+
+test('повтор авторского объявления в раскрытом наборе не превращается в конфликт с самим собой', () => {
+  const { declarations, expanded } = splitDeclarations({
+    cssProperties: [
+      { name: 'color', value: 'rgb(200,30,30)', implicit: false, disabled: false, range },
+      { name: 'z-index', value: '5', implicit: false, disabled: false, range },
+      { name: 'color', value: 'rgb(200, 30, 30)' },
+      { name: 'z-index', value: '5' },
+    ],
+  });
+
+  assert.deepEqual(declarations.map((d) => d.name), ['color', 'z-index']);
+  assert.deepEqual(expanded, []);
+
+  const winners = resolveWinners([...declarations, ...expanded].map((d) => ({ ...d, from: '.a' })));
+  assert.deepEqual(winners.map((w) => w.overridden.length), [0, 0]);
+});
+
+test('лонгхенды шортката остаются для разбора, но в правило не попадают', () => {
+  const { declarations, expanded } = splitDeclarations({
+    cssProperties: [
+      { name: 'margin', value: '0 auto !important', important: true, implicit: false, disabled: false, range },
+      { name: 'margin-top', value: '0px !important', important: true },
+      { name: 'margin-left', value: 'auto !important', important: true },
+    ],
+  });
+
+  assert.deepEqual(declarations.map((d) => d.name), ['margin']);
+  assert.deepEqual(expanded.map((d) => d.name), ['margin-top', 'margin-left']);
+  assert.ok(expanded.every((d) => d.important), 'важность лонгхендов протокол проставляет сам');
+});
+
+test('шорткат перебивает лонгхенд из другого правила', () => {
+  const shorthand = splitDeclarations({
+    cssProperties: [
+      { name: 'margin', value: '0 auto !important', important: true, implicit: false, disabled: false, range },
+      { name: 'margin-top', value: '0px !important', important: true },
+    ],
+  });
+  const longhand = splitDeclarations({
+    cssProperties: [
+      { name: 'margin-top', value: '5px', implicit: false, disabled: false, range },
+      { name: 'margin-top', value: '5px' },
+    ],
+  });
+
+  const winners = resolveWinners([
+    ...[...shorthand.declarations, ...shorthand.expanded].map((d) => ({ ...d, from: '.a' })),
+    ...[...longhand.declarations, ...longhand.expanded].map((d) => ({ ...d, from: '.b' })),
+  ]);
+
+  const marginTop = winners.find((w) => w.property === 'margin-top');
+  assert.equal(marginTop.from, '.a', 'important из шортката сильнее позднего лонгхенда');
+  assert.deepEqual(marginTop.overridden.map((o) => o.from), ['.b']);
+});
+
+test('у правил user-agent авторского набора нет — берётся раскрытый', () => {
+  const { declarations, expanded } = splitDeclarations({
+    cssProperties: [
+      { name: 'display', value: 'block' },
+      { name: 'font-weight', value: 'bold' },
+    ],
+  });
+
+  assert.deepEqual(declarations.map((d) => d.name), ['display', 'font-weight']);
+  assert.deepEqual(expanded, []);
+});
+
+test('выключенные и пустые объявления отбрасываются', () => {
+  const { declarations } = splitDeclarations({
+    cssProperties: [
+      { name: 'color', value: 'red', disabled: true, range },
+      { name: 'border', value: undefined, range },
+      { name: 'display', value: 'flex', disabled: false, range },
+    ],
+  });
+
+  assert.deepEqual(declarations.map((d) => d.name), ['display']);
 });
