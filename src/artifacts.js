@@ -21,7 +21,30 @@ export function slug(value) {
 export async function runDir(runId) {
   const dir = path.join(DIRS.artifacts, runId);
   await fs.mkdir(dir, { recursive: true });
+  await autoPrune(runId);
   return dir;
+}
+
+/*
+ * Автоочистка при заведении нового прогона.
+ *
+ * artifactsKeep задуман как «сколько держать перед автоочисткой», но чистил только
+ * ручной вызов artifacts_clean, и каталог рос до тех пор, пока об этом не вспомнят.
+ * Чистим не чаще раза на прогон и никогда — тот прогон, который сейчас заводим.
+ */
+let lastPrunedFor = null;
+async function autoPrune(runId) {
+  if (!CONFIG.artifactsKeep || lastPrunedFor === runId) return;
+  lastPrunedFor = runId;
+  try {
+    const runs = await listRuns();
+    for (const run of runs.slice(CONFIG.artifactsKeep)) {
+      if (run === runId) continue;
+      await fs.rm(path.join(DIRS.artifacts, run), { recursive: true, force: true });
+    }
+  } catch {
+    // Уборка не повод ронять прогон: артефакты важнее свободного места.
+  }
 }
 
 function relToArtifacts(absPath) {

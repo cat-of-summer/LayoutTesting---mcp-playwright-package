@@ -4,9 +4,35 @@ import sharp from 'sharp';
 import { compare as odiffCompare } from 'odiff-bin';
 import { CONFIG } from '../config.js';
 import { artifactRef, baselinePath, runDir, slug } from '../artifacts.js';
+import { revealAll, placeholderBrokenMedia } from '../browser/stabilize.js';
 
 const HIDE_MARK = 'data-lt-hide';
 const ISOLATE_MARK = 'data-lt-isolate';
+
+/**
+ * Выбирает элемент для съёмки по селектору.
+ *
+ * `locator(...).first()` берёт первое совпадение в DOM, не глядя на видимость. Если первым
+ * оказался скрытый узел — а на страницах с шаблонами и модалками это обычное дело, — снимок
+ * упирается в таймаут ожидания видимости и отдаёт англоязычную простыню Playwright через
+ * полминуты. Ждать тут нечего: сколько совпадений и какие из них видимы, известно сразу.
+ */
+async function resolveShotTarget(page, selector, timeout) {
+  const locator = page.locator(selector);
+  const total = await locator.count();
+
+  if (!total) throw new Error(`Селектор ${selector} ничего не нашёл на странице.`);
+
+  for (let i = 0; i < total; i += 1) {
+    const candidate = locator.nth(i);
+    if (await candidate.isVisible()) return candidate;
+  }
+
+  throw new Error(
+    `Селектор ${selector}: совпадений ${total}, видимых нет — снимать нечего. ` +
+      'Уточните селектор либо снимите скрытие перед съёмкой.',
+  );
+}
 
 const FORMATS = {
   png: { ext: 'png', mime: 'image/png' },
@@ -121,6 +147,8 @@ export async function takeScreenshot(page, {
   quality = 80,
   maxWidth = null,
   timeout = undefined,
+  placeholders = true,
+  placeholderSize = 1000,
 } = {}) {
   const spec = FORMATS[format];
   if (!spec) throw new Error(`Неизвестный формат: ${format}. Доступны: ${Object.keys(FORMATS).join(', ')}.`);
@@ -136,11 +164,20 @@ export async function takeScreenshot(page, {
     ...(timeout === undefined ? {} : { timeout }),
   };
 
+  /*
+   * Стабилизация живёт в навигации, а снимок бывает и без неё: после действия, правки
+   * стилей или просто вторым подряд. К этому моменту появляющиеся по прокрутке блоки
+   * успевают спрятаться обратно, а подгруженная позже битая картинка — схлопнуть коробку.
+   * Поэтому обе поправки повторяем перед каждым кадром.
+   */
+  if (placeholders) await placeholderBrokenMedia(page, { size: placeholderSize });
+  if (fullPage && !selector && !clip) await revealAll(page);
+
   // Снимаем в буфер, а не сразу в файл: перекодировать и уменьшить всё равно нужно
   // здесь же, и лишний проход через диск ничего не даёт.
   const raw = await withIsolated(page, selector, isolate, () =>
     withHidden(page, hide, async () => {
-      if (selector) return page.locator(selector).first().screenshot(common);
+      if (selector) return (await resolveShotTarget(page, selector, timeout)).screenshot(common);
       if (clip) return page.screenshot({ ...common, clip });
       return page.screenshot({ ...common, fullPage });
     }),

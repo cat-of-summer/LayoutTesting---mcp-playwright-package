@@ -107,7 +107,14 @@ export async function applyThrottle(page, profile) {
 
 export async function stabilize(
   page,
-  { pseudoLoc = false, waitFonts = true, settleMs = 150, imagesTimeoutMs = 5000 } = {},
+  {
+    pseudoLoc = false,
+    waitFonts = true,
+    settleMs = 150,
+    imagesTimeoutMs = 5000,
+    placeholders = true,
+    placeholderSize = 1000,
+  } = {},
 ) {
   await page.addStyleTag({ content: KILL_MOTION_CSS }).catch(() => {});
 
@@ -125,10 +132,159 @@ export async function stabilize(
   }
 
   const images = await loadLazyImages(page, imagesTimeoutMs);
+  const stubbed = placeholders ? await placeholderBrokenMedia(page, { size: placeholderSize }) : null;
+  const revealed = await revealAll(page);
 
   if (settleMs) await page.waitForTimeout(settleMs);
 
-  return { images };
+  return { images, stubbed, revealed };
+}
+
+/**
+ * Подставляет заглушку вместо визуального содержимого, которое не доехало.
+ *
+ * Битая картинка схлопывает свою коробку до размера alt-текста, и вёрстка вокруг едет:
+ * карточка становится ниже, сетка съезжает. Сравнивать такую страницу с макетом — значит
+ * мерить не вёрстку, а доступность файлов. Заглушка возвращает коробке заявленный размер,
+ * и разбор снова говорит про раскладку.
+ *
+ * Размер заглушке не вычисляем — его определяет браузер, и это принципиально. Заманчиво
+ * прочитать getComputedStyle и взять оттуда ширину с высотой, но у битой картинки коробку
+ * держит alt-текст: вычисленные размеры вернут именно его, то есть ровно ту схлопнутую
+ * коробку, которую мы и пришли чинить.
+ *
+ * Поэтому подставляется квадрат заданного размера, а дальше работает обычный каскад:
+ * есть атрибуты width/height — коробка станет по ним; заданы размеры стилями — по стилям;
+ * не задано ничего — останется квадрат, и его пропорция станет пропорцией блока. Последний
+ * случай — честная догадка: у не доехавшего файла собственных пропорций взять неоткуда.
+ *
+ * Факт подмены не прячем: сколько именно коробок подменено, возвращается наверх, а
+ * битые картинки как были находкой навигации, так и остаются.
+ */
+export async function placeholderBrokenMedia(page, { size = 1000 } = {}) {
+  return page
+    .evaluate((side) => {
+      const svg = `data:image/svg+xml,${encodeURIComponent(
+        `<svg xmlns="http://www.w3.org/2000/svg" width="${side}" height="${side}" viewBox="0 0 ${side} ${side}">` +
+          `<rect width="100%" height="100%" fill="#c9ced8"/>` +
+          `<path d="M0 0L${side} ${side}M${side} 0L0 ${side}" stroke="#9aa3b2" stroke-width="2" fill="none"/>` +
+          `</svg>`,
+      )}`;
+
+      const stubbed = { images: 0, videos: 0 };
+
+      for (const img of Array.from(document.images)) {
+        // complete + нулевая натуральная ширина — это и 404, и пустой src.
+        if (!img.complete || img.naturalWidth !== 0) continue;
+        // srcset перебил бы подставленный src, если его не убрать.
+        img.removeAttribute('srcset');
+        img.src = svg;
+        img.dataset.ltPlaceholder = '';
+        stubbed.images += 1;
+      }
+
+      for (const video of Array.from(document.querySelectorAll('video'))) {
+        // networkState 3 — источник не найден; readyState 0 — ни кадра не загружено.
+        const broken = video.networkState === 3 || (video.readyState === 0 && !video.poster);
+        if (!broken) continue;
+        video.poster = svg;
+        video.dataset.ltPlaceholder = '';
+        stubbed.videos += 1;
+      }
+
+      return stubbed;
+    }, size)
+    .catch(() => null);
+}
+
+/**
+ * Проявляет блоки, которые появляются только при прокрутке.
+ *
+ * Второй «молчаливый» дефект съёмки после ленивых картинок: блок ниже сгиба спрятан в CSS
+ * (`opacity: 0`), а показывает его наблюдатель пересечения. Событие load такую страницу не
+ * ждёт, и fullPage выходит с пустыми местами, ничего об этом не сообщая. Дальше испорченный
+ * кадр молча становится эталоном визуальной регрессии.
+ *
+ * Прокрутки самой по себе мало, ловушек две:
+ *
+ *  - наблюдатель ставится не в первом кадре (AOS.init внутри setTimeout), и проход,
+ *    выполненный раньше, не проявит ничего — поэтому на каждом шаге ждём пару кадров
+ *    и даём микропаузу, а перед началом отпускаем поток на задержку инициализации;
+ *  - библиотеки с `once: false` прячут блок обратно, когда он уходит из вида, поэтому
+ *    возврат наверх снял бы результат прохода — то, что проявилось, закрепляем инлайном.
+ *
+ * Закрепляем только те узлы, которые проход действительно изменил: подменять стили всем
+ * подряд значило бы рисовать в кадре то, чего на странице нет.
+ */
+export async function revealAll(page, { initDelayMs = 200, maxCandidates = 3000 } = {}) {
+  return page
+    .evaluate(
+      async ({ initDelay, maxNodes }) => {
+        const frame = () => new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)));
+        const hiddenNow = (el) => {
+          const s = getComputedStyle(el);
+          return Number(s.opacity) === 0 || s.visibility === 'hidden';
+        };
+
+        // Даём инициализироваться наблюдателям, поставленным с задержкой.
+        await new Promise((r) => setTimeout(r, initDelay));
+
+        const candidates = Array.from(document.body ? document.body.querySelectorAll('*') : [])
+          .filter(hiddenNow)
+          .slice(0, maxNodes);
+
+        if (!candidates.length) return { candidates: 0, revealed: 0, pinned: 0 };
+
+        const startY = window.scrollY;
+        const step = Math.max(200, Math.round(window.innerHeight * 0.8));
+        const height = () => document.documentElement.scrollHeight;
+
+        /*
+         * Снимать состояние в конце прохода нельзя: блок, показанный в середине, к концу
+         * уже уедет из вида и библиотека с `once: false` успеет спрятать его обратно.
+         * Поэтому отмечаем проявившихся на каждом шаге, а отмеченных больше не опрашиваем —
+         * список тает по ходу, и лишних вычислений стиля не набирается.
+         */
+        const shown = [];
+        let waiting = candidates;
+        const collect = () => {
+          const rest = [];
+          for (const el of waiting) {
+            if (hiddenNow(el)) rest.push(el);
+            else shown.push(el);
+          }
+          waiting = rest;
+        };
+
+        for (let y = 0; y < height(); y += step) {
+          window.scrollTo(0, y);
+          await frame();
+          await new Promise((r) => setTimeout(r, 30));
+          collect();
+        }
+        window.scrollTo(0, height());
+        await frame();
+        await new Promise((r) => setTimeout(r, 30));
+        collect();
+
+        window.scrollTo(0, startY);
+        await frame();
+
+        // …и возвращаем тем, кого спрятали обратно.
+        let pinned = 0;
+        for (const el of shown) {
+          if (!hiddenNow(el)) continue;
+          el.style.setProperty('opacity', '1', 'important');
+          el.style.setProperty('visibility', 'visible', 'important');
+          el.style.setProperty('transform', 'none', 'important');
+          pinned += 1;
+        }
+
+        return { candidates: candidates.length, revealed: shown.length, pinned };
+      },
+      { initDelay: initDelayMs, maxNodes: maxCandidates },
+    )
+    .catch(() => null);
 }
 
 /**

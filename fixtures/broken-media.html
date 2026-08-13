@@ -1,0 +1,58 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Фикстура: не доехавшее визуальное содержимое</title>
+<!--
+  Битая картинка ломает не только себя.
+
+  Коробка схлопывается до размера alt-текста, и всё вокруг едет вверх: карточка становится
+  ниже, сетка съезжает, соседний блок оказывается не на своём месте. Сравнивать такую
+  страницу с макетом бессмысленно — меряется доступность файлов, а не вёрстка.
+
+  Здесь собраны все случаи, для которых заявленный размер известен по-разному:
+
+    #attrs  — есть width/height: размер заглушки берётся оттуда;
+    #css    — размеры заданы стилями: берутся вычисленные;
+    #naked  — не известно ничего: остаётся запасной квадрат;
+    #video  — видео без источника: заглушка идёт в poster;
+    #ok     — рабочая картинка рядом: её подменять нельзя ни при каких условиях.
+
+  Файлы под /missing/ тестовый сервер честно 404-ит, поэтому открывать фикстуру нужно
+  по http: под file:// ошибки загрузки не воспроизводятся.
+-->
+<style>
+  body { margin: 0; font: 16px/1.5 system-ui, sans-serif; }
+  figure { margin: 0; padding: 12px; }
+  #css img { width: 320px; height: 240px; }
+  .after { height: 80px; background: #d6e4ff; }
+</style>
+</head>
+<body>
+
+<figure id="attrs">
+  <img src="/missing/with-attrs.png" alt="размеры в атрибутах" width="400" height="300">
+</figure>
+
+<figure id="css">
+  <img src="/missing/with-css.png" alt="размеры в стилях">
+</figure>
+
+<figure id="naked">
+  <img src="/missing/no-size.png" alt="размеры не заданы">
+</figure>
+
+<figure id="video">
+  <video src="/missing/clip.mp4" width="480" height="270" controls></video>
+</figure>
+
+<figure id="ok">
+  <img src="/img/fine.png" alt="рабочая картинка" width="200" height="150">
+</figure>
+
+<!-- Блок под картинками: по его положению видно, поехала вёрстка или нет. -->
+<div class="after">Блок после всех картинок</div>
+
+</body>
+</html>

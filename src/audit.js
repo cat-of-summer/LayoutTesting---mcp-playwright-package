@@ -168,20 +168,30 @@ export function summarize(results, errors = {}) {
     navigationTimedOut: results.navigation?.navigationTimedOut ?? false,
     checkErrors: Object.keys(errors),
   };
-  s.verdict = verdictOf(s);
+  const problems = problemsOf(s);
+  /*
+   * Признак «всё чисто» — отдельное поле, а не сравнение verdict со строкой. Раньше
+   * сводка матрицы и раскраска отчёта сверялись с литералом «проблем не найдено» в трёх
+   * местах, и правка формулировки молча ломала агрегацию, не роняя ни одного теста.
+   */
+  s.clean = problems.length === 0;
+  s.verdict = s.clean ? 'проблем не найдено' : problems.join('; ');
   return s;
 }
 
-function verdictOf(s) {
+function problemsOf(s) {
   const problems = [];
   if (s.documentOverflow) problems.push('горизонтальный скролл');
   if (s.layoutIssues) problems.push(`эвристики вёрстки: ${s.layoutIssues}`);
   if (s.axeViolations) problems.push(`axe: ${s.axeViolations}`);
+  // pa11y считался в сводку, но на вердикт не влиял: прогон с одним лишь pa11y всегда
+  // рапортовал «проблем не найдено», сколько бы нарушений ни нашлось.
+  if (s.pa11yErrors) problems.push(`pa11y: ${s.pa11yErrors}`);
   if (s.htmlErrors) problems.push(`невалидный HTML: ${s.htmlErrors}`);
   if (s.cls !== null && s.cls > 0.1) problems.push(`CLS ${s.cls}`);
   if (s.visual === 'diff') problems.push(`визуальное расхождение ${s.diffPercentage}%`);
   if (s.jsErrors) problems.push(`ошибок JS: ${s.jsErrors}`);
   if (s.failedRequests) problems.push(`неудачных запросов: ${s.failedRequests}`);
   if (s.navigationTimedOut) problems.push('страница не догрузилась до конца');
-  return problems.length ? problems.join('; ') : 'проблем не найдено';
+  return problems;
 }

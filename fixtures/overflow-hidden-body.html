@@ -1,0 +1,50 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Фикстура: виновник вылета при body overflow-x hidden</title>
+<!--
+  Пропажа виновника горизонтального скролла.
+
+  body { overflow-x: hidden } — самый частый способ «починить» горизонтальный скролл:
+  полосы нет, а блок шире экрана остался. Именно в этом случае и нужно имя виновника.
+
+  Обход предков в поисках намеренного клипа (слайдер шире своей рамки — это нормально)
+  не должен считать таким клипом сам body: иначе под правило разом попадает вся страница
+  и отчёт выходит пустым. Останавливаться надо на body, а не на documentElement.
+
+  Ниже есть и законный случай: карусель в своей рамке с overflow-x: auto. Её лента шире
+  экрана намеренно, и находкой она быть не должна.
+-->
+<style>
+  body { margin: 0; overflow-x: hidden; font: 16px/1.5 system-ui, sans-serif; background: #fff; }
+
+  /* Виновник: шире вьюпорта, ни одного клипающего предка кроме body. */
+  .culprit { width: 2000px; height: 80px; background: #ffd7d5; }
+
+  /* Законно широкая лента внутри своей рамки — находкой быть не должна. */
+  .carousel { overflow-x: auto; border: 1px solid #ccd2dd; }
+  .carousel__track { display: flex; width: 2400px; }
+  .carousel__item { flex: 0 0 300px; height: 80px; background: #d6e4ff; border-right: 1px solid #fff; }
+</style>
+</head>
+<body>
+
+<div class="culprit" id="culprit">Блок 2000px — он и создаёт горизонтальный скролл</div>
+
+<div class="carousel">
+  <div class="carousel__track">
+    <div class="carousel__item">1</div>
+    <div class="carousel__item">2</div>
+    <div class="carousel__item">3</div>
+    <div class="carousel__item">4</div>
+    <div class="carousel__item">5</div>
+    <div class="carousel__item">6</div>
+    <div class="carousel__item">7</div>
+    <div class="carousel__item">8</div>
+  </div>
+</div>
+
+</body>
+</html>

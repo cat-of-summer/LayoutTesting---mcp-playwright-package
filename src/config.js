@@ -43,6 +43,8 @@ export const CONFIG = {
   chromePath: process.env.CHROME_PATH || safeExecutablePath(),
   /** Сколько прогонов артефактов держать перед автоочисткой. */
   artifactsKeep: Number(process.env.ARTIFACTS_KEEP || 50),
+  /** Предел journal-буфера сессии на каждый вид записей: консоль, ошибки, сеть. */
+  logBufferSize: Number(process.env.LOG_BUFFER_SIZE || 2000),
   defaultTimeout: Number(process.env.DEFAULT_TIMEOUT || 30000),
   /** Порог расхождения визуальной регрессии в процентах пикселей. */
   visualThreshold: Number(process.env.VISUAL_THRESHOLD || 0.1),

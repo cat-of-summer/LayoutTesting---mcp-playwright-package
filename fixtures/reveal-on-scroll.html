@@ -1,0 +1,76 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Фикстура: блоки, проявляющиеся при прокрутке</title>
+<!--
+  Пустой кадр вместо содержимого — второй «молчаливый» дефект съёмки после ленивых картинок.
+
+  Блоки ниже сгиба спрятаны в CSS (opacity: 0) и проявляются, когда попадают во вьюпорт.
+  Событие load такую страницу не ждёт, и снимок fullPage выходит с пустыми местами, ничего
+  об этом не сообщая. Дальше испорченный кадр молча становится эталоном визуальной регрессии.
+
+  Здесь собраны обе ловушки сразу, потому что чинятся они по-разному:
+
+  1. Группа «once» — наблюдатель ставится с задержкой, как это делает AOS.init() в setTimeout.
+     Прокрутка, выполненная раньше инициализации, не проявит ничего: наблюдать ещё некому.
+     Значит, прокручивать надо после того, как страница ожила, и не одним кадром.
+
+  2. Группа «repeat» — наблюдатель снимает проявление, когда блок уходит из вьюпорта
+     (поведение библиотек с once: false). Прокрутка, возвращающая страницу наверх перед
+     съёмкой, прячет всё обратно. Значит, возвращать скролл до кадра нельзя — либо надо
+     закрепить уже проявленное.
+
+  Готовность помечается атрибутом data-revealed на каждом блоке: тест смотрит его, а не
+  пиксели, чтобы не зависеть от кодировщика картинок.
+-->
+<style>
+  body { margin: 0; font: 16px/1.5 system-ui, sans-serif; background: #fff; }
+  h2 { font-size: 15px; margin: 0; padding: 16px; color: #5b6270; text-transform: uppercase; }
+  .block { height: 280px; margin: 8px 16px; padding: 20px; background: #e8ecf3;
+           opacity: 0; transition: opacity .3s; }
+  .block[data-revealed] { opacity: 1; }
+</style>
+</head>
+<body>
+
+<h2>Группа 1: проявляется один раз и остаётся</h2>
+<div class="block js-once">Блок 1</div>
+<div class="block js-once">Блок 2</div>
+<div class="block js-once">Блок 3</div>
+<div class="block js-once">Блок 4</div>
+<div class="block js-once">Блок 5</div>
+
+<h2>Группа 2: прячется обратно, когда уходит из вьюпорта</h2>
+<div class="block js-repeat">Блок 6</div>
+<div class="block js-repeat">Блок 7</div>
+<div class="block js-repeat">Блок 8</div>
+<div class="block js-repeat">Блок 9</div>
+<div class="block js-repeat">Блок 10</div>
+
+<script>
+  // Задержка намеренная: библиотеки появления инициализируются не в первом кадре.
+  setTimeout(() => {
+    const once = new IntersectionObserver((entries) => {
+      entries.forEach((entry) => {
+        if (entry.isIntersecting) {
+          entry.target.dataset.revealed = '1';
+          once.unobserve(entry.target);
+        }
+      });
+    });
+    document.querySelectorAll('.js-once').forEach((el) => once.observe(el));
+
+    const repeat = new IntersectionObserver((entries) => {
+      entries.forEach((entry) => {
+        if (entry.isIntersecting) entry.target.dataset.revealed = '1';
+        else delete entry.target.dataset.revealed;
+      });
+    });
+    document.querySelectorAll('.js-repeat').forEach((el) => repeat.observe(el));
+  }, 150);
+</script>
+
+</body>
+</html>

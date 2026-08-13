@@ -59,9 +59,21 @@ async function newContext(browser, profile) {
   }
 }
 
+/**
+ * Кольцевой буфер: сессия живёт до закрытия, а болтливая страница пишет в консоль и
+ * дёргает сеть непрерывно. Без предела массивы растут всё время жизни сессии, и на
+ * долгой отладке это единственное место, которое течёт по-настоящему.
+ *
+ * Режем старое, а не новое: разбираются обычно с последним, что произошло.
+ */
+function pushCapped(list, entry) {
+  list.push(entry);
+  if (list.length > CONFIG.logBufferSize) list.splice(0, list.length - CONFIG.logBufferSize);
+}
+
 function attachCollectors(page, store) {
   page.on('console', (msg) => {
-    store.console.push({
+    pushCapped(store.console, {
       type: msg.type(),
       text: msg.text(),
       location: msg.location(),
@@ -69,10 +81,10 @@ function attachCollectors(page, store) {
     });
   });
   page.on('pageerror', (err) => {
-    store.errors.push({ message: err.message, stack: err.stack, at: new Date().toISOString() });
+    pushCapped(store.errors, { message: err.message, stack: err.stack, at: new Date().toISOString() });
   });
   page.on('requestfailed', (req) => {
-    store.network.push({
+    pushCapped(store.network, {
       url: req.url(),
       method: req.method(),
       resourceType: req.resourceType(),
@@ -81,7 +93,7 @@ function attachCollectors(page, store) {
     });
   });
   page.on('response', (res) => {
-    store.network.push({
+    pushCapped(store.network, {
       url: res.url(),
       method: res.request().method(),
       resourceType: res.request().resourceType(),
@@ -195,8 +207,17 @@ export async function gotoAndSettle(
 ) {
   let response = null;
   let timedOut = false;
-  // Отметка в журнале: всё, что после неё, относится к этому переходу, а не к прошлому.
+  /*
+   * Отметка в журнале: всё, что после неё, относится к этому переходу, а не к прошлому.
+   * Храним её на сессии, а не только локально: без этого page_logs отдаёт всё подряд с
+   * момента открытия сессии, и ошибка с позапрошлой страницы приезжает в разбор текущей.
+   */
   const logMark = session.logs.network.length;
+  session.logMarks = {
+    console: session.logs.console.length,
+    errors: session.logs.errors.length,
+    network: logMark,
+  };
 
   try {
     response = await session.page.goto(url, { waitUntil, timeout });
@@ -209,8 +230,9 @@ export async function gotoAndSettle(
   }
 
   let images = null;
+  let stubbed = null;
   if (stabilizePage) {
-    ({ images } = await stabilize(session.page, { pseudoLoc: session.profile.pseudoLoc }));
+    ({ images, stubbed } = await stabilize(session.page, { pseudoLoc: session.profile.pseudoLoc }));
   }
 
   // Патчи агента возвращаем последними: они должны перебивать и стили страницы,
@@ -229,11 +251,17 @@ export async function gotoAndSettle(
   }
 
   const warnings = summarizeFailures(session.logs.network.slice(logMark));
-  if (warnings || images?.broken || images?.stillPending) {
+  const stubCount = (stubbed?.images || 0) + (stubbed?.videos || 0);
+  if (warnings || images?.broken || images?.stillPending || stubCount) {
     result.warnings = {
       ...(warnings || {}),
       ...(images?.broken ? { brokenImages: images.broken } : {}),
       ...(images?.stillPending ? { imagesStillLoading: images.stillPending } : {}),
+      /*
+       * Подмена меняет то, что видно в кадре, поэтому о ней сообщаем всегда. Иначе снимок
+       * с аккуратными серыми прямоугольниками не отличить от снимка, где всё загрузилось.
+       */
+      ...(stubCount ? { placeholders: { ...stubbed, total: stubCount } } : {}),
       note: 'Часть ресурсов страницы не загрузилась — снимок будет неполным. Подробности: page_logs.',
     };
   }

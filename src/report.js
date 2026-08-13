@@ -36,7 +36,7 @@ td:first-child { color:var(--muted); padding-right:12px; white-space:nowrap; }
 
 function verdictClass(cell) {
   if (!cell.ok) return 'bad';
-  return cell.summary.verdict === 'проблем не найдено' ? 'ok' : 'warn';
+  return cell.summary.clean ? 'ok' : 'warn';
 }
 
 function metricRows(cell) {
@@ -96,7 +96,7 @@ export async function renderMatrixReport({ url, name, cells, runId, inlineImages
     )
   ).join('\n');
 
-  const problems = cells.filter((c) => c.ok && c.summary.verdict !== 'проблем не найдено').length;
+  const problems = cells.filter((c) => c.ok && !c.summary.clean).length;
   const failed = cells.filter((c) => !c.ok).length;
 
   return `<!doctype html>

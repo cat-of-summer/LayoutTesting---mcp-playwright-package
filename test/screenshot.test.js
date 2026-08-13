@@ -247,6 +247,60 @@ test('isolate с ненайденным селектором падает вня
   }
 });
 
+test('снимок по селектору берёт видимое совпадение, а не первое в DOM', options, async () => {
+  const { takeScreenshot } = await import('../src/checks/visual.js');
+  const session = await pool.createSession({ viewport: 'desktop' });
+
+  // Скрытый шаблон перед настоящим блоком — обычное дело на страницах с модалками.
+  const page = `<!doctype html><meta charset="utf-8">
+    <section id="hidden" style="display:none"><p>шаблон</p></section>
+    <section id="shown" style="width:200px;height:120px;background:#d6e4ff">видимый</section>`;
+
+  try {
+    await session.page.route('**/two-sections.html', (route) =>
+      route.fulfill({ status: 200, contentType: 'text/html; charset=utf-8', body: page }),
+    );
+    await pool.gotoAndSettle(session, `${base}/two-sections.html`);
+
+    const shot = await takeScreenshot(session.page, {
+      runId: 'test-visible-pick',
+      name: 'pick',
+      selector: 'section',
+    });
+
+    // Кадр обязан быть с видимого блока: 200×120, а не пустой и не по таймауту.
+    assert.equal(shot.width, 200);
+    assert.equal(shot.height, 120);
+  } finally {
+    await pool.closeSession(session.id);
+  }
+});
+
+test('снимок по селектору без единого видимого совпадения падает сразу и внятно', options, async () => {
+  const { takeScreenshot } = await import('../src/checks/visual.js');
+  const session = await pool.createSession({ viewport: 'desktop' });
+
+  const page = `<!doctype html><meta charset="utf-8">
+    <section style="display:none">раз</section><section style="display:none">два</section>`;
+
+  try {
+    await session.page.route('**/all-hidden.html', (route) =>
+      route.fulfill({ status: 200, contentType: 'text/html; charset=utf-8', body: page }),
+    );
+    await pool.gotoAndSettle(session, `${base}/all-hidden.html`);
+
+    const started = Date.now();
+    await assert.rejects(
+      () => takeScreenshot(session.page, { runId: 'test-none-visible', name: 'none', selector: 'section' }),
+      /совпадений 2, видимых нет/,
+    );
+    // Суть правки — не ждать таймаута локатора: ответ должен прийти сразу.
+    assert.ok(Date.now() - started < 5000, 'ждать тут нечего, число видимых известно сразу');
+  } finally {
+    await pool.closeSession(session.id);
+  }
+});
+
 test('layout_audit не раздувается на странице с инлайн-картинками', options, async () => {
   const { layoutAudit } = await import('../src/checks/layout.js');
   const session = await pool.createSession({ viewport: 'desktop' });

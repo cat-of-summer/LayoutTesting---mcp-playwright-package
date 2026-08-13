@@ -69,16 +69,64 @@ function collectLayoutIssues(options) {
     (style.clipPath && style.clipPath !== 'none') ||
     (style.clip && style.clip !== 'auto');
 
-  /** Слайдеры и карусели шире своей рамки намеренно — рамка их и обрезает. */
+  /**
+   * Слайдеры и карусели шире своей рамки намеренно — рамка их и обрезает.
+   *
+   * Обход останавливается на body: `body { overflow-x: hidden }` — самый ходовой способ
+   * убрать горизонтальную полосу, не убирая её причину. Считать его намеренной рамкой
+   * значило бы разом объявить намеренной всю страницу и отдать пустой отчёт ровно там,
+   * где имя виновника нужнее всего.
+   */
   const insideScrollClip = (el) => {
     let node = el.parentElement;
-    while (node && node !== document.documentElement) {
+    while (node && node !== document.body && node !== document.documentElement) {
       const s = getComputedStyle(node);
-      const ox = s.overflowX || s.overflow;
-      if (ox && ox !== 'visible') return true;
+      if (s.overflowX !== 'visible' || s.overflowY !== 'visible') return true;
       node = node.parentElement;
     }
     return false;
+  };
+
+  /**
+   * Прямоугольник, в котором элемент реально может быть виден: его собственная коробка,
+   * пересечённая с client-боксами всех обрезающих предков.
+   *
+   * Нужен там, где мы судим по координатам. Уехавшая за край скролл-контейнера строка
+   * списка сохраняет getBoundingClientRect() внутри экрана, хотя на экране её нет, и
+   * проба точкой попадает в то, что нарисовано поверх — обычно в подвал. Без этой
+   * поправки клип принимается за перекрытие.
+   *
+   * Возвращает null, если видимой площади не осталось.
+   */
+  const clippedRect = (el, rect) => {
+    let top = rect.top;
+    let left = rect.left;
+    let right = rect.right;
+    let bottom = rect.bottom;
+
+    let node = el.parentElement;
+    while (node && node !== document.documentElement) {
+      const s = getComputedStyle(node);
+      if (s.overflowX !== 'visible' || s.overflowY !== 'visible') {
+        // Содержимое обрезается по client-боксу: он начинается за рамкой и не включает
+        // полосу прокрутки, которая тоже закрывает содержимое.
+        const r = node.getBoundingClientRect();
+        const clientLeft = r.left + (parseFloat(s.borderLeftWidth) || 0);
+        const clientTop = r.top + (parseFloat(s.borderTopWidth) || 0);
+        if (s.overflowX !== 'visible') {
+          left = Math.max(left, clientLeft);
+          right = Math.min(right, clientLeft + node.clientWidth);
+        }
+        if (s.overflowY !== 'visible') {
+          top = Math.max(top, clientTop);
+          bottom = Math.min(bottom, clientTop + node.clientHeight);
+        }
+        if (right - left <= 0 || bottom - top <= 0) return null;
+      }
+      node = node.parentElement;
+    }
+
+    return { top, left, right, bottom, width: right - left, height: bottom - top };
   };
 
   /**
@@ -261,18 +309,35 @@ function collectLayoutIssues(options) {
         .map((n) => n.nodeValue.trim())
         .join(' ')
         .trim();
-      const onScreen = rect.top >= 0 && rect.left >= 0 && rect.bottom <= vh && rect.right <= vw;
-      if (ownText.length > 1 && onScreen && rect.width > 4 && rect.height > 4) {
+      // Судим по видимой части: у элемента, обрезанного своим скролл-контейнером,
+      // координаты остаются экранными, и проба попала бы в чужой узел.
+      const visibleRect = ownText.length > 1 ? clippedRect(el, rect) : null;
+      const onScreen =
+        visibleRect &&
+        visibleRect.top >= 0 &&
+        visibleRect.left >= 0 &&
+        visibleRect.bottom <= vh &&
+        visibleRect.right <= vw;
+      if (onScreen && visibleRect.width > 4 && visibleRect.height > 4) {
+        const r = visibleRect;
+        // Точки разнесены и по вертикали: на одной горизонтали любая широкая плашка
+        // накрывает все три разом, и узкое перекрытие не отличить от сплошного.
         const points = [
-          [rect.left + rect.width * 0.15, rect.top + rect.height / 2],
-          [rect.left + rect.width / 2, rect.top + rect.height / 2],
-          [rect.left + rect.width * 0.85, rect.top + rect.height / 2],
+          [r.left + r.width * 0.15, r.top + r.height * 0.25],
+          [r.left + r.width * 0.5, r.top + r.height * 0.5],
+          [r.left + r.width * 0.85, r.top + r.height * 0.75],
         ];
         let cover = null;
         let coveredCount = 0;
         for (const [x, y] of points) {
-          const top = document.elementsFromPoint(x, y)[0];
-          if (!top || top === el || el.contains(top)) continue;
+          const stack = document.elementsFromPoint(x, y);
+          const top = stack[0];
+          // Элемента нет в стеке вовсе — его закрывает не слой, а обрезка предком
+          // либо он вынесен из потока отрисовки. Это не перекрытие текста.
+          if (!top || top === el || el.contains(top) || !stack.includes(el)) continue;
+          // pointer-events: none поднимает наверх предка самого элемента —
+          // собственный фон перекрытием не считается.
+          if (top.contains(el)) continue;
           const ts = getComputedStyle(top);
           const bg = parseColor(ts.backgroundColor);
           const opaque =
@@ -354,12 +419,19 @@ function collectLayoutIssues(options) {
 
   for (const img of Array.from(document.images)) {
     const rect = img.getBoundingClientRect();
-    if (img.complete && img.naturalWidth === 0 && issues.brokenImages.length < maxItems) {
+    /*
+     * Подменённая заглушкой картинка грузится, и по naturalWidth её уже не отличить от
+     * нормальной. Но подмена — приём для сравнения вёрстки, а не способ убрать проблему
+     * из отчёта: метку ставит стабилизация, и находкой такая картинка остаётся.
+     */
+    const stubbed = img.dataset && 'ltPlaceholder' in img.dataset;
+    if ((stubbed || (img.complete && img.naturalWidth === 0)) && issues.brokenImages.length < maxItems) {
       issues.brokenImages.push({
         selector: cssPath(img),
         src: shortSrc(img),
         alt: img.getAttribute('alt'),
         box: box(rect),
+        ...(stubbed ? { placeholder: true, note: 'подменена заглушкой ради сравнимой вёрстки' } : {}),
       });
     }
     const style = getComputedStyle(img);

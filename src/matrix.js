@@ -82,7 +82,7 @@ export async function runMatrix({
   await Promise.all(Array.from({ length: Math.max(1, Math.min(concurrency, profiles.length)) }, worker));
 
   const failed = cells.filter((c) => !c.ok);
-  const problems = cells.filter((c) => c.ok && c.summary.verdict !== 'проблем не найдено');
+  const problems = cells.filter((c) => c.ok && !c.summary.clean);
 
   const dir = await runDir(runId);
   const html = await renderMatrixReport({ url, name, cells, runId });

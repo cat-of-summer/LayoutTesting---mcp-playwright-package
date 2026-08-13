@@ -32,6 +32,8 @@ import { matchedRules } from './checks/cssom.js';
 import { elementLayers } from './checks/layers.js';
 import { pageSnapshot } from './checks/snapshot.js';
 import { takeScreenshot, compareWithBaseline, inlineImage, listBaselines } from './checks/visual.js';
+import { comparePages } from './checks/compare.js';
+import { compareLayout } from './checks/compare-dom.js';
 import { buildVisualGuide } from './checks/guide.js';
 import { runAxe, runPa11y } from './checks/a11y.js';
 import { installVitalsCollector, readVitals, runLighthouse } from './checks/perf.js';
@@ -266,21 +268,38 @@ export async function createServer() {
     'page_logs',
     {
       title: 'Логи страницы',
-      description: 'Консоль, необработанные ошибки JS и неудачные сетевые запросы, собранные с момента открытия сессии.',
+      description:
+        'Консоль, необработанные ошибки JS и неудачные сетевые запросы. По умолчанию — только с последнего перехода; sinceNavigation: false отдаёт всё с момента открытия сессии.',
       inputSchema: {
         sessionId: z.string(),
         kind: z.enum(['all', 'console', 'errors', 'network']).optional(),
         onlyProblems: z.boolean().optional(),
+        sinceNavigation: z
+          .boolean()
+          .optional()
+          .describe('Только записи после последнего перехода. По умолчанию true'),
       },
     },
-    async ({ sessionId, kind = 'all', onlyProblems = true }) => {
-      const { logs } = getSession(sessionId);
+    async ({ sessionId, kind = 'all', onlyProblems = true, sinceNavigation = true }) => {
+      const session = getSession(sessionId);
+      const { logs } = session;
+      /*
+       * По умолчанию показываем только текущую страницу: иначе ошибка, оставшаяся от
+       * позапрошлого перехода, приезжает в разбор нынешнего и уводит в сторону.
+       */
+      const marks = (sinceNavigation && session.logMarks) || { console: 0, errors: 0, network: 0 };
+      const rawNetwork = logs.network.slice(marks.network);
+      const rawConsole = logs.console.slice(marks.console);
+
       const network = onlyProblems
-        ? logs.network.filter((n) => n.failure || (n.status && n.status >= 400))
-        : logs.network;
-      const console_ = onlyProblems ? logs.console.filter((c) => c.type === 'error' || c.type === 'warning') : logs.console;
-      const all = { console: console_, errors: logs.errors, network };
-      return json(kind === 'all' ? all : { [kind]: all[kind === 'errors' ? 'errors' : kind] });
+        ? rawNetwork.filter((n) => n.failure || (n.status && n.status >= 400))
+        : rawNetwork;
+      const console_ = onlyProblems
+        ? rawConsole.filter((c) => c.type === 'error' || c.type === 'warning')
+        : rawConsole;
+      const all = { console: console_, errors: logs.errors.slice(marks.errors), network };
+      const scope = sinceNavigation && session.logMarks ? 'с последнего перехода' : 'с открытия сессии';
+      return json({ scope, ...(kind === 'all' ? all : { [kind]: all[kind === 'errors' ? 'errors' : kind] }) });
     },
   );
 
@@ -442,6 +461,113 @@ export async function createServer() {
         content.push({ type: 'image', data: img.data, mimeType: img.mimeType });
       }
       return { content };
+    },
+  );
+
+  server.registerTool(
+    'compare_pages',
+    {
+      title: 'Сравнить две страницы',
+      description:
+        'Сличает две живые страницы между собой на списке ширин: макет против собранной страницы. У каждой стороны свой HTTP-доступ и свои условия. Разная высота сравнению не мешает — кадры дополняются до общего холста, а разница высот отдаётся отдельным числом. Картинки в ответ не вкладываются: смотреть в артефактах.',
+      inputSchema: {
+        a: z
+          .object({
+            url: z.string(),
+            auth: z.string().optional().describe('HTTP basic auth «пользователь:пароль»'),
+            extraHTTPHeaders: z.record(z.string()).optional(),
+            hostMap: z.record(z.string()).optional(),
+            browser: z.enum(BROWSERS).optional(),
+            colorScheme: z.enum(['light', 'dark', 'no-preference']).optional(),
+            waitUntil: z.enum(['load', 'domcontentloaded', 'networkidle', 'commit']).optional(),
+          })
+          .describe('Что считаем образцом — обычно макет'),
+        b: z
+          .object({
+            url: z.string(),
+            auth: z.string().optional(),
+            extraHTTPHeaders: z.record(z.string()).optional(),
+            hostMap: z.record(z.string()).optional(),
+            browser: z.enum(BROWSERS).optional(),
+            colorScheme: z.enum(['light', 'dark', 'no-preference']).optional(),
+            waitUntil: z.enum(['load', 'domcontentloaded', 'networkidle', 'commit']).optional(),
+          })
+          .describe('Что проверяем — обычно собранная страница'),
+        viewports: z.array(z.string()).optional().describe('По умолчанию desktop'),
+        name: z.string().optional(),
+        selector: z.string().optional().describe('Сравнивать только этот блок'),
+        fullPage: z.boolean().optional(),
+        hide: z.array(z.string()).optional(),
+        mask: z.array(z.string()).optional(),
+        threshold: z.number().optional().describe('Допустимое расхождение в процентах пикселей'),
+      },
+    },
+    async ({ a, b, viewports = ['desktop'], name = 'compare', selector, fullPage = true, hide = [], mask = [], threshold }) => {
+      const runId = newRunId(name);
+      const res = await comparePages({
+        pool: { createSession, gotoAndSettle, closeSession },
+        runId,
+        name,
+        a,
+        b,
+        viewports,
+        selector,
+        fullPage,
+        hide,
+        mask,
+        ...(threshold === undefined ? {} : { threshold }),
+      });
+      const { dir, ...payload } = res;
+      return json({ ...payload, url: publicUrl(dir) });
+    },
+  );
+
+  server.registerTool(
+    'compare_layout',
+    {
+      title: 'Сравнить вёрстку двух страниц',
+      description:
+        'Сличает макет и собранную страницу по DOM, а не по пикселям: какие классы есть только в одной из них и чем различаются одноимённые блоки — размер коробки, шрифт, отступы, сетка. Не зависит от контента, поэтому отвечает на вопрос «сошлась ли вёрстка» там, где попиксельное сравнение бесполезно из-за разных текстов и фотографий.',
+      inputSchema: {
+        a: z
+          .object({
+            url: z.string(),
+            auth: z.string().optional(),
+            extraHTTPHeaders: z.record(z.string()).optional(),
+            hostMap: z.record(z.string()).optional(),
+            browser: z.enum(BROWSERS).optional(),
+            colorScheme: z.enum(['light', 'dark', 'no-preference']).optional(),
+            waitUntil: z.enum(['load', 'domcontentloaded', 'networkidle', 'commit']).optional(),
+          })
+          .describe('Образец — обычно макет'),
+        b: z
+          .object({
+            url: z.string(),
+            auth: z.string().optional(),
+            extraHTTPHeaders: z.record(z.string()).optional(),
+            hostMap: z.record(z.string()).optional(),
+            browser: z.enum(BROWSERS).optional(),
+            colorScheme: z.enum(['light', 'dark', 'no-preference']).optional(),
+            waitUntil: z.enum(['load', 'domcontentloaded', 'networkidle', 'commit']).optional(),
+          })
+          .describe('Проверяемая страница'),
+        viewport: z.string().optional(),
+        tolerance: z.number().optional().describe('Допуск по размеру в пикселях, по умолчанию 2'),
+        props: z.array(z.string()).optional().describe('Какие CSS-свойства сверять'),
+        maxItems: z.number().optional(),
+      },
+    },
+    async ({ a, b, viewport = 'desktop', tolerance, props, maxItems }) => {
+      const res = await compareLayout({
+        pool: { createSession, gotoAndSettle, closeSession },
+        a,
+        b,
+        viewport,
+        ...(tolerance === undefined ? {} : { tolerance }),
+        ...(props === undefined ? {} : { props }),
+        ...(maxItems === undefined ? {} : { maxItems }),
+      });
+      return json(res);
     },
   );
 
