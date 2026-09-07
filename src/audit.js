@@ -8,9 +8,10 @@ import { takeScreenshot, compareWithBaseline } from './checks/visual.js';
 import { runAxe, runPa11y } from './checks/a11y.js';
 import { installVitalsCollector, readVitals, runLighthouse } from './checks/perf.js';
 import { validateHtmlWithVnu, validateHtmlLocal } from './checks/static.js';
+import { seoFromPage } from './seo/page.js';
 import path from 'node:path';
 
-export const ALL_CHECKS = ['layout', 'screenshot', 'visual', 'axe', 'pa11y', 'vitals', 'lighthouse', 'html', 'snapshot'];
+export const ALL_CHECKS = ['layout', 'screenshot', 'visual', 'axe', 'pa11y', 'vitals', 'lighthouse', 'html', 'snapshot', 'seo'];
 
 export function expandChecks(checks) {
   if (!checks || checks.length === 0) return ['layout', 'screenshot', 'axe', 'vitals'];
@@ -67,6 +68,7 @@ export async function runAudit({
 
     if (wanted.includes('layout')) await safe('layout', () => layoutAudit(session.page));
     if (wanted.includes('snapshot')) await safe('snapshot', () => pageSnapshot(session.page));
+    if (wanted.includes('seo')) await safe('seo', () => seoFromPage(session.page, session.lastResponse));
     if (wanted.includes('axe')) await safe('axe', () => runAxe(session.page));
     if (wanted.includes('vitals')) await safe('vitals', () => readVitals(session.page));
 
@@ -161,6 +163,9 @@ export function summarize(results, errors = {}) {
     cls: results.vitals?.cls ?? null,
     lcp: results.vitals?.lcp ?? null,
     performanceScore: results.lighthouse?.scores?.performance ?? null,
+    seoScore: results.lighthouse?.scores?.seo ?? null,
+    notIndexable: results.seo ? !results.seo.indexable : null,
+    indexabilityReasons: results.seo?.reasons ?? [],
     visual: results.visual?.status ?? null,
     diffPercentage: results.visual?.diffPercentage ?? null,
     jsErrors: results.logs?.errors?.length ?? 0,
@@ -189,6 +194,10 @@ function problemsOf(s) {
   if (s.pa11yErrors) problems.push(`pa11y: ${s.pa11yErrors}`);
   if (s.htmlErrors) problems.push(`невалидный HTML: ${s.htmlErrors}`);
   if (s.cls !== null && s.cls > 0.1) problems.push(`CLS ${s.cls}`);
+  /* Оценка SEO считалась Lighthouse на каждом прогоне и никуда не попадала: в сводке был
+     только performance. Порог тот же, что у остальных категорий Lighthouse. */
+  if (s.seoScore !== null && s.seoScore < 90) problems.push(`Lighthouse SEO ${s.seoScore}`);
+  if (s.notIndexable) problems.push(`страница не индексируется: ${s.indexabilityReasons.join(", ")}`);
   if (s.visual === 'diff') problems.push(`визуальное расхождение ${s.diffPercentage}%`);
   if (s.jsErrors) problems.push(`ошибок JS: ${s.jsErrors}`);
   if (s.failedRequests) problems.push(`неудачных запросов: ${s.failedRequests}`);

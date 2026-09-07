@@ -12,6 +12,10 @@ export const DIRS = {
   artifacts: path.join(ROOT, 'artifacts'),
   baselines: path.join(ROOT, 'baselines'),
   fixtures: path.join(ROOT, 'fixtures'),
+  /** Архив обходов и зеркала сохранённых страниц. Не чистится автоматически, в отличие от artifacts. */
+  sites: path.join(ROOT, 'sites'),
+  /** storageState сессий. Наружу не отдаётся: см. DENIED_DIRS в paths.js. */
+  state: path.join(ROOT, 'state'),
 };
 
 function safeExecutablePath() {

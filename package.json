@@ -24,6 +24,7 @@
     "chrome-launcher": "^1.2.1",
     "html-validate": "^11.6.2",
     "lighthouse": "^13.4.1",
+    "linkedom": "^0.18.12",
     "odiff-bin": "^4.5.0",
     "pa11y": "^9.1.1",
     "playwright": "1.62.1",

@@ -83,6 +83,8 @@ function printSummary(summary) {
     ['CLS', summary.cls],
     ['LCP, мс', summary.lcp],
     ['Lighthouse perf', summary.performanceScore],
+    ['Lighthouse SEO', summary.seoScore],
+    ['не индексируется', summary.notIndexable ? summary.indexabilityReasons.join(', ') : null],
     ['визуально', summary.visual],
     ['расхождение, %', summary.diffPercentage],
     ['ошибок JS', summary.jsErrors || null],

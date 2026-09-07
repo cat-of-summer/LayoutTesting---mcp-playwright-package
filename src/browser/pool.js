@@ -4,6 +4,7 @@ import { CONFIG } from '../config.js';
 import { contextOptions, hostResolverRules, normalizeProfile, profileKey } from './profile.js';
 import { applyProfileToPage, applyThrottle, stabilize } from './stabilize.js';
 import { reapplyInjections } from './inject.js';
+import { responseFacts } from './response.js';
 
 const ENGINES = { chromium, firefox, webkit };
 
@@ -239,7 +240,10 @@ export async function gotoAndSettle(
   // и служебный CSS стабилизации.
   await reapplyInjections(session);
 
-  const status = response?.status() ?? null;
+  /* Заголовки и редиректы нужны SEO-проверкам и живут только здесь: дальше Response недоступен. */
+  session.lastResponse = await responseFacts(response);
+
+  const status = session.lastResponse.status;
   const result = {
     status,
     url: sanitizeUrl(session.page.url()),

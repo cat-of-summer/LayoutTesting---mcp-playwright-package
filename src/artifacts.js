@@ -76,7 +76,7 @@ export function artifactRef(absPath) {
 
 export async function ensureDirs() {
   await Promise.all(
-    [DIRS.artifacts, DIRS.baselines, DIRS.fixtures].map((d) => fs.mkdir(d, { recursive: true })),
+    [DIRS.artifacts, DIRS.baselines, DIRS.fixtures, DIRS.sites, DIRS.state].map((d) => fs.mkdir(d, { recursive: true })),
   );
 }
 

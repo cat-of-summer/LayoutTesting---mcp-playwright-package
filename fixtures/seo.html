@@ -1,0 +1,95 @@
+<!doctype html>
+<!--
+  Страница для проверки извлечения SEO-полей.
+
+  Каждая особенность здесь заведена намеренно и закреплена числом в test/seo-extract.test.js:
+  пропущенный уровень заголовка, два h1, картинка без alt и картинка с пустым alt, ссылка без
+  анкора, target=_blank без rel=noopener, битый JSON-LD рядом с целым. Правишь фикстуру —
+  правишь и ожидания в тесте, иначе проверка станет проверять саму себя.
+-->
+<html lang="ru" dir="ltr">
+<head>
+  <meta charset="utf-8">
+  <title>Справочник по котлам — образец страницы</title>
+  <meta name="description" content="Образцовое описание страницы для проверки извлечения полей.">
+  <meta name="keywords" content="котлы, справочник, образец">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="robots" content="index, follow, max-snippet:-1">
+
+  <link rel="canonical" href="https://example.test/seo-page">
+
+  <link rel="alternate" hreflang="ru" href="https://example.test/seo-page">
+  <link rel="alternate" hreflang="en" href="https://example.test/en/seo-page">
+  <link rel="alternate" hreflang="x-default" href="https://example.test/seo-page">
+
+  <link rel="prev" href="https://example.test/seo-page?page=1">
+  <link rel="next" href="https://example.test/seo-page?page=3">
+
+  <link rel="icon" href="/favicon.ico">
+  <link rel="manifest" href="/site.webmanifest">
+
+  <meta property="og:title" content="Справочник по котлам">
+  <meta property="og:description" content="Открытый граф описания.">
+  <meta property="og:image" content="https://example.test/og.png">
+  <meta property="og:type" content="article">
+
+  <meta name="twitter:card" content="summary_large_image">
+  <meta name="twitter:title" content="Справочник по котлам">
+
+  <script type="application/ld+json">
+  {
+    "@context": "https://schema.org",
+    "@type": "Article",
+    "headline": "Справочник по котлам",
+    "author": { "@type": "Person", "name": "Редакция" }
+  }
+  </script>
+
+  <script type="application/ld+json">
+  { "@context": "https://schema.org", "@type": "BreadcrumbList", отломано }
+  </script>
+</head>
+
+<body>
+  <h1>Справочник по котлам</h1>
+
+  <h2>Подбор по мощности</h2>
+  <!-- пропуск уровня: сразу h4 после h2 -->
+  <h4>Частный дом</h4>
+
+  <h2>Обслуживание</h2>
+  <h3>Регламент</h3>
+
+  <!-- второй h1 на странице -->
+  <h1>Дублирующий заголовок первого уровня</h1>
+
+  <p>Текст страницы нужен, чтобы счётчик слов не был нулевым и отношение текста к разметке
+     считалось на чём-то осмысленном, а не на пустом теле документа.</p>
+
+  <div itemscope itemtype="https://schema.org/Organization">
+    <span itemprop="name">Пример</span>
+    <span itemprop="telephone">+7 000 000-00-00</span>
+  </div>
+
+  <div typeof="Person">
+    <span property="name">Имя</span>
+  </div>
+
+  <nav>
+    <a href="/catalog">Каталог</a>
+    <a href="/catalog/gas">Газовые</a>
+    <a href="https://external.test/review" rel="nofollow">Обзор снаружи</a>
+    <a href="https://external.test/promo" rel="sponsored" target="_blank">Реклама</a>
+    <a href="/empty-anchor"></a>
+    <a href="#section">Якорь</a>
+    <a href="mailto:info@example.test">Почта</a>
+    <a href="tel:+70000000000">Телефон</a>
+    <a href="/catalog"><img src="/logo.png" alt="Каталог картинкой"></a>
+  </nav>
+
+  <img src="/photo-1.jpg" alt="Котёл на стене" width="400" height="300">
+  <img src="/photo-2.jpg" alt="" width="400" height="300">
+  <img src="/photo-3.jpg">
+  <img src="/photo-4.jpg" loading="lazy" width="400" height="300" alt="Котёл в разрезе">
+</body>
+</html>

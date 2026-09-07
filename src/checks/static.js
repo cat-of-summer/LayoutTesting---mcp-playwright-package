@@ -3,6 +3,7 @@ import path from 'node:path';
 import stylelint from 'stylelint';
 import { HtmlValidate } from 'html-validate';
 import { CONFIG, DIRS } from '../config.js';
+import { resolveInRoot } from '../paths.js';
 
 /**
  * Nu HTML Checker — эталонный валидатор разметки. Отправляем содержимое,
@@ -66,15 +67,6 @@ export async function validateHtmlLocal(html, { maxMessages = 50 } = {}) {
   };
 }
 
-/** Пути принимаются относительно рабочего каталога — наружу из него не выпускаем. */
-function resolveInsideRoot(target) {
-  const abs = path.resolve(DIRS.root, target);
-  if (!abs.startsWith(DIRS.root)) {
-    throw new Error(`Путь ${target} выходит за пределы рабочего каталога.`);
-  }
-  return abs;
-}
-
 export async function lintCss({ files, code, config, maxMessages = 100 } = {}) {
   const options = {
     config: config || { extends: 'stylelint-config-standard' },
@@ -83,7 +75,7 @@ export async function lintCss({ files, code, config, maxMessages = 100 } = {}) {
   if (code) {
     options.code = code;
   } else if (files) {
-    options.files = [].concat(files).map(resolveInsideRoot);
+    options.files = [].concat(files).map(resolveInRoot);
   } else {
     throw new Error('Нужен либо code, либо files.');
   }
@@ -112,5 +104,5 @@ export async function lintCss({ files, code, config, maxMessages = 100 } = {}) {
 }
 
 export async function readLocalFile(target) {
-  return fs.readFile(resolveInsideRoot(target), 'utf8');
+  return fs.readFile(resolveInRoot(target), 'utf8');
 }

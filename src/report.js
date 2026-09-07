@@ -50,6 +50,8 @@ function metricRows(cell) {
     ['CLS', s.cls],
     ['LCP, мс', s.lcp],
     ['Lighthouse perf', s.performanceScore],
+    ['Lighthouse SEO', s.seoScore],
+    ['не индексируется', s.notIndexable ? s.indexabilityReasons.join(', ') : null],
     ['визуально', s.visual === 'diff' ? `расхождение ${s.diffPercentage}%` : s.visual],
     ['ошибки JS', s.jsErrors || null],
     ['неудачные запросы', s.failedRequests || null],

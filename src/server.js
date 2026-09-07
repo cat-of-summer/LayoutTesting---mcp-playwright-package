@@ -3,16 +3,6 @@ import { z } from 'zod';
 import path from 'node:path';
 import { readFile, readdir, stat } from 'node:fs/promises';
 
-/** Расширения, которые нет смысла отдавать как utf8. */
-const IMAGE_MIME = {
-  '.png': 'image/png',
-  '.jpg': 'image/jpeg',
-  '.jpeg': 'image/jpeg',
-  '.webp': 'image/webp',
-  '.gif': 'image/gif',
-  '.avif': 'image/avif',
-};
-
 import { CONFIG, DIRS, BROWSERS, VIEWPORTS } from './config.js';
 import { artifactRef, ensureDirs, listRuns, newRunId, pruneRuns, publicUrl, slug } from './artifacts.js';
 import {
@@ -41,43 +31,10 @@ import { validateHtmlWithVnu, validateHtmlLocal, lintCss, readLocalFile } from '
 import { auditStorybook } from './checks/storybook.js';
 import { runAudit, ALL_CHECKS } from './audit.js';
 import { runMatrix, AXES } from './matrix.js';
-
-const pkg = JSON.parse(await readFile(new URL('../package.json', import.meta.url), 'utf8'));
-
-const profileSchema = {
-  browser: z.enum(['chromium', 'firefox', 'webkit']).optional().describe('Движок браузера'),
-  viewport: z.string().optional().describe(`Размер: WxH или имя (${Object.keys(VIEWPORTS).join(', ')})`),
-  colorScheme: z.enum(['light', 'dark', 'no-preference']).optional(),
-  forcedColors: z.enum(['none', 'active']).optional().describe('Режим высокой контрастности Windows'),
-  reducedMotion: z.enum(['reduce', 'no-preference']).optional(),
-  rtl: z.boolean().optional().describe('Развернуть страницу справа налево'),
-  zoom: z.number().optional().describe('Масштаб страницы в процентах: 200 сжимает viewport вдвое'),
-  textZoom: z.number().optional().describe('Масштаб только шрифта в процентах (WCAG 1.4.4)'),
-  pseudoLoc: z.boolean().optional().describe('Псевдолокализация: диакритика и +40% длины строк'),
-  deviceScaleFactor: z.number().optional().describe('DPR: 1, 2, 3'),
-  locale: z.string().optional(),
-  timezoneId: z.string().optional(),
-  freezeTime: z.boolean().optional().describe('Заморозить Date и Math.random для стабильных снимков'),
-  throttle: z
-    .object({ network: z.string().optional(), cpu: z.number().optional() })
-    .optional()
-    .describe('Троттлинг (только chromium): network 3g|slow-3g|4g, cpu — множитель замедления'),
-  auth: z
-    .string()
-    .optional()
-    .describe('HTTP basic auth в виде "пользователь:пароль". Логин в самом URL не нужен — он потом лезет во все ответы'),
-  extraHTTPHeaders: z
-    .record(z.string())
-    .optional()
-    .describe('Заголовки ко всем запросам: Accept-Language, X-Forwarded-Proto и прочее'),
-  hostMap: z
-    .record(z.string())
-    .optional()
-    .describe('Подмена разрешения имён: {"www.site.local": "172.20.0.5"} — для стендов за vhost. Только chromium'),
-};
-
-const json = (data) => ({ content: [{ type: 'text', text: JSON.stringify(data, null, 2) }] });
-const text = (value) => ({ content: [{ type: 'text', text: String(value) }] });
+import { IMAGE_MIME, json, pkg, profileSchema, text } from './tools/shared.js';
+import { resolveInArtifacts, resolveInRoot } from './paths.js';
+import { seoFromHtml, seoFromPage } from './seo/page.js';
+import { clearStorage, exportState, getStorage, importState, listStates, setStorage } from './browser/storage.js';
 
 export async function createServer() {
   await ensureDirs();
@@ -240,6 +197,43 @@ export async function createServer() {
     'browser_close',
     { title: 'Закрыть сессию', description: 'Закрывает сессию браузера и освобождает память.', inputSchema: { sessionId: z.string() } },
     async ({ sessionId }) => json({ closed: await closeSession(sessionId) }),
+  );
+
+  server.registerTool(
+    'browser_storage',
+    {
+      title: 'Куки и хранилища',
+      description:
+        'Читает и подкладывает куки, localStorage и sessionStorage, а export и import сохраняют состояние сессии на диск и возвращают его в новую. Так логин переживает browser_close: сохранённое имя потом передаётся в storageState при открытии любой сессии. Важно: localStorage и sessionStorage снимаются с текущей страницы, а не со всего сайта — API уровня контекста у них нет.',
+      inputSchema: {
+        sessionId: z.string().optional().describe('Не нужен только для action: list'),
+        action: z.enum(['get', 'set', 'clear', 'export', 'import', 'list']).optional().describe('По умолчанию get'),
+        scope: z.enum(['cookies', 'local', 'session', 'all']).optional().describe('По умолчанию all'),
+        name: z.string().optional().describe('Ключ для set в local и session; имя файла для export и import'),
+        value: z.string().optional().describe('Значение для set. Для cookies — JSON: объект или массив куки'),
+      },
+    },
+    async ({ sessionId, action = 'get', scope = 'all', name, value }) => {
+      if (action === 'list') return json({ dir: DIRS.state, states: await listStates() });
+      if (!sessionId) throw new Error('Нужен sessionId.');
+      const session = getSession(sessionId);
+
+      switch (action) {
+        case 'export':
+          if (!name) throw new Error('Для export нужно name — под каким именем сохранить.');
+          return json(await exportState(session, name));
+        case 'import':
+          if (!name) throw new Error('Для import нужно name — какое состояние влить.');
+          return json(await importState(session, name));
+        case 'set':
+          if (scope === 'all') throw new Error('Для set нужен конкретный scope: cookies, local или session.');
+          return json(await setStorage(session, scope, name, value));
+        case 'clear':
+          return json(await clearStorage(session, scope));
+        default:
+          return json(await getStorage(session, scope));
+      }
+    },
   );
 
   // ---------- Наблюдение ----------
@@ -740,6 +734,49 @@ export async function createServer() {
     async ({ url, categories, preset }) => json(await runLighthouse(url, { runId: newRunId('lighthouse'), categories, preset })),
   );
 
+  // ---------- SEO ----------
+
+  server.registerTool(
+    'seo_page',
+    {
+      title: 'SEO-поля страницы',
+      description:
+        'Заголовок, описание, canonical, hreflang, robots, Open Graph, Twitter, дерево заголовков, инвентарь ссылок и картинок, микроразметка (JSON-LD, микроданные, RDFa). Отдельно считает indexable с перечислением причин, по которым страница не попадёт в индекс. Источник — открытая сессия, произвольный URL или сохранённый HTML: по сохранённому работает без единого сетевого запроса.',
+      inputSchema: {
+        sessionId: z.string().optional().describe('Разобрать страницу открытой сессии — как она выглядит сейчас, после логина и раскрытых меню'),
+        url: z.string().optional().describe('Открыть свою одноразовую сессию по адресу'),
+        html: z.string().optional().describe('Разобрать переданную разметку без браузера'),
+        file: z.string().optional().describe('Разобрать сохранённый файл: путь относительно рабочего каталога стенда'),
+        pageUrl: z.string().optional().describe('Адрес, относительно которого разрешать ссылки в html или file. Без него относительные адреса и саморефренс canonical не посчитать'),
+        ...profileSchema,
+      },
+    },
+    async ({ sessionId, url, html, file, pageUrl, ...profile }) => {
+      if (sessionId) {
+        const session = getSession(sessionId);
+        return json(await seoFromPage(session.page, session.lastResponse));
+      }
+
+      if (html || file) {
+        const source = html ?? (await readFile(resolveInRoot(file), 'utf8'));
+        /* Без адреса ссылки не разрешаются и canonical не с чем сравнивать — говорим об этом
+           сразу, а не отдаём отчёт, где половина полей молча null. */
+        if (!pageUrl) throw new Error('Для html и file нужен pageUrl — адрес, относительно которого разрешать ссылки.');
+        return json(await seoFromHtml(source, { url: pageUrl }));
+      }
+
+      if (!url) throw new Error('Нужен sessionId, url, html или file.');
+
+      const session = await createSession(profile);
+      try {
+        const navigation = await gotoAndSettle(session, url);
+        return json({ navigation, ...(await seoFromPage(session.page, session.lastResponse)) });
+      } finally {
+        await closeSession(session.id);
+      }
+    },
+  );
+
   // ---------- Статические проверки ----------
 
   server.registerTool(
@@ -929,8 +966,7 @@ export async function createServer() {
       },
     },
     async ({ file, encoding = 'auto' }) => {
-      const abs = path.resolve(DIRS.artifacts, file);
-      if (!abs.startsWith(DIRS.artifacts)) throw new Error('Путь выходит за пределы каталога артефактов.');
+      const abs = resolveInArtifacts(file);
 
       const mime = IMAGE_MIME[path.extname(abs).toLowerCase()];
       const binary = encoding === 'base64' || (encoding === 'auto' && Boolean(mime));
@@ -956,8 +992,7 @@ export async function createServer() {
       inputSchema: { file: z.string() },
     },
     async ({ file }) => {
-      const abs = path.resolve(DIRS.root, file);
-      if (!abs.startsWith(DIRS.root)) throw new Error('Путь выходит за пределы рабочего каталога стенда.');
+      const abs = resolveInRoot(file);
 
       // Каталог вместо файла — обычная опечатка в пути. Сырой EISDIR ничего
       // не подсказывает, а листинг сразу показывает, что здесь лежит.

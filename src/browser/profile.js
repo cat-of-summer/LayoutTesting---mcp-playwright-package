@@ -1,4 +1,5 @@
 import { VIEWPORTS } from '../config.js';
+import { statePath } from './storage.js';
 
 /**
  * Профиль условий просмотра. Одна страница проверяется под разными профилями —
@@ -30,6 +31,10 @@ export const PROFILE_DEFAULTS = {
   extraHTTPHeaders: null,
   /** {"www.example.com": "172.20.0.5"} — только chromium, аргумент запуска. */
   hostMap: null,
+  /** Готовое состояние (куки и localStorage) при создании контекста — см. browser/storage.js. */
+  storageState: null,
+  /** block нужен обходу: иначе Service Worker отдаёт свой кэш вместо того, что отвечает сервер. */
+  serviceWorkers: null,
 };
 
 /** Сокращение auth: "user:pass" — руками так набирать быстрее, чем объект. */
@@ -64,6 +69,9 @@ export function normalizeProfile(input = {}) {
   const p = { ...PROFILE_DEFAULTS, ...rest };
   if (auth) p.httpCredentials = parseAuth(auth);
   p.viewport = resolveViewport(p.viewport);
+  /* storageState принимается именем файла из state/, а не путём: путь наружу отдавать незачем,
+     а имя разворачивается здесь один раз — иначе каждый инструмент разворачивал бы его сам. */
+  if (typeof p.storageState === 'string') p.storageState = statePath(p.storageState);
   const zoom = Number(p.zoom) || 100;
   if (zoom !== 100) {
     // Увеличение страницы уменьшает область просмотра в CSS-пикселях.
@@ -107,5 +115,7 @@ export function contextOptions(profile) {
     ignoreHTTPSErrors: true,
     ...(p.httpCredentials ? { httpCredentials: p.httpCredentials } : {}),
     ...(p.extraHTTPHeaders ? { extraHTTPHeaders: p.extraHTTPHeaders } : {}),
+    ...(p.storageState ? { storageState: p.storageState } : {}),
+    ...(p.serviceWorkers ? { serviceWorkers: p.serviceWorkers } : {}),
   };
 }
