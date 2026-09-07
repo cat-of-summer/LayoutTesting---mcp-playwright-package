@@ -1,0 +1,167 @@
+version: 2
+name: layout
+output: dist
+
+image: ghcr.io/cat-of-summer/layouttesting---mcp-playwright-package:latest
+
+variants: [cpu]
+
+base:
+  cpu: mcr.microsoft.com/playwright:v1.62.1-noble
+
+network:
+  name: network
+  external: false
+
+port_range: [20000, 20999]
+
+globals: [NETWORK, INSTANCE, TZ, TRAEFIK_ENTRYPOINT, ACME_EMAIL]
+
+sources:
+  - {type: catalog, path: .}
+
+recipes:
+
+  nginx:
+    extends: nginx
+    families: [debian]
+
+    copy:
+      - {src: services/nginx/configs, dest: /etc/nginx/configs, kind: config, optional: false}
+    pre_init: []
+    post_init: []
+
+    +install: {debian: [iproute2]}
+    +match: {service: [nginx]}
+
+    post_copy:
+      - "sed -i 's|proxy_pass http://playwright[^:]*:|proxy_pass http://127.0.0.1:|g' /etc/nginx/configs/nginx.playwright.conf"
+
+    port:
+      default: 80
+      configure:
+        type: nginx_conf
+        file: /etc/nginx/configs/nginx.playwright.conf
+
+    +mount_kinds: {"/var/www/html": skip}
+
+  playwright:
+    priority: 70
+    match:
+      image: ["mcr.microsoft.com/playwright", "mcr.microsoft.com/playwright:*"]
+      service: [playwright]
+    families: [debian]
+
+    install:
+      debian:
+        - fonts-noto-core
+        - fonts-noto-color-emoji
+        - fonts-noto-cjk
+        - fonts-liberation
+        - fonts-dejavu-core
+
+    entrypoint: skip
+
+    copy:
+      - {src: data/package.json,        dest: /var/www/html/package.json,        kind: code, optional: false}
+      - {src: data/package-lock.json,   dest: /var/www/html/package-lock.json,   kind: code, optional: false}
+      - {src: data/src,                 dest: /var/www/html/src,                 kind: code, optional: false}
+      - {src: data/bin,                 dest: /var/www/html/bin,                 kind: code, optional: false}
+      - {src: data/fixtures,            dest: /var/www/html/fixtures,            kind: code}
+      - {src: data/baselines,           dest: /var/www/html/baselines,           kind: code}
+      - {src: data/matrix.example.json, dest: /var/www/html/matrix.example.json, kind: code}
+
+    post_copy:
+      - "cd /var/www/html && PUPPETEER_SKIP_DOWNLOAD=1 PUPPETEER_SKIP_CHROMIUM_DOWNLOAD=1 npm ci --omit=dev"
+      - "mkdir -p /var/www/html/artifacts /var/www/html/baselines"
+      - "ln -sf $(find /ms-playwright -type f -name chrome | head -1) /usr/local/bin/chrome-for-tools"
+      - "chmod +x /var/www/html/bin/lt.mjs && ln -sf /var/www/html/bin/lt.mjs /usr/local/bin/lt"
+
+    port:
+      default: 8931
+      configure: {type: env_var, var: MCP_PORT}
+
+    supervisor:
+      - name: playwright
+        command: npm run mcp:http
+        directory: /var/www/html
+        priority: 35
+        stopsignal: TERM
+        stopwaitsecs: 20
+        scalable: false
+        critical: true
+        environment:
+          MCP_PORT: "{port}"
+          CHROME_PATH: /usr/local/bin/chrome-for-tools
+          PUPPETEER_EXECUTABLE_PATH: /usr/local/bin/chrome-for-tools
+          PUPPETEER_SKIP_DOWNLOAD: "1"
+
+    readiness:
+      - type: http
+        target: "http://127.0.0.1:{port}/health"
+        timeout: 180
+
+    mount_kinds:
+      "/var/www/html": skip
+
+  vnu:
+    priority: 60
+    match:
+      image:
+        - "ghcr.io/validator/validator"
+        - "ghcr.io/validator/validator:*"
+        - "validator/validator:*"
+      service: [vnu]
+    families: [debian, alpine]
+
+    copy:
+      - src: /vnu-runtime-image
+        dest: /opt/vnu-runtime-image
+        from_image: "{image}"
+        kind: config
+        optional: false
+
+    port:
+      default: 8888
+      configure: {type: none}
+
+    supervisor:
+      - name: vnu
+        command: /opt/vnu-runtime-image/bin/java -m vnu/nu.validator.servlet.Main {port}
+        priority: 50
+        stopsignal: TERM
+        stopwaitsecs: 30
+        scalable: false
+        critical: true
+        environment:
+          CONNECT_TIMEOUT_SECONDS: "5"
+          SOCKET_TIMEOUT_SECONDS: "5"
+
+    readiness:
+      - type: tcp
+        target: "{port}"
+        timeout: 60
+
+env:
+  TRAEFIK_DOMAIN:
+    per_service:
+      app_nginx: TRAEFIK_DOMAIN_APP
+      vnu: TRAEFIK_DOMAIN_VNU
+
+  TRAEFIK_ENABLE: value:true
+
+  EXTERNAL_ACCESS: prefix
+
+  VNU_URL: value:http://{local:vnu}
+
+volumes:
+  artifacts: /var/www/html/artifacts
+  baselines: /var/www/html/baselines
+
+services:
+  traefik: {mode: off}
+  network: {mode: off}
+
+  app_nginx: {recipe: nginx}
+  app_playwright: {recipe: playwright}
+  vnu: {recipe: vnu}

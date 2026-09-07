@@ -1,5 +1,3 @@
 .env
 
-# Каталог сборки: его делает `./bundle_v0.1.0 generate` из bundle.yml и recipes/,
-# в CI — то же самое на каждом прогоне.
 dist/
