@@ -35,6 +35,7 @@ import { IMAGE_MIME, json, pkg, profileSchema, text } from './tools/shared.js';
 import { resolveInArtifacts, resolveInRoot } from './paths.js';
 import { seoFromHtml, seoFromPage } from './seo/page.js';
 import { savePage } from './mirror/save.js';
+import { register as registerCrawl } from './tools/crawl.js';
 import { clearStorage, exportState, getStorage, importState, listStates, setStorage } from './browser/storage.js';
 
 export async function createServer() {
@@ -1090,6 +1091,8 @@ export async function createServer() {
       });
     },
   );
+
+  registerCrawl(server);
 
   return server;
 }
