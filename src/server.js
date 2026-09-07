@@ -4,7 +4,7 @@ import path from 'node:path';
 import { readFile, readdir, stat } from 'node:fs/promises';
 
 import { CONFIG, DIRS, BROWSERS, VIEWPORTS } from './config.js';
-import { artifactRef, ensureDirs, listRuns, newRunId, pruneRuns, publicUrl, slug } from './artifacts.js';
+import { artifactRef, ensureDirs, listRuns, newRunId, pruneRuns, publicUrl, siteRef, slug } from './artifacts.js';
 import {
   createSession,
   closeSession,
@@ -34,6 +34,7 @@ import { runMatrix, AXES } from './matrix.js';
 import { IMAGE_MIME, json, pkg, profileSchema, text } from './tools/shared.js';
 import { resolveInArtifacts, resolveInRoot } from './paths.js';
 import { seoFromHtml, seoFromPage } from './seo/page.js';
+import { savePage } from './mirror/save.js';
 import { clearStorage, exportState, getStorage, importState, listStates, setStorage } from './browser/storage.js';
 
 export async function createServer() {
@@ -72,9 +73,20 @@ export async function createServer() {
         sessionId: z.string(),
         url: z.string(),
         waitUntil: z.enum(['load', 'domcontentloaded', 'networkidle', 'commit']).optional(),
+        save: z
+          .boolean()
+          .optional()
+          .describe('Сохранить страницу в локальное зеркало сразу после перехода — дальше её можно разбирать, не трогая чужой сервер'),
       },
     },
-    async ({ sessionId, url, waitUntil }) => json(await gotoAndSettle(getSession(sessionId), url, { waitUntil })),
+    async ({ sessionId, url, waitUntil, save }) => {
+      const session = getSession(sessionId);
+      const navigation = await gotoAndSettle(session, url, { waitUntil });
+      if (!save) return json(navigation);
+
+      const saved = await savePage(session);
+      return json({ navigation, saved: { ...saved, ...siteRef(saved.files.page) } });
+    },
   );
 
   server.registerTool(
@@ -294,6 +306,46 @@ export async function createServer() {
       const all = { console: console_, errors: logs.errors.slice(marks.errors), network };
       const scope = sinceNavigation && session.logMarks ? 'с последнего перехода' : 'с открытия сессии';
       return json({ scope, ...(kind === 'all' ? all : { [kind]: all[kind === 'errors' ? 'errors' : kind] }) });
+    },
+  );
+
+  server.registerTool(
+    'page_save',
+    {
+      title: 'Сохранить страницу локально',
+      description:
+        'Кладёт страницу в локальное зеркало: отрендеренный DOM с переписанными на локальные копии ссылками, отдельно сырой ответ сервера до JS, отдельно ресурсы с дедупликацией по содержимому. Копия открывается через browser_goto по internalUrl, и к ней применимы все остальные инструменты — layout_audit, screenshot, computed_styles. Дальше страницу можно разбирать сколько угодно, не обращаясь к чужому серверу.',
+      inputSchema: {
+        sessionId: z.string().optional().describe('Сохранить текущую страницу сессии'),
+        url: z.string().optional().describe('Открыть свою одноразовую сессию по адресу и сохранить её'),
+        siteId: z.string().optional().describe('Имя каталога в архиве. По умолчанию берётся из хоста'),
+        assets: z.boolean().optional().describe('Тянуть ли CSS, картинки и шрифты. По умолчанию да'),
+        scripts: z
+          .enum(['strip', 'keep'])
+          .optional()
+          .describe('strip (по умолчанию) вырезает скрипты: на копии аналитика стучит в сеть, а роутер SPA подменяет страницу. JSON-LD остаётся в любом случае'),
+        raw: z.boolean().optional().describe('Сохранять ли сырой ответ сервера отдельным файлом. По умолчанию да'),
+        ...profileSchema,
+      },
+    },
+    async ({ sessionId, url, siteId, assets, scripts, raw, ...profile }) => {
+      const done = (saved) => json({
+        ...saved,
+        page: siteRef(saved.files.page),
+        raw: saved.files.raw ? siteRef(saved.files.raw) : null,
+        note: 'Открывать копию из browser_goto надо по internalUrl: публичного порта внутри контейнера нет.',
+      });
+
+      if (sessionId) return done(await savePage(getSession(sessionId), { siteId, assets, scripts, raw }));
+      if (!url) throw new Error('Нужен sessionId или url.');
+
+      const session = await createSession(profile);
+      try {
+        await gotoAndSettle(session, url);
+        return done(await savePage(session, { siteId, assets, scripts, raw }));
+      } finally {
+        await closeSession(session.id);
+      }
     },
   );
 

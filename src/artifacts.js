@@ -74,6 +74,23 @@ export function artifactRef(absPath) {
   return { path: absPath, url: publicUrl(absPath), internalUrl: internalUrl(absPath) };
 }
 
+/**
+ * Ссылка на файл зеркала. Отдельно от artifactRef, потому что корень nginx — каталог артефактов,
+ * а sites/ раздаётся по alias: относительный путь считается от другой базы.
+ *
+ * Пара ссылок здесь по той же причине, что и у артефактов: url открывается на машине
+ * пользователя, internalUrl — из browser_goto внутри контейнера, где проброшенного порта нет.
+ */
+export function siteRef(absPath) {
+  const rel = path.relative(DIRS.sites, absPath).split(path.sep).join('/');
+  if (rel.startsWith('..')) return { path: absPath, url: null, internalUrl: null };
+  return {
+    path: absPath,
+    url: `${CONFIG.publicBaseUrl}/sites/${rel}`,
+    internalUrl: `${CONFIG.internalBaseUrl}/sites/${rel}`,
+  };
+}
+
 export async function ensureDirs() {
   await Promise.all(
     [DIRS.artifacts, DIRS.baselines, DIRS.fixtures, DIRS.sites, DIRS.state].map((d) => fs.mkdir(d, { recursive: true })),
