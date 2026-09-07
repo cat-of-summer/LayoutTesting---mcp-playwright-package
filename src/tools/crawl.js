@@ -9,9 +9,14 @@ import { z } from 'zod';
 import { json } from './shared.js';
 import { crawlStatus, resumeCrawl, startCrawl, stopCrawl } from '../crawl/runner.js';
 import { queryPages, querySelector } from '../crawl/query.js';
-import { listSites, readIndex, removeSite } from '../crawl/store.js';
+import { listSites, readIndex, removeSite, siteDir } from '../crawl/store.js';
 import { parseSitemap, parseRobots, isAllowed } from '../crawl/robots.js';
 import { normalizeUrl } from '../crawl/url.js';
+import { auditSite, verdictOf } from '../seo/site.js';
+import { renderSiteReport } from '../seo/render.js';
+import { newRunId, siteRef, writeJson } from '../artifacts.js';
+import fs from 'node:fs/promises';
+import path from 'node:path';
 
 const filterSchema = z
   .object({
@@ -200,6 +205,46 @@ export function register(server) {
       }
 
       return json(result);
+    },
+  );
+
+  server.registerTool(
+    'seo_report',
+    {
+      title: 'Сводный SEO-отчёт по сайту',
+      description:
+        'Собирает по архиву обхода то, чего не видно на отдельной странице: дубли title, description, h1 и самого содержимого; битые внутренние ссылки с указанием, откуда на них ведут; страницы-сироты без единой входящей ссылки; цепочки редиректов; вопросы к canonical и взаимности hreflang; тонкое содержимое; смешанный контент. Адреса, объявленные в canonical и hreflang, но лежащие вне обхода, проверяются отдельными одиночными запросами — иначе про них нечего сказать. Отдельно сводит то, что НЕ проверялось: закрытое robots.txt, упёршееся в лимиты, неудачные запросы. Кладёт JSON и самодостаточный HTML.',
+      inputSchema: {
+        siteId: z.string().describe('Обход, по которому строить отчёт. Список — crawl с action: list'),
+        verify: z
+          .boolean()
+          .optional()
+          .describe('Проверять ли одиночными запросами адреса вне обхода: canonical и hreflang наружу. По умолчанию да'),
+        thinWords: z.number().optional().describe('Порог тонкого содержимого в словах, по умолчанию 200'),
+      },
+    },
+    async ({ siteId, verify, thinWords }) => {
+      const report = await auditSite(siteId, { verify, thinWords });
+      const verdict = verdictOf(report);
+
+      /* Отчёт лежит рядом с обходом, а не в артефактах: артефакты чистятся по счётчику прогонов,
+         и отчёт по сайту исчез бы вместе с полусотней скриншотов. */
+      const runId = newRunId('seo');
+      const dir = path.join(siteDir(siteId), 'reports', runId);
+      await fs.mkdir(dir, { recursive: true });
+      const jsonFile = path.join(dir, 'seo.json');
+      const htmlFile = path.join(dir, 'seo.html');
+      await writeJson(jsonFile, { ...report, verdict });
+      await fs.writeFile(htmlFile, renderSiteReport(report, verdict), 'utf8');
+
+      return json({
+        siteId,
+        ...verdict,
+        totals: report.totals,
+        report: siteRef(htmlFile),
+        json: siteRef(jsonFile),
+        findings: report.findings,
+      });
     },
   );
 }

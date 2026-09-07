@@ -54,6 +54,23 @@ export const CONFIG = {
   visualThreshold: Number(process.env.VISUAL_THRESHOLD || 0.1),
 };
 
+/**
+ * Откуда стенд узнаёт о своих обновлениях.
+ *
+ * Держится здесь, рядом с остальной конфигурацией, а не в коде проверки: у форка или
+ * внутренней сборки репозиторий и реестр образов свои, и менять их правкой исходника —
+ * значит расходиться с апстримом в файле, который потом придётся мерджить.
+ */
+export const UPDATE = {
+  repo: process.env.LT_UPDATE_REPO || 'cat-of-summer/LayoutTesting---mcp-playwright-package',
+  image: process.env.LT_UPDATE_IMAGE || 'ghcr.io/cat-of-summer/layouttesting---mcp-playwright-package',
+  /** Пустое значение выключает проверку целиком — для стендов без выхода наружу. */
+  enabled: process.env.LT_UPDATE_CHECK !== '0',
+};
+
+UPDATE.releases = `https://github.com/${UPDATE.repo}/releases`;
+UPDATE.api = `https://api.github.com/repos/${UPDATE.repo}/releases/latest`;
+
 export const BROWSERS = ['chromium', 'firefox', 'webkit'];
 
 /** Именованные viewport'ы для матрицы условий. */

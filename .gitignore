@@ -11,3 +11,4 @@ sites/*
 # Куки живых сессий, включая боевые логины. В git не попадают ни при каких условиях.
 state/*
 !state/.gitkeep
+.update-check.json

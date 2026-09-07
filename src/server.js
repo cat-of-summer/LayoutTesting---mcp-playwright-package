@@ -37,13 +37,30 @@ import { seoFromHtml, seoFromPage } from './seo/page.js';
 import { savePage } from './mirror/save.js';
 import { register as registerCrawl } from './tools/crawl.js';
 import { INSTRUCTIONS } from './tools/instructions.js';
+import { checkForUpdate, updateNotice, upgradeSteps } from './update.js';
+import { langInfo } from './i18n.js';
 import { clearStorage, exportState, getStorage, importState, listStates, setStorage } from './browser/storage.js';
 
 export async function createServer() {
   await ensureDirs();
+  /*
+   * Проверка обновлений идёт до создания сервера, потому что её результат дописывается в
+   * instructions: иначе агент узнает о новой версии только если сам спросит, а спрашивать ему
+   * незачем. Упасть она не может — внутри таймаут и перехват любых отказов, — но и задержать
+   * запуск надолго тоже: секунды ожидания недоступного GitHub стоят дешевле, чем стенд,
+   * который не поднялся из-за проверки версии.
+   */
+  const update = await checkForUpdate(pkg.version).catch(() => null);
+  const notice = updateNotice(update);
+
   /* instructions клиент показывает модели при подключении. Без них агент видит четыре десятка
      описаний без всякой рамки и не понимает, для каких задач сюда идти. */
-  const server = new McpServer({ name: 'layout-testing', version: pkg.version }, { instructions: INSTRUCTIONS });
+  const server = new McpServer(
+    { name: 'layout-testing', version: pkg.version },
+    { instructions: notice ? `${INSTRUCTIONS}
+
+${notice}` : INSTRUCTIONS },
+  );
 
   // ---------- Сессия и навигация ----------
 
@@ -1104,6 +1121,12 @@ export async function createServer() {
         .catch((e) => `недоступен: ${e.message}`);
       return json({
         version: pkg.version,
+        /* Порядок обновления кладём прямо сюда: уведомление без инструкции заставляет
+           агента гадать или искать документацию снаружи. */
+        update: update
+          ? { ...update, upgrade: update.upgrade || upgradeSteps(update.latest) }
+          : { updateAvailable: null, unavailable: 'проверка не выполнялась' },
+        language: langInfo(),
         dirs: DIRS,
         publicBaseUrl: CONFIG.publicBaseUrl,
         internalBaseUrl: CONFIG.internalBaseUrl,

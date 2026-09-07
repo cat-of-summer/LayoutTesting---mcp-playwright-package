@@ -1,14 +1,14 @@
 import path from 'node:path';
 import { imageDataUri } from './checks/visual.js';
 
-const esc = (v) =>
+export const esc = (v) =>
   String(v ?? '')
     .replace(/&/g, '&amp;')
     .replace(/</g, '&lt;')
     .replace(/>/g, '&gt;')
     .replace(/"/g, '&quot;');
 
-const STYLE = `
+export const STYLE = `
 :root { color-scheme: light dark; --bg:#fff; --fg:#16181d; --muted:#5b6270; --line:#e3e6ec;
         --ok:#0f7b46; --warn:#9a6100; --bad:#b3261e; --card:#fafbfc; }
 @media (prefers-color-scheme: dark) {
