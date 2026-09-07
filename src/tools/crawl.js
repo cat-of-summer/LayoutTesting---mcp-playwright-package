@@ -7,6 +7,7 @@
  */
 import { z } from 'zod';
 import { json } from './shared.js';
+import { t } from '../i18n.js';
 import { crawlStatus, resumeCrawl, startCrawl, stopCrawl } from '../crawl/runner.js';
 import { queryPages, querySelector } from '../crawl/query.js';
 import { listSites, readIndex, removeSite, siteDir } from '../crawl/store.js';
@@ -37,9 +38,11 @@ export function register(server) {
   server.registerTool(
     'crawl',
     {
-      title: 'Обход сайта',
-      description:
-        'Обходит сайт по внутренним ссылкам и складывает страницы в локальный архив: сначала обычным HTTP-запросом (дёшево и видно то же, что видит робот без JS), а если ответ пустой — переоткрывает в браузере. Возвращает управление сразу, обход идёт фоном; смотреть прогресс через action: status. По умолчанию уважает robots.txt, держит паузу между запросами и не выходит за пределы хоста.',
+      title: t({ ru: 'Обход сайта', en: "Crawl a site" }),
+      description: t({
+        ru: 'Обходит сайт по внутренним ссылкам и складывает страницы в локальный архив: сначала обычным HTTP-запросом (дёшево и видно то же, что видит робот без JS), а если ответ пустой — переоткрывает в браузере. Возвращает управление сразу, обход идёт фоном; смотреть прогресс через action: status. По умолчанию уважает robots.txt, держит паузу между запросами и не выходит за пределы хоста.',
+        en: "Walks a site by its internal links and stores pages in a local archive: first with a plain HTTP request (cheap, and it shows exactly what a crawler without JS sees), then reopening a page in the browser if the response looks empty. Returns immediately, the crawl runs in the background; watch progress with action: status. By default it respects robots.txt, keeps a pause between requests and stays on the same host.",
+      }),
       inputSchema: {
         action: z.enum(['start', 'status', 'stop', 'resume', 'list', 'delete']).optional().describe('По умолчанию start'),
         url: z.string().optional().describe('Откуда начинать. Нужен для start'),
@@ -92,9 +95,11 @@ export function register(server) {
   server.registerTool(
     'crawl_pages',
     {
-      title: 'Страницы обхода',
-      description:
-        'Выборка по сохранённым страницам: фильтр по коду ответа, глубине, индексируемости, отсутствующим полям и объёму текста; полнотекстовый поиск; группировка для поиска дублей заголовков и описаний. Возвращает список страниц с полями, но не разметку — за разметкой в read_artifact или crawl_query.',
+      title: t({ ru: 'Страницы обхода', en: "Pages of a crawl" }),
+      description: t({
+        ru: 'Выборка по сохранённым страницам: фильтр по коду ответа, глубине, индексируемости, отсутствующим полям и объёму текста; полнотекстовый поиск; группировка для поиска дублей заголовков и описаний. Возвращает список страниц с полями, но не разметку — за разметкой в read_artifact или crawl_query.',
+        en: "Selects over stored pages: filter by status code, depth, indexability, missing fields and word count; full-text search; grouping to find duplicate titles and descriptions. Returns a list of pages with their fields, not their markup — for markup use read_artifact or crawl_query.",
+      }),
       inputSchema: {
         siteId: z.string(),
         filter: filterSchema,
@@ -114,9 +119,11 @@ export function register(server) {
   server.registerTool(
     'crawl_query',
     {
-      title: 'Селектор по всему архиву',
-      description:
-        'Применяет CSS-селектор к каждой сохранённой странице и возвращает найденные узлы с указанием страницы. Так отвечают на вопросы вида «где на сайте остались inline-стили», «на каких страницах нет разметки хлебных крошек», «где ссылки открываются в новой вкладке без rel=noopener». Ответ — список узлов, а не страниц: это другой вопрос, чем crawl_pages.',
+      title: t({ ru: 'Селектор по всему архиву', en: "Selector across the archive" }),
+      description: t({
+        ru: 'Применяет CSS-селектор к каждой сохранённой странице и возвращает найденные узлы с указанием страницы. Так отвечают на вопросы вида «где на сайте остались inline-стили», «на каких страницах нет разметки хлебных крошек», «где ссылки открываются в новой вкладке без rel=noopener». Ответ — список узлов, а не страниц: это другой вопрос, чем crawl_pages.',
+        en: "Applies a CSS selector to every stored page and returns the matching nodes together with the page they came from. This answers questions like \"where are inline styles still used\", \"which pages have no breadcrumb markup\", \"where do links open in a new tab without rel=noopener\". The answer is a list of nodes, not of pages — a different question from crawl_pages.",
+      }),
       inputSchema: {
         siteId: z.string(),
         select: z.string().describe('CSS-селектор'),
@@ -131,9 +138,11 @@ export function register(server) {
   server.registerTool(
     'site_files',
     {
-      title: 'robots.txt и sitemap.xml',
-      description:
-        'Забирает и разбирает robots.txt и sitemap.xml. Показывает правила для указанного агента, проверяет конкретные адреса на запрет и разворачивает индексные sitemap. Если указан siteId, дополнительно сверяет sitemap с обходом: чего нет в карте и что в карте есть, а на сайте не нашлось.',
+      title: t({ ru: 'robots.txt и sitemap.xml', en: "robots.txt and sitemap.xml" }),
+      description: t({
+        ru: 'Забирает и разбирает robots.txt и sitemap.xml. Показывает правила для указанного агента, проверяет конкретные адреса на запрет и разворачивает индексные sitemap. Если указан siteId, дополнительно сверяет sitemap с обходом: чего нет в карте и что в карте есть, а на сайте не нашлось.',
+        en: "Fetches and parses robots.txt and sitemap.xml. Shows the rules for a given user agent, checks specific addresses against them and expands sitemap index files. With a siteId it also reconciles the sitemap against a finished crawl: what is listed but was never found, and what was found but is missing from the map.",
+      }),
       inputSchema: {
         url: z.string().describe('Любой адрес сайта — robots.txt и sitemap.xml берутся от его корня'),
         userAgent: z.string().optional().describe('Для какого агента показывать правила'),
@@ -211,9 +220,11 @@ export function register(server) {
   server.registerTool(
     'seo_report',
     {
-      title: 'Сводный SEO-отчёт по сайту',
-      description:
-        'Собирает по архиву обхода то, чего не видно на отдельной странице: дубли title, description, h1 и самого содержимого; битые внутренние ссылки с указанием, откуда на них ведут; страницы-сироты без единой входящей ссылки; цепочки редиректов; вопросы к canonical и взаимности hreflang; тонкое содержимое; смешанный контент. Адреса, объявленные в canonical и hreflang, но лежащие вне обхода, проверяются отдельными одиночными запросами — иначе про них нечего сказать. Отдельно сводит то, что НЕ проверялось: закрытое robots.txt, упёршееся в лимиты, неудачные запросы. Кладёт JSON и самодостаточный HTML.',
+      title: t({ ru: 'Сводный SEO-отчёт по сайту', en: "Site-wide SEO report" }),
+      description: t({
+        ru: 'Собирает по архиву обхода то, чего не видно на отдельной странице: дубли title, description, h1 и самого содержимого; битые внутренние ссылки с указанием, откуда на них ведут; страницы-сироты без единой входящей ссылки; цепочки редиректов; вопросы к canonical и взаимности hreflang; тонкое содержимое; смешанный контент. Адреса, объявленные в canonical и hreflang, но лежащие вне обхода, проверяются отдельными одиночными запросами — иначе про них нечего сказать. Отдельно сводит то, что НЕ проверялось: закрытое robots.txt, упёршееся в лимиты, неудачные запросы. Кладёт JSON и самодостаточный HTML.',
+        en: "Collects from a crawl archive what is invisible on a single page: duplicate titles, descriptions, h1s and duplicate content; broken internal links with the pages that link to them; orphan pages with no inbound links at all; redirect chains; canonical and hreflang reciprocity problems; thin content; mixed content. Addresses declared in canonical and hreflang but lying outside the crawl are verified with separate one-off requests, otherwise there is nothing to say about them. Separately summarizes what was NOT checked: blocked by robots.txt, cut off by limits, failed requests. Writes JSON and a self-contained HTML report.",
+      }),
       inputSchema: {
         siteId: z.string().describe('Обход, по которому строить отчёт. Список — crawl с action: list'),
         verify: z

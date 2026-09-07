@@ -38,7 +38,7 @@ import { savePage } from './mirror/save.js';
 import { register as registerCrawl } from './tools/crawl.js';
 import { INSTRUCTIONS } from './tools/instructions.js';
 import { checkForUpdate, updateNotice, upgradeSteps } from './update.js';
-import { langInfo } from './i18n.js';
+import { langInfo, t } from './i18n.js';
 import { clearStorage, exportState, getStorage, importState, listStates, setStorage } from './browser/storage.js';
 
 export async function createServer() {
@@ -67,9 +67,11 @@ ${notice}` : INSTRUCTIONS },
   server.registerTool(
     'browser_open',
     {
-      title: 'Открыть браузер',
-      description:
-        'Создаёт сессию браузера с заданными условиями просмотра и, если передан url, сразу переходит на страницу. Возвращает sessionId для остальных инструментов.',
+      title: t({ ru: 'Открыть браузер', en: "Open browser" }),
+      description: t({
+        ru: 'Создаёт сессию браузера с заданными условиями просмотра и, если передан url, сразу переходит на страницу. Возвращает sessionId для остальных инструментов.',
+        en: "Creates a browser session with the given viewing conditions and, if a url is passed, navigates to it right away. Returns a sessionId used by every other session-based tool. Viewing conditions cover engine, viewport, dark mode, RTL, zoom, forced colors, DPR, locale and access (basic auth, headers, host mapping).",
+      }),
       inputSchema: { url: z.string().optional(), ...profileSchema },
     },
     async ({ url, ...profile }) => {
@@ -88,9 +90,11 @@ ${notice}` : INSTRUCTIONS },
   server.registerTool(
     'browser_goto',
     {
-      title: 'Перейти по адресу',
-      description:
-        'Переход в уже открытой сессии. Страница стабилизируется перед проверками: анимации останавливаются, шрифты догружаются — иначе снимки и замеры пляшут между прогонами. Если часть ресурсов не доехала, об этом сказано в warnings, а не оставлено выясняться по пустым рамкам на готовом кадре.',
+      title: t({ ru: 'Перейти по адресу', en: "Navigate" }),
+      description: t({
+        ru: 'Переход в уже открытой сессии. Страница стабилизируется перед проверками: анимации останавливаются, шрифты догружаются — иначе снимки и замеры пляшут между прогонами. Если часть ресурсов не доехала, об этом сказано в warnings, а не оставлено выясняться по пустым рамкам на готовом кадре.',
+        en: "Navigates in an already open session. The page is stabilized before checks run: animations are stopped and fonts are awaited, otherwise screenshots and measurements drift between runs. If some resources failed to load, that is reported in warnings rather than left to be discovered as empty boxes on a finished screenshot.",
+      }),
       inputSchema: {
         sessionId: z.string(),
         url: z.string(),
@@ -114,9 +118,11 @@ ${notice}` : INSTRUCTIONS },
   server.registerTool(
     'browser_act',
     {
-      title: 'Действие на странице',
-      description:
-        'Клик, ввод текста, нажатие клавиши, наведение, прокрутка, выбор в списке или ожидание селектора. Нужен, когда проверяемое состояние возникает только после действия: раскрытое меню, открытая вкладка, заполненная форма, страница после логина. Готовые селекторы удобно брать из page_snapshot.',
+      title: t({ ru: 'Действие на странице', en: "Act on the page" }),
+      description: t({
+        ru: 'Клик, ввод текста, нажатие клавиши, наведение, прокрутка, выбор в списке или ожидание селектора. Нужен, когда проверяемое состояние возникает только после действия: раскрытое меню, открытая вкладка, заполненная форма, страница после логина. Готовые селекторы удобно брать из page_snapshot.',
+        en: "Click, type, press a key, hover, scroll, select an option or wait for a selector. Needed when the state you want to check only appears after an action: an expanded menu, an opened tab, a filled form, a page behind a login. Ready-to-use selectors come from page_snapshot.",
+      }),
       inputSchema: {
         sessionId: z.string(),
         action: z.enum(['click', 'fill', 'press', 'hover', 'scroll', 'wait', 'select']),
@@ -145,9 +151,11 @@ ${notice}` : INSTRUCTIONS },
   server.registerTool(
     'browser_eval',
     {
-      title: 'Выполнить JS на странице',
-      description:
-        'Выполняет выражение или тело функции в контексте страницы и возвращает результат. Годится и IIFE, и цепочка через .map(function(){return …}), и несколько инструкций с return в конце. Если результат undefined, об этом сказано явно, а не возвращается пустой ответ.',
+      title: t({ ru: 'Выполнить JS на странице', en: "Run JS on the page" }),
+      description: t({
+        ru: 'Выполняет выражение или тело функции в контексте страницы и возвращает результат. Годится и IIFE, и цепочка через .map(function(){return …}), и несколько инструкций с return в конце. Если результат undefined, об этом сказано явно, а не возвращается пустой ответ.',
+        en: "Evaluates an expression or a function body in the page context and returns the result. Accepts an IIFE, a chained .map(function(){return …}), or several statements ending with return. If the result is undefined that is stated explicitly instead of returning an empty answer.",
+      }),
       inputSchema: { sessionId: z.string(), expression: z.string() },
     },
     async ({ sessionId, expression }) => json(await evaluateOnPage(getSession(sessionId).page, expression)),
@@ -156,9 +164,11 @@ ${notice}` : INSTRUCTIONS },
   server.registerTool(
     'browser_style',
     {
-      title: 'Патч CSS/JS на страницу',
-      description:
-        'Вкатывает свой CSS или JS поверх открытой страницы и переприменяет его после каждого перехода. Так проверяют правку на чужом или боевом стенде, ничего там не меняя: добавили правило — сняли скриншот — сравнили.',
+      title: t({ ru: 'Патч CSS/JS на страницу', en: "Patch CSS/JS onto the page" }),
+      description: t({
+        ru: 'Вкатывает свой CSS или JS поверх открытой страницы и переприменяет его после каждого перехода. Так проверяют правку на чужом или боевом стенде, ничего там не меняя: добавили правило — сняли скриншот — сравнили.',
+        en: "Injects your own CSS or JS on top of the open page and reapplies it after every navigation. This is how you try a fix against someone else's or a production site without touching it: add a rule, take a screenshot, compare.",
+      }),
       inputSchema: {
         sessionId: z.string(),
         action: z.enum(['add', 'remove', 'clear', 'list']).optional().describe('По умолчанию add'),
@@ -187,9 +197,11 @@ ${notice}` : INSTRUCTIONS },
   server.registerTool(
     'browser_route',
     {
-      title: 'Перехват запросов',
-      description:
-        'Правила на сетевые запросы страницы: отрезать аналитику и чаты, подменить таблицу стилей или скрипт своей версией, подставить заглушки вместо отсутствующих картинок, переписать адреса — когда сайт отдаёт абсолютные ссылки на боевой домен. Переживает навигацию; в list виден счётчик попаданий, чтобы отличить несработавшее правило от сработавшего.',
+      title: t({ ru: 'Перехват запросов', en: "Intercept requests" }),
+      description: t({
+        ru: 'Правила на сетевые запросы страницы: отрезать аналитику и чаты, подменить таблицу стилей или скрипт своей версией, подставить заглушки вместо отсутствующих картинок, переписать адреса — когда сайт отдаёт абсолютные ссылки на боевой домен. Переживает навигацию; в list виден счётчик попаданий, чтобы отличить несработавшее правило от сработавшего.',
+        en: "Rules over the page network requests: cut off analytics and chat widgets that keep a page from reaching load, swap a stylesheet or script for your own build, stub missing images, rewrite addresses when a site serves absolute links to the production domain. Survives navigation; list shows a hit counter so a silent rule is distinguishable from a working one.",
+      }),
       inputSchema: {
         sessionId: z.string(),
         action: z.enum(['add', 'list', 'clear']).optional().describe('По умолчанию add'),
@@ -225,9 +237,11 @@ ${notice}` : INSTRUCTIONS },
   server.registerTool(
     'browser_sessions',
     {
-      title: 'Список сессий',
-      description:
-        'Какие сессии браузера сейчас открыты, с их условиями просмотра и текущим адресом. Пригодится, когда идентификатор открытой ранее сессии потерялся или надо убедиться, что старые сессии закрыты и не держат память.',
+      title: t({ ru: 'Список сессий', en: "List sessions" }),
+      description: t({
+        ru: 'Какие сессии браузера сейчас открыты, с их условиями просмотра и текущим адресом. Пригодится, когда идентификатор открытой ранее сессии потерялся или надо убедиться, что старые сессии закрыты и не держат память.',
+        en: "Which browser sessions are open right now, with their viewing conditions and current URL. Useful when a session was opened earlier and its id got lost, or to confirm old sessions are closed and no longer holding memory.",
+      }),
       inputSchema: {},
     },
     async () => json({ sessions: listSessions() }),
@@ -236,9 +250,11 @@ ${notice}` : INSTRUCTIONS },
   server.registerTool(
     'browser_close',
     {
-      title: 'Закрыть сессию',
-      description:
-        'Закрывает сессию и освобождает память. Стоит вызывать, закончив работу со страницей: сессии живут до конца работы сервера, и каждая держит свой контекст браузера.',
+      title: t({ ru: 'Закрыть сессию', en: "Close session" }),
+      description: t({
+        ru: 'Закрывает сессию и освобождает память. Стоит вызывать, закончив работу со страницей: сессии живут до конца работы сервера, и каждая держит свой контекст браузера.',
+        en: "Closes a session and frees its memory. Worth calling once you are done with a page: sessions live until the server stops, and each one holds its own browser context.",
+      }),
       inputSchema: { sessionId: z.string() },
     },
     async ({ sessionId }) => json({ closed: await closeSession(sessionId) }),
@@ -247,9 +263,11 @@ ${notice}` : INSTRUCTIONS },
   server.registerTool(
     'browser_storage',
     {
-      title: 'Куки и хранилища',
-      description:
-        'Читает и подкладывает куки, localStorage и sessionStorage, а export и import сохраняют состояние сессии на диск и возвращают его в новую. Так логин переживает browser_close: сохранённое имя потом передаётся в storageState при открытии любой сессии. Важно: localStorage и sessionStorage снимаются с текущей страницы, а не со всего сайта — API уровня контекста у них нет.',
+      title: t({ ru: 'Куки и хранилища', en: "Cookies and storage" }),
+      description: t({
+        ru: 'Читает и подкладывает куки, localStorage и sessionStorage, а export и import сохраняют состояние сессии на диск и возвращают его в новую. Так логин переживает browser_close: сохранённое имя потом передаётся в storageState при открытии любой сессии. Важно: localStorage и sessionStorage снимаются с текущей страницы, а не со всего сайта — API уровня контекста у них нет.',
+        en: "Reads and injects cookies, localStorage and sessionStorage; export and import save a session state to disk and restore it into a new session. That is how a login survives browser_close: pass the saved name as storageState when opening any session. Note: localStorage and sessionStorage are read from the current page, not from the whole site — Playwright has no context-level API for them.",
+      }),
       inputSchema: {
         sessionId: z.string().optional().describe('Не нужен только для action: list'),
         action: z.enum(['get', 'set', 'clear', 'export', 'import', 'list']).optional().describe('По умолчанию get'),
@@ -286,9 +304,11 @@ ${notice}` : INSTRUCTIONS },
   server.registerTool(
     'page_snapshot',
     {
-      title: 'Текстовый слепок страницы',
-      description:
-        'Дерево ролей, имён и селекторов. Дешевле скриншота по объёму и содержит готовые селекторы для действий.',
+      title: t({ ru: 'Текстовый слепок страницы', en: "Text outline of the page" }),
+      description: t({
+        ru: 'Дерево ролей, имён и селекторов. Дешевле скриншота по объёму и содержит готовые селекторы для действий.',
+        en: "A tree of roles, names and selectors. An order of magnitude cheaper than a screenshot and every line carries a ready-to-use selector, so this is the cheapest way to start looking at a page.",
+      }),
       inputSchema: {
         sessionId: z.string(),
         maxNodes: z.number().optional(),
@@ -306,9 +326,11 @@ ${notice}` : INSTRUCTIONS },
   server.registerTool(
     'page_logs',
     {
-      title: 'Логи страницы',
-      description:
-        'Консоль, необработанные ошибки JS и неудачные сетевые запросы. По умолчанию — только с последнего перехода; sinceNavigation: false отдаёт всё с момента открытия сессии.',
+      title: t({ ru: 'Логи страницы', en: "Page logs" }),
+      description: t({
+        ru: 'Консоль, необработанные ошибки JS и неудачные сетевые запросы. По умолчанию — только с последнего перехода; sinceNavigation: false отдаёт всё с момента открытия сессии.',
+        en: "Console output, unhandled JS errors and failed network requests. By default only since the last navigation; sinceNavigation: false returns everything since the session was opened.",
+      }),
       inputSchema: {
         sessionId: z.string(),
         kind: z.enum(['all', 'console', 'errors', 'network']).optional(),
@@ -345,9 +367,11 @@ ${notice}` : INSTRUCTIONS },
   server.registerTool(
     'page_save',
     {
-      title: 'Сохранить страницу локально',
-      description:
-        'Кладёт страницу в локальное зеркало: отрендеренный DOM с переписанными на локальные копии ссылками, отдельно сырой ответ сервера до JS, отдельно ресурсы с дедупликацией по содержимому. Копия открывается через browser_goto по internalUrl, и к ней применимы все остальные инструменты — layout_audit, screenshot, computed_styles. Дальше страницу можно разбирать сколько угодно, не обращаясь к чужому серверу.',
+      title: t({ ru: 'Сохранить страницу локально', en: "Save the page locally" }),
+      description: t({
+        ru: 'Кладёт страницу в локальное зеркало: отрендеренный DOM с переписанными на локальные копии ссылками, отдельно сырой ответ сервера до JS, отдельно ресурсы с дедупликацией по содержимому. Копия открывается через browser_goto по internalUrl, и к ней применимы все остальные инструменты — layout_audit, screenshot, computed_styles. Дальше страницу можно разбирать сколько угодно, не обращаясь к чужому серверу.',
+        en: "Puts the page into a local mirror: the rendered DOM with links rewritten to local copies, the raw server response before JS kept separately, and resources deduplicated by content. The copy opens through browser_goto by its internalUrl and every other tool applies to it — layout_audit, screenshot, computed_styles. After that the page can be examined as many times as needed without touching the remote server.",
+      }),
       inputSchema: {
         sessionId: z.string().optional().describe('Сохранить текущую страницу сессии'),
         url: z.string().optional().describe('Открыть свою одноразовую сессию по адресу и сохранить её'),
@@ -387,9 +411,11 @@ ${notice}` : INSTRUCTIONS },
   server.registerTool(
     'layout_audit',
     {
-      title: 'Эвристики вёрстки',
-      description:
-        'Ищет горизонтальный скролл, вылеты за viewport, наложения элементов, обрезанный текст, текст под непрозрачным слоем, мёртвый z-index (задан на position: static), битые картинки, картинки без размеров, мелкие тач-таргеты и низкий контраст.',
+      title: t({ ru: 'Эвристики вёрстки', en: "Layout heuristics" }),
+      description: t({
+        ru: 'Ищет горизонтальный скролл, вылеты за viewport, наложения элементов, обрезанный текст, текст под непрозрачным слоем, мёртвый z-index (задан на position: static), битые картинки, картинки без размеров, мелкие тач-таргеты и низкий контраст.',
+        en: "Finds horizontal scroll, elements past the viewport, overlapping content, clipped text, text under an opaque layer, dead z-index (set on position: static), broken images, images without dimensions, small tap targets and low contrast. The first thing to run when the complaint sounds like \"the layout is broken\".",
+      }),
       inputSchema: {
         sessionId: z.string(),
         minTarget: z.number().optional().describe('Минимальный размер тач-таргета, px (по умолчанию 24)'),
@@ -408,9 +434,11 @@ ${notice}` : INSTRUCTIONS },
   server.registerTool(
     'computed_styles',
     {
-      title: 'Вычисленные стили',
-      description:
-        'Геометрия и итоговые CSS-свойства элемента — чтобы понять, почему блок не там, где ожидается. Умеет псевдоэлементы (::before, ::after) и разом все совпадения селектора.',
+      title: t({ ru: 'Вычисленные стили', en: "Computed styles" }),
+      description: t({
+        ru: 'Геометрия и итоговые CSS-свойства элемента — чтобы понять, почему блок не там, где ожидается. Умеет псевдоэлементы (::before, ::after) и разом все совпадения селектора.',
+        en: "Geometry and final CSS properties of an element — to understand why a block is not where it is expected. Handles pseudo-elements (::before, ::after) and all matches of a selector at once.",
+      }),
       inputSchema: {
         sessionId: z.string(),
         selector: z.string(),
@@ -430,9 +458,11 @@ ${notice}` : INSTRUCTIONS },
   server.registerTool(
     'matched_rules',
     {
-      title: 'Какое правило победило',
-      description:
-        'Все CSS-правила, матчащие элемент: селектор, специфичность, файл и строка, объявления — и по каждому свойству кто победил, а кого перебили. Отвечает на вопрос «почему моя правка не применилась», на который getComputedStyle не отвечает. Понимает псевдоэлементы. Только chromium.',
+      title: t({ ru: 'Какое правило победило', en: "Which rule won" }),
+      description: t({
+        ru: 'Все CSS-правила, матчащие элемент: селектор, специфичность, файл и строка, объявления — и по каждому свойству кто победил, а кого перебили. Отвечает на вопрос «почему моя правка не применилась», на который getComputedStyle не отвечает. Понимает псевдоэлементы. Только chromium.',
+        en: "Every CSS rule matching an element: selector, specificity, file and line, declarations — and for each property, which declaration won and which were overridden. Answers \"why is my change not applied\", which getComputedStyle cannot answer. Understands pseudo-elements. Chromium only.",
+      }),
       inputSchema: {
         sessionId: z.string(),
         selector: z.string(),
@@ -453,9 +483,11 @@ ${notice}` : INSTRUCTIONS },
   server.registerTool(
     'element_layers',
     {
-      title: 'Слои и перекрытия',
-      description:
-        'Почему элемента не видно и кто лежит сверху: порядок отрисовки, цепочка стек-контекстов над элементом, перекрывающие соседи и что реально нарисовано в его точках. Отдельно предупреждает про z-index на position: static и про z-index, который считается внутри чужого стек-контекста.',
+      title: t({ ru: 'Слои и перекрытия', en: "Layers and overlaps" }),
+      description: t({
+        ru: 'Почему элемента не видно и кто лежит сверху: порядок отрисовки, цепочка стек-контекстов над элементом, перекрывающие соседи и что реально нарисовано в его точках. Отдельно предупреждает про z-index на position: static и про z-index, который считается внутри чужого стек-контекста.',
+        en: "Why an element is invisible and what lies on top of it: paint order, the chain of stacking contexts above it, overlapping neighbours and what is actually painted at its points. Separately warns about z-index on position: static and about z-index resolved inside someone else's stacking context.",
+      }),
       inputSchema: {
         sessionId: z.string(),
         selector: z.string(),
@@ -475,9 +507,11 @@ ${notice}` : INSTRUCTIONS },
   server.registerTool(
     'screenshot',
     {
-      title: 'Скриншот',
-      description:
-        'Снимок страницы или элемента. Возвращает путь и URL; картинку в ответ вкладывает только при inline=true. Снимок по selector — это область элемента: наехавшие на неё чужие блоки в кадр попадут. Если часть ресурсов страницы не загрузилась, в ответе будет warnings — снимок в этом случае неполный.',
+      title: t({ ru: 'Скриншот', en: "Screenshot" }),
+      description: t({
+        ru: 'Снимок страницы или элемента. Возвращает путь и URL; картинку в ответ вкладывает только при inline=true. Снимок по selector — это область элемента: наехавшие на неё чужие блоки в кадр попадут. Если часть ресурсов страницы не загрузилась, в ответе будет warnings — снимок в этом случае неполный.',
+        en: "A shot of the page or one element. Returns a path and a URL; the image itself is attached to the answer only with inline=true. A shot by selector is the element area: neighbours overlapping it will be in frame. If some resources failed to load, warnings say so — the shot is incomplete in that case.",
+      }),
       inputSchema: {
         sessionId: z.string(),
         name: z.string().optional(),
@@ -546,9 +580,11 @@ ${notice}` : INSTRUCTIONS },
   server.registerTool(
     'compare_pages',
     {
-      title: 'Сравнить две страницы',
-      description:
-        'Сличает две живые страницы между собой на списке ширин: макет против собранной страницы. У каждой стороны свой HTTP-доступ и свои условия. Разная высота сравнению не мешает — кадры дополняются до общего холста, а разница высот отдаётся отдельным числом. Картинки в ответ не вкладываются: смотреть в артефактах.',
+      title: t({ ru: 'Сравнить две страницы', en: "Compare two live pages" }),
+      description: t({
+        ru: 'Сличает две живые страницы между собой на списке ширин: макет против собранной страницы. У каждой стороны свой HTTP-доступ и свои условия. Разная высота сравнению не мешает — кадры дополняются до общего холста, а разница высот отдаётся отдельным числом. Картинки в ответ не вкладываются: смотреть в артефактах.',
+        en: "Compares two live pages pixel by pixel across a list of widths: a mockup against the built page. Each side has its own HTTP access and its own conditions. Different heights are not a problem — frames are padded to a common canvas and the height difference is returned separately.",
+      }),
       inputSchema: {
         a: z
           .object({
@@ -604,9 +640,11 @@ ${notice}` : INSTRUCTIONS },
   server.registerTool(
     'compare_layout',
     {
-      title: 'Сравнить вёрстку двух страниц',
-      description:
-        'Сличает макет и собранную страницу по DOM, а не по пикселям: какие классы есть только в одной из них и чем различаются одноимённые блоки — размер коробки, шрифт, отступы, сетка. Не зависит от контента, поэтому отвечает на вопрос «сошлась ли вёрстка» там, где попиксельное сравнение бесполезно из-за разных текстов и фотографий.',
+      title: t({ ru: 'Сравнить вёрстку двух страниц', en: "Compare layout of two pages" }),
+      description: t({
+        ru: 'Сличает макет и собранную страницу по DOM, а не по пикселям: какие классы есть только в одной из них и чем различаются одноимённые блоки — размер коробки, шрифт, отступы, сетка. Не зависит от контента, поэтому отвечает на вопрос «сошлась ли вёрстка» там, где попиксельное сравнение бесполезно из-за разных текстов и фотографий.',
+        en: "Compares a mockup and a built page by DOM rather than by pixels: which classes exist in only one of them, and how same-named blocks differ in box size, font, spacing and grid. Independent of content, so it answers \"does the layout match\" where a pixel diff is useless because texts and photos differ.",
+      }),
       inputSchema: {
         a: z
           .object({
@@ -653,9 +691,11 @@ ${notice}` : INSTRUCTIONS },
   server.registerTool(
     'visual_compare',
     {
-      title: 'Сравнить с эталоном',
-      description:
-        'Снимает страницу и сравнивает с эталоном. Если эталона нет, снимок становится эталоном и это сообщается явно. Формат и масштаб здесь не настраиваются намеренно: сравнение попиксельное, и любая перекодировка обесценила бы накопленные эталоны.',
+      title: t({ ru: 'Сравнить с эталоном', en: "Compare against a baseline" }),
+      description: t({
+        ru: 'Снимает страницу и сравнивает с эталоном. Если эталона нет, снимок становится эталоном и это сообщается явно. Формат и масштаб здесь не настраиваются намеренно: сравнение попиксельное, и любая перекодировка обесценила бы накопленные эталоны.',
+        en: "Takes a screenshot and compares it with the stored baseline. If there is no baseline, the shot becomes one and that is stated explicitly. Format and scale are deliberately not configurable here: the comparison is pixel-exact and any re-encoding would devalue the baselines already collected.",
+      }),
       inputSchema: {
         sessionId: z.string(),
         name: z.string().describe('Имя эталона'),
@@ -698,9 +738,11 @@ ${notice}` : INSTRUCTIONS },
   server.registerTool(
     'visual_guide',
     {
-      title: 'Визуальный справочник',
-      description:
-        'Собирает один самодостаточный HTML: перечисленные блоки страницы, снятые в нескольких ширинах, с подписями параметров. Документ для человека — контент-менеджеру показать, что даёт каждая комбинация настроек. Картинки вшиты в файл, его можно переслать одним вложением.',
+      title: t({ ru: 'Визуальный справочник', en: "Visual reference document" }),
+      description: t({
+        ru: 'Собирает один самодостаточный HTML: перечисленные блоки страницы, снятые в нескольких ширинах, с подписями параметров. Документ для человека — контент-менеджеру показать, что даёт каждая комбинация настроек. Картинки вшиты в файл, его можно переслать одним вложением.',
+        en: "Builds one self-contained HTML: the listed page blocks captured at several widths, with captions for their parameters. A document for humans — to show a content manager what each combination of settings produces. Images are embedded in the file, so it can be forwarded as a single attachment.",
+      }),
       inputSchema: {
         url: z.string().describe('Страница, с которой снимать'),
         items: z
@@ -749,9 +791,11 @@ ${notice}` : INSTRUCTIONS },
   server.registerTool(
     'visual_baselines',
     {
-      title: 'Эталоны',
-      description:
-        'Сохранённые эталоны визуальной регрессии: для каких страниц и условий просмотра эталон уже есть. То есть где visual_compare найдёт с чем сравнивать, а где первый снимок сам станет эталоном.',
+      title: t({ ru: 'Эталоны', en: "Baselines" }),
+      description: t({
+        ru: 'Сохранённые эталоны визуальной регрессии: для каких страниц и условий просмотра эталон уже есть. То есть где visual_compare найдёт с чем сравнивать, а где первый снимок сам станет эталоном.',
+        en: "Stored visual regression baselines: which pages and viewing conditions already have one. That is, where visual_compare will have something to compare against, and where the first shot will itself become the baseline.",
+      }),
       inputSchema: {},
     },
     async () => json({ dir: DIRS.baselines, baselines: await listBaselines(DIRS.baselines) }),
@@ -762,9 +806,11 @@ ${notice}` : INSTRUCTIONS },
   server.registerTool(
     'a11y_axe',
     {
-      title: 'Проверка axe-core',
-      description:
-        'Правила WCAG (axe-core) по открытой странице. Работает с текущим её состоянием, поэтому видит и то, что закрыто за логином, раскрытым меню или вкладкой, — в отличие от проверок по одному адресу. Второй набор правил в a11y_pa11y, находят они разное.',
+      title: t({ ru: 'Проверка axe-core', en: "axe-core check" }),
+      description: t({
+        ru: 'Правила WCAG (axe-core) по открытой странице. Работает с текущим её состоянием, поэтому видит и то, что закрыто за логином, раскрытым меню или вкладкой, — в отличие от проверок по одному адресу. Второй набор правил в a11y_pa11y, находят они разное.',
+        en: "WCAG rules (axe-core) against the open page. Works with its current state, so it also sees what is behind a login, an expanded menu or a tab — unlike checks that take a bare URL. The second rule set is a11y_pa11y; they find different things.",
+      }),
       inputSchema: {
         sessionId: z.string(),
         tags: z.array(z.string()).optional().describe('Например wcag2aa, wcag21aa, best-practice'),
@@ -779,9 +825,11 @@ ${notice}` : INSTRUCTIONS },
   server.registerTool(
     'a11y_pa11y',
     {
-      title: 'Проверка pa11y',
-      description:
-        'Второй набор правил доступности (HTML CodeSniffer), по URL. Наборы axe и pa11y пересекаются лишь частично, поэтому для настоящей проверки на WCAG нужны оба: что молча пропускает один, находит другой.',
+      title: t({ ru: 'Проверка pa11y', en: "pa11y check" }),
+      description: t({
+        ru: 'Второй набор правил доступности (HTML CodeSniffer), по URL. Наборы axe и pa11y пересекаются лишь частично, поэтому для настоящей проверки на WCAG нужны оба: что молча пропускает один, находит другой.',
+        en: "A second accessibility rule set (HTML CodeSniffer), by URL. The axe and pa11y sets overlap only partly, so a real WCAG check needs both: what one silently passes, the other reports.",
+      }),
       inputSchema: {
         url: z.string(),
         standard: z.enum(['WCAG2A', 'WCAG2AA', 'WCAG2AAA']).optional(),
@@ -795,9 +843,11 @@ ${notice}` : INSTRUCTIONS },
   server.registerTool(
     'web_vitals',
     {
-      title: 'Web Vitals',
-      description:
-        'CLS, LCP, FCP, TTFB для указанного URL с перечислением элементов, сдвинувших layout. Ловит то, чего не видно на статичном скриншоте.',
+      title: t({ ru: 'Web Vitals', en: "Web Vitals" }),
+      description: t({
+        ru: 'CLS, LCP, FCP, TTFB для указанного URL с перечислением элементов, сдвинувших layout. Ловит то, чего не видно на статичном скриншоте.',
+        en: "CLS, LCP, FCP and TTFB for a URL, with the elements that shifted the layout listed. Catches what a static screenshot cannot show: content jumping while the page loads.",
+      }),
       inputSchema: { url: z.string(), settleMs: z.number().optional(), ...profileSchema },
     },
     async ({ url, settleMs, ...profile }) => {
@@ -815,8 +865,11 @@ ${notice}` : INSTRUCTIONS },
   server.registerTool(
     'lighthouse',
     {
-      title: 'Отчёт Lighthouse',
-      description: 'Полный прогон Lighthouse. Возвращает оценки, метрики и провалившиеся аудиты, HTML-отчёт кладёт в артефакты.',
+      title: t({ ru: 'Отчёт Lighthouse', en: "Lighthouse report" }),
+      description: t({
+        ru: 'Полный прогон Lighthouse. Возвращает оценки, метрики и провалившиеся аудиты, HTML-отчёт кладёт в артефакты.',
+        en: "A full Lighthouse run. Returns category scores (performance, accessibility, best practices, SEO), metrics and failing audits, and writes the HTML report into artifacts.",
+      }),
       inputSchema: {
         url: z.string(),
         categories: z.array(z.enum(['performance', 'accessibility', 'best-practices', 'seo'])).optional(),
@@ -831,9 +884,11 @@ ${notice}` : INSTRUCTIONS },
   server.registerTool(
     'seo_page',
     {
-      title: 'SEO-поля страницы',
-      description:
-        'Заголовок, описание, canonical, hreflang, robots, Open Graph, Twitter, дерево заголовков, инвентарь ссылок и картинок, микроразметка (JSON-LD, микроданные, RDFa). Отдельно считает indexable с перечислением причин, по которым страница не попадёт в индекс. Источник — открытая сессия, произвольный URL или сохранённый HTML: по сохранённому работает без единого сетевого запроса.',
+      title: t({ ru: 'SEO-поля страницы', en: "SEO fields of a page" }),
+      description: t({
+        ru: 'Заголовок, описание, canonical, hreflang, robots, Open Graph, Twitter, дерево заголовков, инвентарь ссылок и картинок, микроразметка (JSON-LD, микроданные, RDFa). Отдельно считает indexable с перечислением причин, по которым страница не попадёт в индекс. Источник — открытая сессия, произвольный URL или сохранённый HTML: по сохранённому работает без единого сетевого запроса.',
+        en: "Title, description, canonical, hreflang, robots directives, Open Graph, Twitter cards, the heading tree, an inventory of links and images, and structured data (JSON-LD, microdata, RDFa). Separately computes indexable with the reasons a page would stay out of the index. The source can be an open session, a URL, or a saved copy — against a saved copy it makes no network request at all.",
+      }),
       inputSchema: {
         sessionId: z.string().optional().describe('Разобрать страницу открытой сессии — как она выглядит сейчас, после логина и раскрытых меню'),
         url: z.string().optional().describe('Открыть свою одноразовую сессию по адресу'),
@@ -874,9 +929,11 @@ ${notice}` : INSTRUCTIONS },
   server.registerTool(
     'validate_html',
     {
-      title: 'Валидация HTML',
-      description:
-        'Проверяет разметку через Nu HTML Checker. Источник — открытая сессия, произвольный URL или переданный текст.',
+      title: t({ ru: 'Валидация HTML', en: "Validate HTML" }),
+      description: t({
+        ru: 'Проверяет разметку через Nu HTML Checker. Источник — открытая сессия, произвольный URL или переданный текст.',
+        en: "Checks markup with the Nu HTML Checker (W3C validator): unclosed tags, duplicate ids, missing required attributes. The source can be an open session, an arbitrary URL or markup passed inline.",
+      }),
       inputSchema: {
         sessionId: z.string().optional(),
         url: z.string().optional(),
@@ -899,9 +956,11 @@ ${notice}` : INSTRUCTIONS },
   server.registerTool(
     'lint_css',
     {
-      title: 'Проверка CSS',
-      description:
-        'Stylelint по CSS: файлам рабочего каталога стенда или переданному коду. Отвечает на вопрос «правильно ли написан стиль», а не «почему он не применился» — на второй отвечает matched_rules.',
+      title: t({ ru: 'Проверка CSS', en: "Check CSS" }),
+      description: t({
+        ru: 'Stylelint по CSS: файлам рабочего каталога стенда или переданному коду. Отвечает на вопрос «правильно ли написан стиль», а не «почему он не применился» — на второй отвечает matched_rules.',
+        en: "Stylelint over CSS: files in the stand working directory, or code passed inline. Answers \"is this stylesheet written correctly\", not \"why is my rule not applied\" — the latter is matched_rules.",
+      }),
       inputSchema: {
         files: z.array(z.string()).optional().describe('Пути относительно рабочего каталога, глоб поддерживается'),
         code: z.string().optional(),
@@ -916,9 +975,11 @@ ${notice}` : INSTRUCTIONS },
   server.registerTool(
     'audit',
     {
-      title: 'Комплексная проверка страницы',
-      description:
-        `Комплексная проверка одной страницы: открывает URL под заданными условиями и разом гоняет выбранные проверки (${ALL_CHECKS.join(', ')} или all). Самый дешёвый первый шаг, когда вопрос звучит как «проверь страницу» или «что тут не так»: одним вызовом даёт сводку с вердиктом и складывает артефакты, а дальше уже видно, чем копать подробнее.`,
+      title: t({ ru: 'Комплексная проверка страницы', en: 'Check a page' }),
+      description: t({
+        ru: `Комплексная проверка одной страницы: открывает URL под заданными условиями и разом гоняет выбранные проверки (${ALL_CHECKS.join(', ')} или all). Самый дешёвый первый шаг, когда вопрос звучит как «проверь страницу» или «что тут не так»: одним вызовом даёт сводку с вердиктом и складывает артефакты, а дальше уже видно, чем копать подробнее.`,
+        en: `A composite check of one page: opens the URL under the given viewing conditions and runs the selected checks at once (${ALL_CHECKS.join(', ')} or all). The cheapest first step when the question sounds like "check this page" or "what is wrong here": one call returns a summary with a verdict and stores the artifacts, and from there it is clear what to dig into.`,
+      }),
       inputSchema: {
         url: z.string(),
         checks: z.array(z.enum([...ALL_CHECKS, 'all'])).optional(),
@@ -951,9 +1012,11 @@ ${notice}` : INSTRUCTIONS },
   server.registerTool(
     'matrix_run',
     {
-      title: 'Матрица условий',
-      description:
-        'Прогоняет страницу по декартову произведению осей (браузеры × viewport × тема × RTL × zoom × forced-colors × псевдолокализация × DPR) и собирает сводный HTML-отчёт.',
+      title: t({ ru: 'Матрица условий', en: "Condition matrix" }),
+      description: t({
+        ru: 'Прогоняет страницу по декартову произведению осей (браузеры × viewport × тема × RTL × zoom × forced-colors × псевдолокализация × DPR) и собирает сводный HTML-отчёт.',
+        en: "Runs a page across the cartesian product of axes (browsers x viewport x color scheme x RTL x zoom x forced-colors x pseudo-localization x DPR) and assembles a single HTML report. This is how you check a page against every viewing condition at once instead of one by one.",
+      }),
       inputSchema: {
         url: z.string(),
         name: z.string().optional(),
@@ -1002,9 +1065,11 @@ ${notice}` : INSTRUCTIONS },
   server.registerTool(
     'storybook_audit',
     {
-      title: 'Обход Storybook',
-      description:
-        'Обходит все истории Storybook: для каждой снимает скриншот и гоняет эвристики вёрстки и axe. Так проверяют библиотеку компонентов целиком, не открывая истории руками. Отбор историй — регулярным выражением по id и заголовку.',
+      title: t({ ru: 'Обход Storybook', en: "Walk through Storybook" }),
+      description: t({
+        ru: 'Обходит все истории Storybook: для каждой снимает скриншот и гоняет эвристики вёрстки и axe. Так проверяют библиотеку компонентов целиком, не открывая истории руками. Отбор историй — регулярным выражением по id и заголовку.',
+        en: "Walks every Storybook story, taking a screenshot of each and running layout heuristics and axe. This is how you check a component library as a whole instead of opening stories by hand. Stories are filtered by a regular expression over id and title.",
+      }),
       inputSchema: {
         storybookUrl: z.string().describe('Например http://node_myapp:6006'),
         include: z.string().optional().describe('Регулярное выражение по id и заголовку истории'),
@@ -1022,9 +1087,11 @@ ${notice}` : INSTRUCTIONS },
   server.registerTool(
     'artifacts_list',
     {
-      title: 'Артефакты прогонов',
-      description:
-        'Прогоны на стенде от свежих к старым, со ссылками на их каталоги. Отсюда берут адрес прошлого прогона, чтобы сравнить с текущим или показать человеку. Старые прогоны чистятся автоматически.',
+      title: t({ ru: 'Артефакты прогонов', en: "Run artifacts" }),
+      description: t({
+        ru: 'Прогоны на стенде от свежих к старым, со ссылками на их каталоги. Отсюда берут адрес прошлого прогона, чтобы сравнить с текущим или показать человеку. Старые прогоны чистятся автоматически.',
+        en: "Runs stored on the stand, newest first, with links to their directories. This is where you take the address of a previous run to compare against the current one or to show a human. Old runs are pruned automatically.",
+      }),
       inputSchema: { limit: z.number().optional() },
     },
     async ({ limit = 20 }) => {
@@ -1039,9 +1106,11 @@ ${notice}` : INSTRUCTIONS },
   server.registerTool(
     'artifacts_clean',
     {
-      title: 'Очистить артефакты',
-      description:
-        'Удаляет старые прогоны, оставляя последние keep штук. Обычно не нужен: очистка идёт сама при заведении нового прогона. Имеет смысл, когда место кончилось прямо сейчас. Зеркала сохранённых сайтов не трогает.',
+      title: t({ ru: 'Очистить артефакты', en: "Clean up artifacts" }),
+      description: t({
+        ru: 'Удаляет старые прогоны, оставляя последние keep штук. Обычно не нужен: очистка идёт сама при заведении нового прогона. Имеет смысл, когда место кончилось прямо сейчас. Зеркала сохранённых сайтов не трогает.',
+        en: "Removes old runs, keeping the last keep ones. Usually unnecessary: pruning happens on its own whenever a new run is created. Worth calling when disk space ran out right now. Saved site mirrors are left untouched.",
+      }),
       inputSchema: { keep: z.number().optional() },
     },
     async ({ keep }) => json({ removed: await pruneRuns(keep) }),
@@ -1050,9 +1119,11 @@ ${notice}` : INSTRUCTIONS },
   server.registerTool(
     'read_artifact',
     {
-      title: 'Прочитать артефакт',
-      description:
-        'Читает файл из каталога артефактов. Текст и JSON отдаются как есть, картинки и прочие бинарники — в base64: иначе снимок, который стенд сам же и сделал, забрать через MCP нечем.',
+      title: t({ ru: 'Прочитать артефакт', en: "Read an artifact" }),
+      description: t({
+        ru: 'Читает файл из каталога артефактов. Текст и JSON отдаются как есть, картинки и прочие бинарники — в base64: иначе снимок, который стенд сам же и сделал, забрать через MCP нечем.',
+        en: "Reads a file from the artifacts directory. Text and JSON come back as they are; images and other binaries come back as base64 — otherwise a screenshot the stand itself produced could not be retrieved over MCP.",
+      }),
       inputSchema: {
         file: z.string().describe('Путь относительно каталога артефактов'),
         encoding: z
@@ -1082,9 +1153,11 @@ ${notice}` : INSTRUCTIONS },
   server.registerTool(
     'read_project_file',
     {
-      title: 'Прочитать файл стенда',
-      description:
-        'Читает файл из рабочего каталога стенда — фикстуру, конфиг матрицы, CSS. Если указан каталог, возвращает его содержимое.',
+      title: t({ ru: 'Прочитать файл стенда', en: "Read a stand file" }),
+      description: t({
+        ru: 'Читает файл из рабочего каталога стенда — фикстуру, конфиг матрицы, CSS. Если указан каталог, возвращает его содержимое.',
+        en: "Reads a file from the stand working directory — a fixture, a matrix config, a CSS file. If a directory is given, returns its listing.",
+      }),
       inputSchema: { file: z.string() },
     },
     async ({ file }) => {
@@ -1110,9 +1183,11 @@ ${notice}` : INSTRUCTIONS },
   server.registerTool(
     'stand_info',
     {
-      title: 'Состояние стенда',
-      description:
-        'Состояние стенда: версия, пути, доступные браузеры и пресеты viewport, адреса артефактов, доступность валидатора, открытые сессии. С этого удобно начинать, когда непонятно, что стенду доступно, или когда проверка падает и надо понять, поднят ли валидатор.',
+      title: t({ ru: 'Состояние стенда', en: "Stand status" }),
+      description: t({
+        ru: 'Состояние стенда: версия, пути, доступные браузеры и пресеты viewport, адреса артефактов, доступность валидатора, открытые сессии. С этого удобно начинать, когда непонятно, что стенду доступно, или когда проверка падает и надо понять, поднят ли валидатор.',
+        en: "Stand status: version, paths, available browsers and viewport presets, artifact addresses, validator reachability, open sessions, interface language and available updates. A good place to start when it is unclear what the stand can reach, or when a check fails and you need to know whether the validator is up.",
+      }),
       inputSchema: {},
     },
     async () => {
