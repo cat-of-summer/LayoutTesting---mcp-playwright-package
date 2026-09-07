@@ -16,7 +16,16 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const SRC = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../src');
-const FILES = ['server.js', 'tools/crawl.js'];
+
+/**
+ * Файлы с регистрациями.
+ *
+ * Список явный, а не собранный по маске: маска молча подхватила бы shared.js и instructions.js,
+ * где инструментов нет, и проверка «нашлось ли хоть что-то» перестала бы что-либо значить.
+ * Добавили группу — добавьте её сюда; забыли — упадёт первый же тест, он для этого и стоит.
+ */
+const GROUPS = ['session', 'observe', 'layout', 'visual', 'a11y', 'perf', 'seo', 'static', 'composite', 'artifacts', 'crawl'];
+const FILES = GROUPS.map((g) => `tools/${g}.js`);
 
 async function toolBlocks(file) {
   const src = await readFile(path.join(SRC, file), 'utf8');
@@ -68,4 +77,55 @@ test('английские описания не выродились в заг�
     if (desc && desc[2].length < 80) short.push(`${file}: ${name} — ${desc[2].length} символов`);
   }
   assert.deepEqual(short, [], `слишком короткие английские описания:\n${short.join('\n')}`);
+});
+
+/*
+ * Полнота словаря параметров.
+ *
+ * Описания параметров переводятся через словарь, а не по месту: одинаковый текст встречается в
+ * нескольких инструментах, и пять копий одного перевода разъедутся на первой же правке.
+ * Обратная сторона словаря — пропущенный ключ: d() тогда молча вернёт русскую строку, и в
+ * английском режиме описание параметра окажется русским.
+ */
+test('каждая строка d() есть в словаре переводов', async () => {
+  const { KNOWN } = await import('../src/i18n-params.js');
+  const all = ['tools/shared.js', ...FILES];
+
+  const missing = new Set();
+  let seen = 0;
+  for (const rel of all) {
+    let src;
+    try {
+      src = await readFile(path.join(SRC, rel), 'utf8');
+    } catch {
+      continue;
+    }
+    /* Экранированных кавычек в этих строках нет — внутри используются « » и двойные кавычки,
+       поэтому простого [^'] достаточно и незачем городить разбор экранирования. */
+    for (const m of src.matchAll(/\bd\('([^']*)'\)/g)) {
+      seen += 1;
+      if (!(m[1] in KNOWN)) missing.add(m[1]);
+    }
+  }
+
+  assert.ok(seen > 100, `найдено всего ${seen} вызовов d() — проверка ничего не проверяет`);
+  assert.deepEqual([...missing], [], `нет перевода для:\n${[...missing].join('\n')}`);
+});
+
+/* Словарь без единого лишнего ключа держать необязательно, но мёртвые записи копятся и мешают
+   понять, что ещё нужно перевести. */
+test('в словаре нет записей, которых больше нет в коде', async () => {
+  const { KNOWN } = await import('../src/i18n-params.js');
+  const used = new Set();
+  for (const rel of ['tools/shared.js', ...FILES]) {
+    let src;
+    try {
+      src = await readFile(path.join(SRC, rel), 'utf8');
+    } catch {
+      continue;
+    }
+    for (const m of src.matchAll(/\bd\('([^']*)'\)/g)) used.add(m[1]);
+  }
+  const dead = Object.keys(KNOWN).filter((k) => !used.has(k));
+  assert.deepEqual(dead, [], `мёртвые записи словаря:\n${dead.join('\n')}`);
 });
