@@ -14,6 +14,7 @@
  * CONTEXT_EVERY страниц: на длинном обходе память течёт, и утекает она у того, кто рядом
  * работает руками.
  */
+import { createHash } from 'node:crypto';
 import fsp from 'node:fs/promises';
 import path from 'node:path';
 import { closeSession, createSession, gotoAndSettle } from '../browser/pool.js';
@@ -112,6 +113,8 @@ async function crawlOne(job, task) {
   let status = null;
   let responseHeaders = null;
   let rendered = false;
+  let finalUrl = task.url;
+  let redirected = false;
 
   if (config.render !== 'always') {
     try {
@@ -123,6 +126,8 @@ async function crawlOne(job, task) {
        * молча считает всё utf-8 и отдаёт кракозябры, по которым потом «не находится» ни title,
        * ни h1 — и страница уезжает в браузер как якобы пустая.
        */
+      finalUrl = res.url || task.url;
+      redirected = res.redirected;
       const buffer = Buffer.from(await res.arrayBuffer());
       html = decodeBody(buffer, responseHeaders['content-type']);
     } catch (err) {
@@ -144,7 +149,7 @@ async function crawlOne(job, task) {
     const dir = pageDirOf(job.siteId, pageIdFor(task.url));
     await fsp.mkdir(dir, { recursive: true });
     await fsp.writeFile(path.join(dir, 'raw.html'), html, 'utf8');
-    return { seo, status, rendered: false, saved: { dir, mirrored: false } };
+    return { seo, status, rendered: false, saved: { dir, mirrored: false }, html, finalUrl, redirected };
   }
 
   const session = await job.session();
@@ -159,7 +164,17 @@ async function crawlOne(job, task) {
     knownPages: job.knownPages,
   });
 
-  return { seo, status: nav.status ?? status, rendered, saved, renderGapFrom: html };
+  const renderedHtml = await session.page.content();
+  return {
+    seo,
+    status: nav.status ?? status,
+    rendered,
+    saved,
+    renderGapFrom: html,
+    html: renderedHtml,
+    finalUrl: session.page.url(),
+    redirected: (session.lastResponse?.redirects || []).length > 0,
+  };
 }
 
 /** Кодировка: заголовок, потом meta charset из начала тела, потом utf-8. */
@@ -174,6 +189,25 @@ export function decodeBody(buffer, contentType) {
     // Неизвестная кодировка — лучше кракозябры, чем упавший обход.
     return buffer.toString('utf8');
   }
+}
+
+
+/**
+ * Отпечаток видимого текста.
+ *
+ * По нему находятся дубли, которые не видны по заголовкам: карточки товара, различающиеся
+ * одним артикулом, и страницы фильтров с одинаковым содержимым под разными адресами.
+ * Разметка в расчёт не берётся — она отличается почти всегда и утопила бы находку.
+ */
+export function contentHash(html) {
+  const text = String(html || '')
+    .replace(/<script[\s\S]*?<\/script>/gi, ' ')
+    .replace(/<style[\s\S]*?<\/style>/gi, ' ')
+    .replace(/<[^>]+>/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .toLowerCase();
+  return text ? createHash('sha1').update(text).digest('hex').slice(0, 16) : null;
 }
 
 async function runJob(job) {
@@ -213,6 +247,15 @@ async function runJob(job) {
         renderGap: result.rendered && result.renderGapFrom ? looksEmpty(result.renderGapFrom) : false,
         savedAt: new Date().toISOString(),
         from: task.from,
+        finalUrl: result.finalUrl ?? task.url,
+        redirected: Boolean(result.redirected),
+        contentHash: contentHash(result.html),
+        /* Исходящие внутренние ссылки — то, из чего потом строится граф: входящие связи,
+           страницы-сироты и битые ссылки с указанием, откуда на них ведут. */
+        links: linksFrom(result.seo, task.url, config),
+        alternates: result.seo.alternates,
+        canonicalSelf: result.seo.canonical.self,
+        images: { total: result.seo.images.total, noAlt: result.seo.images.noAlt },
       };
       job.knownPages.set(normalizeUrl(task.url), pageId);
       frontier.done.push(task.url);

@@ -36,11 +36,14 @@ import { resolveInArtifacts, resolveInRoot } from './paths.js';
 import { seoFromHtml, seoFromPage } from './seo/page.js';
 import { savePage } from './mirror/save.js';
 import { register as registerCrawl } from './tools/crawl.js';
+import { INSTRUCTIONS } from './tools/instructions.js';
 import { clearStorage, exportState, getStorage, importState, listStates, setStorage } from './browser/storage.js';
 
 export async function createServer() {
   await ensureDirs();
-  const server = new McpServer({ name: 'layout-testing', version: pkg.version });
+  /* instructions клиент показывает модели при подключении. Без них агент видит четыре десятка
+     описаний без всякой рамки и не понимает, для каких задач сюда идти. */
+  const server = new McpServer({ name: 'layout-testing', version: pkg.version }, { instructions: INSTRUCTIONS });
 
   // ---------- Сессия и навигация ----------
 
@@ -69,7 +72,8 @@ export async function createServer() {
     'browser_goto',
     {
       title: 'Перейти по адресу',
-      description: 'Навигация в существующей сессии со стабилизацией страницы (стоп-анимации, ожидание шрифтов).',
+      description:
+        'Переход в уже открытой сессии. Страница стабилизируется перед проверками: анимации останавливаются, шрифты догружаются — иначе снимки и замеры пляшут между прогонами. Если часть ресурсов не доехала, об этом сказано в warnings, а не оставлено выясняться по пустым рамкам на готовом кадре.',
       inputSchema: {
         sessionId: z.string(),
         url: z.string(),
@@ -94,7 +98,8 @@ export async function createServer() {
     'browser_act',
     {
       title: 'Действие на странице',
-      description: 'Клик, ввод текста, нажатие клавиши, наведение, прокрутка или ожидание селектора.',
+      description:
+        'Клик, ввод текста, нажатие клавиши, наведение, прокрутка, выбор в списке или ожидание селектора. Нужен, когда проверяемое состояние возникает только после действия: раскрытое меню, открытая вкладка, заполненная форма, страница после логина. Готовые селекторы удобно брать из page_snapshot.',
       inputSchema: {
         sessionId: z.string(),
         action: z.enum(['click', 'fill', 'press', 'hover', 'scroll', 'wait', 'select']),
@@ -202,13 +207,23 @@ export async function createServer() {
 
   server.registerTool(
     'browser_sessions',
-    { title: 'Список сессий', description: 'Показывает открытые сессии браузера.', inputSchema: {} },
+    {
+      title: 'Список сессий',
+      description:
+        'Какие сессии браузера сейчас открыты, с их условиями просмотра и текущим адресом. Пригодится, когда идентификатор открытой ранее сессии потерялся или надо убедиться, что старые сессии закрыты и не держат память.',
+      inputSchema: {},
+    },
     async () => json({ sessions: listSessions() }),
   );
 
   server.registerTool(
     'browser_close',
-    { title: 'Закрыть сессию', description: 'Закрывает сессию браузера и освобождает память.', inputSchema: { sessionId: z.string() } },
+    {
+      title: 'Закрыть сессию',
+      description:
+        'Закрывает сессию и освобождает память. Стоит вызывать, закончив работу со страницей: сессии живут до конца работы сервера, и каждая держит свой контекст браузера.',
+      inputSchema: { sessionId: z.string() },
+    },
     async ({ sessionId }) => json({ closed: await closeSession(sessionId) }),
   );
 
@@ -716,7 +731,12 @@ export async function createServer() {
 
   server.registerTool(
     'visual_baselines',
-    { title: 'Эталоны', description: 'Список сохранённых эталонов визуальной регрессии.', inputSchema: {} },
+    {
+      title: 'Эталоны',
+      description:
+        'Сохранённые эталоны визуальной регрессии: для каких страниц и условий просмотра эталон уже есть. То есть где visual_compare найдёт с чем сравнивать, а где первый снимок сам станет эталоном.',
+      inputSchema: {},
+    },
     async () => json({ dir: DIRS.baselines, baselines: await listBaselines(DIRS.baselines) }),
   );
 
@@ -726,7 +746,8 @@ export async function createServer() {
     'a11y_axe',
     {
       title: 'Проверка axe-core',
-      description: 'Правила WCAG внутри открытой страницы: видит её в текущем состоянии, после логина и раскрытых меню.',
+      description:
+        'Правила WCAG (axe-core) по открытой странице. Работает с текущим её состоянием, поэтому видит и то, что закрыто за логином, раскрытым меню или вкладкой, — в отличие от проверок по одному адресу. Второй набор правил в a11y_pa11y, находят они разное.',
       inputSchema: {
         sessionId: z.string(),
         tags: z.array(z.string()).optional().describe('Например wcag2aa, wcag21aa, best-practice'),
@@ -742,7 +763,8 @@ export async function createServer() {
     'a11y_pa11y',
     {
       title: 'Проверка pa11y',
-      description: 'Второй набор правил (HTML CodeSniffer) по URL — ловит не то же, что axe.',
+      description:
+        'Второй набор правил доступности (HTML CodeSniffer), по URL. Наборы axe и pa11y пересекаются лишь частично, поэтому для настоящей проверки на WCAG нужны оба: что молча пропускает один, находит другой.',
       inputSchema: {
         url: z.string(),
         standard: z.enum(['WCAG2A', 'WCAG2AA', 'WCAG2AAA']).optional(),
@@ -861,7 +883,8 @@ export async function createServer() {
     'lint_css',
     {
       title: 'Проверка CSS',
-      description: 'Stylelint по файлам рабочего каталога или по переданному коду.',
+      description:
+        'Stylelint по CSS: файлам рабочего каталога стенда или переданному коду. Отвечает на вопрос «правильно ли написан стиль», а не «почему он не применился» — на второй отвечает matched_rules.',
       inputSchema: {
         files: z.array(z.string()).optional().describe('Пути относительно рабочего каталога, глоб поддерживается'),
         code: z.string().optional(),
@@ -878,7 +901,7 @@ export async function createServer() {
     {
       title: 'Комплексная проверка страницы',
       description:
-        `Открывает URL под заданными условиями и прогоняет выбранные проверки: ${ALL_CHECKS.join(', ')} или all. Возвращает сводку и складывает артефакты.`,
+        `Комплексная проверка одной страницы: открывает URL под заданными условиями и разом гоняет выбранные проверки (${ALL_CHECKS.join(', ')} или all). Самый дешёвый первый шаг, когда вопрос звучит как «проверь страницу» или «что тут не так»: одним вызовом даёт сводку с вердиктом и складывает артефакты, а дальше уже видно, чем копать подробнее.`,
       inputSchema: {
         url: z.string(),
         checks: z.array(z.enum([...ALL_CHECKS, 'all'])).optional(),
@@ -963,7 +986,8 @@ export async function createServer() {
     'storybook_audit',
     {
       title: 'Обход Storybook',
-      description: 'Проходит все истории Storybook, для каждой снимает скриншот и гоняет layout-эвристики и axe.',
+      description:
+        'Обходит все истории Storybook: для каждой снимает скриншот и гоняет эвристики вёрстки и axe. Так проверяют библиотеку компонентов целиком, не открывая истории руками. Отбор историй — регулярным выражением по id и заголовку.',
       inputSchema: {
         storybookUrl: z.string().describe('Например http://node_myapp:6006'),
         include: z.string().optional().describe('Регулярное выражение по id и заголовку истории'),
@@ -982,7 +1006,8 @@ export async function createServer() {
     'artifacts_list',
     {
       title: 'Артефакты прогонов',
-      description: 'Список прогонов и ссылок на их отчёты.',
+      description:
+        'Прогоны на стенде от свежих к старым, со ссылками на их каталоги. Отсюда берут адрес прошлого прогона, чтобы сравнить с текущим или показать человеку. Старые прогоны чистятся автоматически.',
       inputSchema: { limit: z.number().optional() },
     },
     async ({ limit = 20 }) => {
@@ -998,7 +1023,8 @@ export async function createServer() {
     'artifacts_clean',
     {
       title: 'Очистить артефакты',
-      description: 'Удаляет старые прогоны, оставляя последние keep штук.',
+      description:
+        'Удаляет старые прогоны, оставляя последние keep штук. Обычно не нужен: очистка идёт сама при заведении нового прогона. Имеет смысл, когда место кончилось прямо сейчас. Зеркала сохранённых сайтов не трогает.',
       inputSchema: { keep: z.number().optional() },
     },
     async ({ keep }) => json({ removed: await pruneRuns(keep) }),
@@ -1068,7 +1094,8 @@ export async function createServer() {
     'stand_info',
     {
       title: 'Состояние стенда',
-      description: 'Версии, пути, доступные браузеры и viewport-пресеты, адреса артефактов и валидатора.',
+      description:
+        'Состояние стенда: версия, пути, доступные браузеры и пресеты viewport, адреса артефактов, доступность валидатора, открытые сессии. С этого удобно начинать, когда непонятно, что стенду доступно, или когда проверка падает и надо понять, поднят ли валидатор.',
       inputSchema: {},
     },
     async () => {
