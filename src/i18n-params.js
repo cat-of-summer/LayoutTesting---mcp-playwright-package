@@ -168,6 +168,14 @@ const EN = {
     'Text for fill, key for press, option value for select',
   'Только записи после последнего перехода. По умолчанию true':
     'Only entries after the last navigation. Default true',
+  'Имя сохранённого профиля условий: остальные условия берутся из него. Список — в stand_info':
+    'Name of a saved condition profile: the remaining conditions are taken from it. See stand_info for the list',
+  'По умолчанию list': 'Default list',
+  'Сессия, с которой снимаются условия — нужен для save':
+    'The session whose conditions are captured — required for save',
+  'Имя профиля — нужно для save и remove': 'Profile name — required for save and remove',
+  'Записать профиль на диск, чтобы он пережил перезапуск стенда. По умолчанию профиль живёт в памяти процесса':
+    'Write the profile to disk so it survives a stand restart. By default a profile lives in process memory only',
   'Сколько записей каждого вида показать; берутся последние. По умолчанию 100':
     'How many entries of each kind to return; the most recent ones. Default 100',
   'С какого символа читать текст, если файл не поместился целиком':

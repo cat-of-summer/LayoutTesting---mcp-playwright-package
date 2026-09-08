@@ -11,6 +11,8 @@
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 
 import { ensureDirs } from './artifacts.js';
+import { loadProfiles } from './browser/profiles.js';
+import { installProtocolPatches } from './protocol.js';
 import { pkg } from './tools/shared.js';
 import { INSTRUCTIONS } from './tools/instructions.js';
 import { checkForUpdate, updateNotice } from './update.js';
@@ -34,10 +36,46 @@ import { register as registerArtifacts } from './tools/artifacts.js';
  * повторялась проверка. Кэш на диске живёт шесть часов, но при пустом кэше и закрытом наружу
  * контуре каждый новый клиент платил четыре секунды таймаута прямо на подключении.
  */
+
+/**
+ * Какие группы инструментов поднимать.
+ *
+ * Полный набор — сорок с лишним инструментов, и это около 45 000 символов манифеста, которые
+ * агент вычитывает при каждом подключении. Стенду, который держат ради вёрстки, обход сайта и
+ * SEO-отчёты в этот счёт попадают зря.
+ *
+ * Отключение группами, а не по одному, — сознательно: инструменты внутри группы ссылаются друг
+ * на друга в описаниях и в instructions, и выборочное отключение оставляло бы советы вида
+ * «дальше crawl_query» при отсутствующем crawl_query.
+ *
+ * Что бы ни отключили, stand_info остаётся: именно он объясняет агенту, какой набор активен и
+ * как его расширить. Иначе модель, не нашедшая нужного инструмента, заключит, что стенд сломан.
+ */
+const TOOL_SETS = {
+  all: null,
+  core: ['session', 'observe', 'layout', 'visual', 'a11y', 'static', 'composite', 'artifacts'],
+  minimal: ['session', 'observe', 'layout', 'composite', 'artifacts'],
+};
+
+function selectedGroups() {
+  const wanted = String(process.env.LT_TOOLS || 'all').trim().toLowerCase();
+  if (wanted === 'all') return { name: 'all', groups: null };
+  if (TOOL_SETS[wanted]) return { name: wanted, groups: new Set(TOOL_SETS[wanted]) };
+  /* Непонятное значение — не повод молча поднять всё: тогда о опечатке узнают по счёту за
+     контекст. Но и падать нельзя: стенд без инструментов бесполезнее стенда с лишними. */
+  process.stderr.write(
+    `[mcp] LT_TOOLS=${wanted} не распознан, поднимаю всё. Ожидается: ${Object.keys(TOOL_SETS).join(', ')}\n`,
+  );
+  return { name: 'all', groups: null };
+}
+
 let updatePromise = null;
 
 export async function createServer() {
   await ensureDirs();
+  /* Профили, сохранённые с persist: true, поднимаются из state/profiles.json — иначе имя,
+     которым пользовались вчера, после перезапуска стенда переставало существовать. */
+  await loadProfiles();
 
   /*
    * Проверка обновлений идёт до создания сервера, потому что её результат дописывается в
@@ -57,19 +95,27 @@ export async function createServer() {
     { instructions: notice ? `${INSTRUCTIONS}\n\n${notice}` : INSTRUCTIONS },
   );
 
-  registerSession(server);
-  registerObserve(server);
-  registerLayout(server);
-  registerVisual(server);
-  registerA11y(server);
-  registerPerf(server);
-  registerSeo(server);
-  registerStatic(server);
-  registerComposite(server);
-  registerCrawl(server);
+  const set = selectedGroups();
+  const on = (group) => !set.groups || set.groups.has(group);
+
+  if (on('session')) registerSession(server);
+  if (on('observe')) registerObserve(server);
+  if (on('layout')) registerLayout(server);
+  if (on('visual')) registerVisual(server);
+  if (on('a11y')) registerA11y(server);
+  if (on('perf')) registerPerf(server);
+  if (on('seo')) registerSeo(server);
+  if (on('static')) registerStatic(server);
+  if (on('composite')) registerComposite(server);
+  if (on('crawl')) registerCrawl(server);
   // Состояние стенда знает про обновление — оно посчитано выше и передаётся сюда, а не
-  // перезапрашивается на каждый вызов stand_info.
-  registerArtifacts(server, { update });
+  // перезапрашивается на каждый вызов stand_info. Группа не отключается никогда: без
+  // stand_info агенту нечем выяснить, почему остального нет.
+  registerArtifacts(server, { update, toolSet: set.name, toolSets: Object.keys(TOOL_SETS) });
+
+  /* Ставится последним: обработчики tools/list и tools/call к этому моменту уже на месте,
+     а патч забирает прежние себе и вызывает их сам. */
+  installProtocolPatches(server);
 
   return server;
 }

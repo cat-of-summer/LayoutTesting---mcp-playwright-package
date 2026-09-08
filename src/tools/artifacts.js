@@ -12,6 +12,7 @@ import { readFile, readdir, stat } from 'node:fs/promises';
 import { CONFIG, DIRS, BROWSERS, VIEWPORTS } from '../config.js';
 import { listRuns, pruneRuns } from '../artifacts.js';
 import { listSessions } from '../browser/pool.js';
+import { listProfiles } from '../browser/profiles.js';
 import { readLocalFile } from '../checks/static.js';
 import { ALL_CHECKS } from '../audit.js';
 import { IMAGE_MIME, capped, cappedText, json, pkg, text } from './shared.js';
@@ -23,7 +24,7 @@ import { langInfo, t } from '../i18n.js';
 export function register(server, ctx = {}) {
   /* Сведения об обновлении считает createServer один раз при старте: спрашивать GitHub
      на каждый вызов stand_info незачем. */
-  const { update } = ctx;
+  const { update, toolSet = 'all', toolSets = [] } = ctx;
 
   server.registerTool(
     'artifacts_list',
@@ -175,8 +176,8 @@ export function register(server, ctx = {}) {
     {
       title: t({ ru: 'Состояние стенда', en: "Stand status" }),
       description: t({
-        ru: 'Состояние стенда: версия, пути, доступные браузеры и пресеты viewport, адреса артефактов, доступность валидатора, открытые сессии. С этого удобно начинать, когда непонятно, что стенду доступно, или когда проверка падает и надо понять, поднят ли валидатор.',
-        en: "Stand status: version, paths, available browsers and viewport presets, artifact addresses, validator reachability, open sessions, interface language and available updates. A good place to start when it is unclear what the stand can reach, or when a check fails and you need to know whether the validator is up.",
+        ru: 'Состояние стенда: версия, пути, доступные браузеры, пресеты viewport и сохранённые профили условий, адреса артефактов, доступность валидатора, открытые сессии. С этого удобно начинать, когда непонятно, что стенду доступно, или когда проверка падает и надо понять, поднят ли валидатор.',
+        en: "Stand status: version, paths, available browsers, viewport presets and saved condition profiles, artifact addresses, validator reachability, open sessions, interface language and available updates. A good place to start when it is unclear what the stand can reach, or when a check fails and you need to know whether the validator is up.",
       }),
       inputSchema: {},
     },
@@ -202,6 +203,19 @@ export function register(server, ctx = {}) {
         browsers: BROWSERS,
         viewports: VIEWPORTS,
         checks: ALL_CHECKS,
+        /* Имена профилей живут здесь, а не в описаниях инструментов: список меняется, а
+           описания при каждом изменении пришлось бы править и переводить заново. */
+        profiles: listProfiles(),
+        /* Какой набор инструментов поднят. Модель, не нашедшая crawl или seo_page, должна
+           узнать причину здесь, а не решить, что стенд неисправен. */
+        tools: {
+          set: toolSet,
+          available: toolSets,
+          note:
+            toolSet === 'all'
+              ? 'Поднят полный набор инструментов.'
+              : `Поднят набор ${toolSet}: часть групп отключена переменной LT_TOOLS. Полный набор — LT_TOOLS=all и перезапуск стенда.`,
+        },
         sessions: listSessions(),
       });
     },

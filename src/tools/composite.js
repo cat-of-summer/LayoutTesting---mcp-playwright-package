@@ -13,7 +13,8 @@ import { profileKey } from '../browser/profile.js';
 import { auditStorybook } from '../checks/storybook.js';
 import { runAudit, ALL_CHECKS } from '../audit.js';
 import { runMatrix, AXES } from '../matrix.js';
-import { json, profileSchema } from './shared.js';
+import { json, profileCoreSchema } from './shared.js';
+import { resolveConditions } from '../browser/profiles.js';
 import { t } from '../i18n.js';
 
 export function register(server) {
@@ -22,8 +23,8 @@ export function register(server) {
     {
       title: t({ ru: 'Комплексная проверка страницы', en: 'Check a page' }),
       description: t({
-        ru: `Комплексная проверка одной страницы: открывает URL под заданными условиями и разом гоняет выбранные проверки (${ALL_CHECKS.join(', ')} или all). Самый дешёвый первый шаг, когда вопрос звучит как «проверь страницу» или «что тут не так»: одним вызовом даёт сводку с вердиктом и складывает артефакты, а дальше уже видно, чем копать подробнее.`,
-        en: `A composite check of one page: opens the URL under the given viewing conditions and runs the selected checks at once (${ALL_CHECKS.join(', ')} or all). The cheapest first step when the question sounds like "check this page" or "what is wrong here": one call returns a summary with a verdict and stores the artifacts, and from there it is clear what to dig into.`,
+        ru: 'Комплексная проверка одной страницы: открывает URL под заданными условиями и разом гоняет выбранные проверки. Самый дешёвый первый шаг, когда вопрос звучит как «проверь страницу» или «что тут не так»: одним вызовом даёт сводку с вердиктом и складывает артефакты, а дальше уже видно, чем копать подробнее.',
+        en: 'A composite check of one page: opens the URL under the given viewing conditions and runs the selected checks at once. The cheapest first step when the question sounds like "check this page" or "what is wrong here": one call returns a summary with a verdict and stores the artifacts, and from there it is clear what to dig into.',
       }),
       inputSchema: {
         url: z.string(),
@@ -38,10 +39,11 @@ export function register(server) {
           .optional()
           .describe(d('Чего ждать при переходе. Для тяжёлых боевых сайтов — domcontentloaded')),
         timeout: z.number().optional().describe(d('Таймаут навигации, мс')),
-        ...profileSchema,
+        ...profileCoreSchema,
       },
     },
-    async ({ url, checks, name = 'page', mask, hide, fullPage, updateBaseline, waitUntil, timeout, ...profile }) => {
+    async ({ url, checks, name = 'page', mask, hide, fullPage, updateBaseline, waitUntil, timeout, ...conditions }) => {
+      const profile = resolveConditions(conditions);
       const report = await runAudit({ url, profile, checks, name, mask, hide, fullPage, updateBaseline, waitUntil, timeout });
       return json({
         runId: report.runId,
@@ -120,10 +122,10 @@ export function register(server) {
         include: z.string().optional().describe(d('Регулярное выражение по id и заголовку истории')),
         limit: z.number().optional(),
         visual: z.boolean().optional().describe(d('Сравнивать каждую историю с эталоном')),
-        ...profileSchema,
+        ...profileCoreSchema,
       },
     },
-    async ({ storybookUrl, include, limit, visual, ...profile }) =>
-      json(await auditStorybook({ storybookUrl, include, limit, visual, profile })),
+    async ({ storybookUrl, include, limit, visual, ...conditions }) =>
+      json(await auditStorybook({ storybookUrl, include, limit, visual, profile: resolveConditions(conditions) })),
   );
 }

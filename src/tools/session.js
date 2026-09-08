@@ -22,6 +22,7 @@ import { evaluateOnPage } from '../browser/evaluate.js';
 import { addInjection, clearInjections, listInjections, removeInjection } from '../browser/inject.js';
 import { addRoute, clearRoutes, listRoutes } from '../browser/routes.js';
 import { cappedText, json, profileSchema } from './shared.js';
+import { listProfiles, removeProfile, saveProfile } from '../browser/profiles.js';
 import { savePage } from '../mirror/save.js';
 import { t } from '../i18n.js';
 import { clearStorage, exportState, getStorage, importState, listStates, setStorage } from '../browser/storage.js';
@@ -277,6 +278,42 @@ export function register(server) {
         default:
           return json(await getStorage(session, scope));
       }
+    },
+  );
+
+  server.registerTool(
+    'browser_profile',
+    {
+      title: t({ ru: 'Профили условий просмотра', en: "Viewing condition profiles" }),
+      description: t({
+        ru: 'Закрепляет условия открытой сессии под именем, чтобы потом задавать их одним словом: profile: "mobile-dark" в audit, screenshot, seo_page, web_vitals, page_save. Так редкие условия — zoom, RTL, троттлинг, hostMap, псевдолокализация — остаются доступны этим инструментам, не занимая места в их описании. Порядок такой: browser_open с нужными условиями, убедиться, что страница отрисовалась как надо, затем save. Пароли и заголовки в профиль не пишутся; логин переносят через storageState.',
+        en: "Pins the conditions of an open session under a name, so later they can be given as a single word: profile: \"mobile-dark\" in audit, screenshot, seo_page, web_vitals, page_save. That keeps rare conditions — zoom, RTL, throttling, hostMap, pseudo-localization — reachable from those tools without taking up room in their schema. The order is: browser_open with the conditions you need, check the page renders as expected, then save. Passwords and headers are never written into a profile; carry a login through storageState instead.",
+      }),
+      inputSchema: {
+        action: z.enum(['save', 'list', 'remove']).optional().describe(d('По умолчанию list')),
+        sessionId: z.string().optional().describe(d('Сессия, с которой снимаются условия — нужен для save')),
+        name: z.string().optional().describe(d('Имя профиля — нужно для save и remove')),
+        persist: z
+          .boolean()
+          .optional()
+          .describe(d('Записать профиль на диск, чтобы он пережил перезапуск стенда. По умолчанию профиль живёт в памяти процесса')),
+      },
+    },
+    async ({ action = 'list', sessionId, name, persist }) => {
+      if (action === 'list') return json({ profiles: listProfiles() });
+      if (!name) throw new Error(`Для action: ${action} нужно name.`);
+      if (action === 'remove') return json({ removed: await removeProfile(name) });
+
+      if (!sessionId) {
+        throw new Error(
+          'Для save нужен sessionId: профиль снимается с живой сессии, а не описывается заново. ' +
+            'Откройте её через browser_open с нужными условиями.',
+        );
+      }
+      /* session.reopen — те же условия, что передали в browser_open, уже без секретов:
+         журнал закрытых сессий считает их для той же цели, и второй раз считать незачем. */
+      const session = getSession(sessionId);
+      return json(await saveProfile(name, session.reopen, { persist }));
     },
   );
 }

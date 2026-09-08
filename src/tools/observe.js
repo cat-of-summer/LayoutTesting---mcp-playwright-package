@@ -11,7 +11,8 @@ import { siteRef } from '../artifacts.js';
 import { createSession, closeSession, getSession, gotoAndSettle } from '../browser/pool.js';
 import { pageSnapshot } from '../checks/snapshot.js';
 import { CONFIG } from '../config.js';
-import { cappedTail, json, profileSchema, text } from './shared.js';
+import { cappedTail, json, profileCoreSchema, text } from './shared.js';
+import { resolveConditions } from '../browser/profiles.js';
 import { savePage } from '../mirror/save.js';
 import { t } from '../i18n.js';
 
@@ -129,10 +130,10 @@ export function register(server) {
           .optional()
           .describe(d('strip (по умолчанию) вырезает скрипты: на копии аналитика стучит в сеть, а роутер SPA подменяет страницу. JSON-LD остаётся в любом случае')),
         raw: z.boolean().optional().describe(d('Сохранять ли сырой ответ сервера отдельным файлом. По умолчанию да')),
-        ...profileSchema,
+        ...profileCoreSchema,
       },
     },
-    async ({ sessionId, url, siteId, assets, scripts, raw, ...profile }) => {
+    async ({ sessionId, url, siteId, assets, scripts, raw, ...conditions }) => {
       const done = (saved) => json({
         ...saved,
         page: siteRef(saved.files.page),
@@ -143,7 +144,7 @@ export function register(server) {
       if (sessionId) return done(await savePage(getSession(sessionId), { siteId, assets, scripts, raw }));
       if (!url) throw new Error('Нужен sessionId или url.');
 
-      const session = await createSession(profile);
+      const session = await createSession(resolveConditions(conditions));
       try {
         await gotoAndSettle(session, url);
         return done(await savePage(session, { siteId, assets, scripts, raw }));

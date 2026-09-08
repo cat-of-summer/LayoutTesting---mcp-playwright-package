@@ -9,7 +9,8 @@ import { z } from 'zod';
 import { d } from '../i18n-params.js';
 import { readFile } from 'node:fs/promises';
 import { createSession, closeSession, getSession, gotoAndSettle } from '../browser/pool.js';
-import { json, profileSchema } from './shared.js';
+import { json, profileCoreSchema } from './shared.js';
+import { resolveConditions } from '../browser/profiles.js';
 import { resolveInRoot } from '../paths.js';
 import { seoFromHtml, seoFromPage } from '../seo/page.js';
 import { t } from '../i18n.js';
@@ -29,10 +30,10 @@ export function register(server) {
         html: z.string().optional().describe(d('Разобрать переданную разметку без браузера')),
         file: z.string().optional().describe(d('Разобрать сохранённый файл: путь относительно рабочего каталога стенда')),
         pageUrl: z.string().optional().describe(d('Адрес, относительно которого разрешать ссылки в html или file. Без него относительные адреса и саморефренс canonical не посчитать')),
-        ...profileSchema,
+        ...profileCoreSchema,
       },
     },
-    async ({ sessionId, url, html, file, pageUrl, ...profile }) => {
+    async ({ sessionId, url, html, file, pageUrl, ...conditions }) => {
       if (sessionId) {
         const session = getSession(sessionId);
         return json(await seoFromPage(session.page, session.lastResponse));
@@ -48,7 +49,7 @@ export function register(server) {
 
       if (!url) throw new Error('Нужен sessionId, url, html или file.');
 
-      const session = await createSession(profile);
+      const session = await createSession(resolveConditions(conditions));
       try {
         const navigation = await gotoAndSettle(session, url);
         return json({ navigation, ...(await seoFromPage(session.page, session.lastResponse)) });

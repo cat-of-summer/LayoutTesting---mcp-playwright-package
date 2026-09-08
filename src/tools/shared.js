@@ -9,7 +9,7 @@ import { z } from 'zod';
 import { d } from '../i18n-params.js';
 import { t } from '../i18n.js';
 import { readFile } from 'node:fs/promises';
-import { VIEWPORTS } from '../config.js';
+import { BROWSERS, VIEWPORTS } from '../config.js';
 
 export const pkg = JSON.parse(await readFile(new URL('../../package.json', import.meta.url), 'utf8'));
 
@@ -129,4 +129,37 @@ export const profileSchema = {
     .enum(['allow', 'block'])
     .optional()
     .describe(d('block — не давать Service Worker подменять ответы своим кэшем')),
+};
+
+/**
+ * Условия просмотра для инструментов, которые открывают сессию сами.
+ *
+ * Три параметра прямо и один по имени. Прямо — те, которыми пользуются постоянно: движок,
+ * размер, тема. «Проверь на мобиле» и «проверь в тёмной» должны оставаться одним вызовом,
+ * иначе экономия на схеме оплачивается лишним ходом в самом частом случае.
+ *
+ * Остальные пятнадцать параметров — zoom, RTL, троттлинг, hostMap, псевдолокализация и прочее —
+ * задаются в browser_open и закрепляются профилем через profile_save. Полный их список
+ * объявлен ровно в одном месте (profileSchema выше), а не в каждом инструменте: шесть копий
+ * стоили около четверти манифеста.
+ *
+ * Имена профилей здесь не перечисляются намеренно: список протухает, а место ему — в
+ * stand_info, который его и отдаёт.
+ */
+export const profileCoreSchema = {
+  browser: z.enum(BROWSERS).optional().describe(d('Движок браузера')),
+  viewport: z
+    .string()
+    .optional()
+    .describe(
+      t({
+        ru: `Размер: WxH или имя (${Object.keys(VIEWPORTS).join(', ')})`,
+        en: `Size: WxH or a preset name (${Object.keys(VIEWPORTS).join(', ')})`,
+      }),
+    ),
+  colorScheme: z.enum(['light', 'dark', 'no-preference']).optional(),
+  profile: z
+    .string()
+    .optional()
+    .describe(d('Имя сохранённого профиля условий: остальные условия берутся из него. Список — в stand_info')),
 };

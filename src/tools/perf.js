@@ -10,7 +10,8 @@ import { newRunId } from '../artifacts.js';
 import { createSession, closeSession, gotoAndSettle } from '../browser/pool.js';
 import { profileKey } from '../browser/profile.js';
 import { installVitalsCollector, readVitals, runLighthouse } from '../checks/perf.js';
-import { json, profileSchema } from './shared.js';
+import { json, profileCoreSchema } from './shared.js';
+import { resolveConditions } from '../browser/profiles.js';
 import { t } from '../i18n.js';
 
 export function register(server) {
@@ -22,10 +23,10 @@ export function register(server) {
         ru: 'CLS, LCP, FCP, TTFB для указанного URL с перечислением элементов, сдвинувших layout. Ловит то, чего не видно на статичном скриншоте.',
         en: "CLS, LCP, FCP and TTFB for a URL, with the elements that shifted the layout listed. Catches what a static screenshot cannot show: content jumping while the page loads.",
       }),
-      inputSchema: { url: z.string(), settleMs: z.number().optional(), ...profileSchema },
+      inputSchema: { url: z.string(), settleMs: z.number().optional(), ...profileCoreSchema },
     },
-    async ({ url, settleMs, ...profile }) => {
-      const session = await createSession(profile);
+    async ({ url, settleMs, ...conditions }) => {
+      const session = await createSession(resolveConditions(conditions));
       try {
         await installVitalsCollector(session.page);
         const nav = await gotoAndSettle(session, url, { stabilizePage: false });
