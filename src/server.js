@@ -27,6 +27,15 @@ import { register as registerComposite } from './tools/composite.js';
 import { register as registerCrawl } from './tools/crawl.js';
 import { register as registerArtifacts } from './tools/artifacts.js';
 
+/*
+ * Проверка обновлений — один раз на процесс, а не на каждое подключение.
+ *
+ * createServer вызывается для каждого клиента HTTP-транспорта (см. index.js), и вместе с ним
+ * повторялась проверка. Кэш на диске живёт шесть часов, но при пустом кэше и закрытом наружу
+ * контуре каждый новый клиент платил четыре секунды таймаута прямо на подключении.
+ */
+let updatePromise = null;
+
 export async function createServer() {
   await ensureDirs();
 
@@ -37,7 +46,8 @@ export async function createServer() {
    * запуск надолго тоже: секунды ожидания недоступного GitHub стоят дешевле, чем стенд,
    * который не поднялся из-за проверки версии.
    */
-  const update = await checkForUpdate(pkg.version).catch(() => null);
+  updatePromise ??= checkForUpdate(pkg.version).catch(() => null);
+  const update = await updatePromise;
   const notice = updateNotice(update);
 
   /* instructions клиент показывает модели при подключении. Без них агент видит четыре десятка

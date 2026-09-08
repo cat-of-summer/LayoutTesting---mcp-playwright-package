@@ -23,7 +23,13 @@ export const IMAGE_MIME = {
   '.avif': 'image/avif',
 };
 
-export const json = (data) => ({ content: [{ type: 'text', text: JSON.stringify(data, null, 2) }] });
+/*
+ * Без отступов сознательно. Ответ читает модель, а не человек: переводы строк и пробелы
+ * добавляют 20-40% токенов на каждый вызов и ничего не проясняют. Клиент, показывающий
+ * результат человеку, форматирует его сам. Файлы, которые открывают глазами, — writeJson
+ * в artifacts.js и кэш update.js — по-прежнему с отступами.
+ */
+export const json = (data) => ({ content: [{ type: 'text', text: JSON.stringify(data) }] });
 export const text = (value) => ({ content: [{ type: 'text', text: String(value) }] });
 
 /** Условия просмотра. Подмешивается в каждый инструмент, который открывает свою сессию. */

@@ -20,6 +20,25 @@ test('zoom сжимает область просмотра', () => {
   assert.deepEqual(p.viewport, { width: 720, height: 450 });
 });
 
+/*
+ * Повторная нормализация — не выдуманный случай: createSession нормализует профиль и хранит
+ * его, а contextOptions и profileKey нормализуют этот же объект ещё раз. Пока zoom применялся
+ * при каждом проходе, сессия с zoom: 200 открывалась вдвое уже, чем просили.
+ */
+test('повторная нормализация не сжимает viewport второй раз', () => {
+  const once = normalizeProfile({ viewport: 'desktop', zoom: 200 });
+  const twice = normalizeProfile(once);
+  assert.deepEqual(twice.viewport, { width: 720, height: 450 });
+  assert.deepEqual(contextOptions(once).viewport, { width: 720, height: 450 });
+  assert.equal(profileKey(once), 'chromium_720x450_zoom200');
+});
+
+test('метка нормализации не протекает в имена и ответы', () => {
+  const p = normalizeProfile({ viewport: 'desktop', zoom: 200 });
+  assert.equal(Object.keys(p).includes('NORMALIZED'), false);
+  assert.equal(JSON.stringify(p).includes('normalized'), false);
+});
+
 test('auth принимает строку и объект', () => {
   assert.deepEqual(parseAuth('user:pass'), { username: 'user', password: 'pass' });
   // Двоеточие в пароле — не редкость, делить надо по первому.

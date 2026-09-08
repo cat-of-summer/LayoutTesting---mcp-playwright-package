@@ -81,7 +81,7 @@ export function register(server, ctx = {}) {
 
       const buf = await readFile(abs);
       const payload = { file, bytes: buf.length, mimeType: mime || 'application/octet-stream', encoding: 'base64' };
-      const content = [{ type: 'text', text: JSON.stringify(payload, null, 2) }];
+      const content = [{ type: 'text', text: JSON.stringify(payload) }];
       // Картинку кладём и как image-контент: агенту чаще нужно на неё посмотреть,
       // а не разбирать base64 руками.
       if (mime) content.push({ type: 'image', data: buf.toString('base64'), mimeType: mime });

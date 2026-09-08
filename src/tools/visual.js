@@ -84,7 +84,7 @@ export function register(server) {
       const failures = summarizeFailures(session.logs.network);
       const payload = failures ? { ...shot, warnings: failures } : shot;
 
-      const content = [{ type: 'text', text: JSON.stringify(payload, null, 2) }];
+      const content = [{ type: 'text', text: JSON.stringify(payload) }];
       if (inline) {
         const img = await inlineImage(shot.path);
         content.push({ type: 'image', data: img.data, mimeType: img.mimeType });

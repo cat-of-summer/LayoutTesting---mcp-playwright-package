@@ -44,7 +44,6 @@ export const DEFAULTS = {
   maxPages: 500,
   maxDepth: 5,
   delayMs: 500,
-  concurrency: 3,
   render: 'auto',
   respectRobots: true,
   sameOrigin: true,

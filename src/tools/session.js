@@ -9,7 +9,14 @@ import { z } from 'zod';
 import { d } from '../i18n-params.js';
 import { DIRS } from '../config.js';
 import { siteRef } from '../artifacts.js';
-import { createSession, closeSession, getSession, listSessions, gotoAndSettle } from '../browser/pool.js';
+import {
+  createSession,
+  closeSession,
+  getSession,
+  listEvicted,
+  listSessions,
+  gotoAndSettle,
+} from '../browser/pool.js';
 import { profileKey } from '../browser/profile.js';
 import { evaluateOnPage } from '../browser/evaluate.js';
 import { addInjection, clearInjections, listInjections, removeInjection } from '../browser/inject.js';
@@ -195,12 +202,12 @@ export function register(server) {
     {
       title: t({ ru: 'Список сессий', en: "List sessions" }),
       description: t({
-        ru: 'Какие сессии браузера сейчас открыты, с их условиями просмотра и текущим адресом. Пригодится, когда идентификатор открытой ранее сессии потерялся или надо убедиться, что старые сессии закрыты и не держат память.',
-        en: "Which browser sessions are open right now, with their viewing conditions and current URL. Useful when a session was opened earlier and its id got lost, or to confirm old sessions are closed and no longer holding memory.",
+        ru: 'Какие сессии браузера сейчас открыты, с их условиями просмотра и текущим адресом. Пригодится, когда идентификатор открытой ранее сессии потерялся. Рядом — recentlyClosed: недавно закрытые сессии с причиной и условиями, по которым открывают такую же взамен.',
+        en: "Which browser sessions are open right now, with their viewing conditions and current URL. Useful when a session was opened earlier and its id got lost. Alongside them, recentlyClosed lists sessions that were closed, why, and the conditions to reopen an equivalent one.",
       }),
       inputSchema: {},
     },
-    async () => json({ sessions: listSessions() }),
+    async () => json({ sessions: listSessions(), recentlyClosed: listEvicted() }),
   );
 
   server.registerTool(
@@ -208,8 +215,8 @@ export function register(server) {
     {
       title: t({ ru: 'Закрыть сессию', en: "Close session" }),
       description: t({
-        ru: 'Закрывает сессию и освобождает память. Стоит вызывать, закончив работу со страницей: сессии живут до конца работы сервера, и каждая держит свой контекст браузера.',
-        en: "Closes a session and frees its memory. Worth calling once you are done with a page: sessions live until the server stops, and each one holds its own browser context.",
+        ru: 'Закрывает сессию и освобождает память. Стоит вызывать, закончив работу со страницей: каждая сессия держит свой контекст браузера. Сами по себе они закрываются только по простою или по достижении потолка — на это лучше не рассчитывать.',
+        en: "Closes a session and frees its memory. Worth calling once you are done with a page: each session holds its own browser context. They do close on their own once idle or when the cap is reached, but do not rely on that.",
       }),
       inputSchema: { sessionId: z.string() },
     },

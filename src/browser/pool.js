@@ -13,6 +13,38 @@ const browsers = new Map();
 /** Живые сессии MCP: контекст + страница + собранные логи. */
 const sessions = new Map();
 
+/**
+ * Недавно закрытые сессии: id -> почему и что там было.
+ *
+ * Без этого журнала любое закрытие не по воле агента неотличимо от «такого id и не было»:
+ * getSession отвечал «сессия не найдена, откройте новую», агент повторял тот же id и делал
+ * вывод, что сломан инструмент. Здесь лежит причина и достаточно данных, чтобы открыть
+ * равноценную сессию одним вызовом, а не тремя догадками.
+ */
+const evicted = new Map();
+const EVICTED_KEEP = 50;
+
+const REASONS = {
+  idle: 'простой дольше LT_SESSION_IDLE_MS',
+  maxAge: 'достигнут предельный возраст LT_SESSION_MAX_AGE_MS',
+  lru: 'вытеснена под новую сессию, достигнут потолок LT_MAX_SESSIONS',
+  crashed: 'страница упала',
+  disconnected: 'браузер отключился',
+  closed: 'закрыта через browser_close',
+};
+
+/**
+ * Ключ кэша браузеров.
+ *
+ * Подмена разрешения имён задаётся при запуске, а не в контексте, — значит на каждый набор
+ * правил нужен свой процесс браузера. Вынесено отдельно, потому что тот же ключ хранит у себя
+ * сессия: по нему её находят, когда браузер умирает.
+ */
+export function browserCacheKey(name = 'chromium', hostMap = null) {
+  const resolverRules = hostResolverRules(hostMap);
+  return resolverRules ? `${name}|${resolverRules}` : name;
+}
+
 export async function getBrowser(name = 'chromium', hostMap = null) {
   const engine = ENGINES[name];
   if (!engine) throw new Error(`Неизвестный браузер: ${name}. Доступны: ${Object.keys(ENGINES).join(', ')}`);
@@ -22,9 +54,7 @@ export async function getBrowser(name = 'chromium', hostMap = null) {
     throw new Error('hostMap работает только в chromium: это аргумент запуска браузера, у firefox и webkit его нет.');
   }
 
-  // Подмена разрешения имён задаётся при запуске, а не в контексте, — значит на каждый
-  // набор правил нужен свой процесс браузера. Ключ кэша это учитывает.
-  const key = resolverRules ? `${name}|${resolverRules}` : name;
+  const key = browserCacheKey(name, hostMap);
   const existing = browsers.get(key);
   if (existing && existing.isConnected()) return existing;
 
@@ -41,6 +71,18 @@ export async function getBrowser(name = 'chromium', hostMap = null) {
     : [];
   const browser = await engine.launch({ args });
   browsers.set(key, browser);
+  /*
+   * Браузер умирает и сам: падает, попадает под OOM, закрывается снаружи. Кэш это переживал —
+   * следующий вызов видел isConnected() === false и поднимал новый процесс. А вот сессии,
+   * смотревшие в мёртвый процесс, оставались в карте навсегда и отвечали непрозрачной ошибкой
+   * playwright. Убираем их здесь же, с причиной, по которой агенту будет понятно, что случилось.
+   */
+  browser.on('disconnected', () => {
+    if (browsers.get(key) === browser) browsers.delete(key);
+    for (const session of [...sessions.values()]) {
+      if (session.browserKey === key) forget(session, 'disconnected');
+    }
+  });
   return browser;
 }
 
@@ -104,8 +146,138 @@ function attachCollectors(page, store) {
   });
 }
 
-export async function createSession(profileInput = {}) {
+/**
+ * Аргументы, которыми открывают равноценную сессию взамен закрытой.
+ *
+ * Считаются из того, что агент передал в browser_open, а не из нормализованного профиля:
+ * так они точны без обратных пересчётов. Zoom, например, уже сжал viewport, и восстановить
+ * исходный размер из результата можно лишь приблизительно.
+ *
+ * Доступ сюда не попадает. Сообщение о закрытой сессии уходит в переписку с агентом, а пароль
+ * в переписке — это пароль в логах; вместо значения ставится признак, что его надо передать
+ * заново.
+ */
+const SECRET_FIELDS = new Set(['auth', 'httpCredentials', 'extraHTTPHeaders']);
+
+function reopenArgs(input = {}) {
+  const args = {};
+  let needsAuth = false;
+  for (const [key, value] of Object.entries(input)) {
+    if (value === undefined || value === null) continue;
+    if (SECRET_FIELDS.has(key)) {
+      needsAuth = true;
+      continue;
+    }
+    args[key] = value;
+  }
+  return { args, needsAuth };
+}
+
+function safeUrl(session) {
+  try {
+    return sanitizeUrl(session.page.url());
+  } catch {
+    return null;
+  }
+}
+
+/** Убрать сессию из живых и записать в журнал, почему. Контекст не закрывает. */
+function forget(session, reason) {
+  if (!sessions.has(session.id)) return;
+  sessions.delete(session.id);
+  evicted.set(session.id, {
+    reason,
+    at: new Date().toISOString(),
+    url: safeUrl(session),
+    key: session.key,
+    reopen: session.reopen,
+    needsAuth: session.needsAuth,
+  });
+  while (evicted.size > EVICTED_KEEP) evicted.delete(evicted.keys().next().value);
+}
+
+function sessionGone(id) {
+  const past = evicted.get(id);
+  if (!past) {
+    return new Error(`Сессия ${id} не найдена — такой и не было. Откройте новую через browser_open.`);
+  }
+  const parts = [
+    `Сессия ${id} закрыта: ${REASONS[past.reason] || past.reason} (${past.at}).`,
+    past.url ? `Была на ${past.url}, профиль ${past.key}.` : `Профиль ${past.key}.`,
+    `Откройте новую через browser_open с теми же условиями: ${JSON.stringify(past.reopen || {})}`,
+  ];
+  if (past.needsAuth) {
+    parts.push('Доступ (auth и заголовки) передайте заново — в журнале он не хранится.');
+  }
+  return new Error(parts.join(' '));
+}
+
+/**
+ * Освободить место под новую сессию.
+ *
+ * Вытесняется та, к которой дольше всех не обращались. Сессии внутренних прогонов — обход,
+ * матрица — не трогаем: убить браузер идущего обхода ради разовой проверки заведомо хуже,
+ * чем честно сказать, что стенд занят.
+ */
+async function makeRoom() {
+  if (!CONFIG.maxSessions || sessions.size < CONFIG.maxSessions) return;
+  const candidates = [...sessions.values()].filter((s) => !s.owned);
+  if (!candidates.length) {
+    throw new Error(
+      `Стенд занят: ${sessions.size} сессий, и все заняты внутренними прогонами. ` +
+        'Дождитесь их окончания или поднимите LT_MAX_SESSIONS.',
+    );
+  }
+  candidates.sort((a, b) => a.lastUsedMs - b.lastUsedMs);
+  await closeSession(candidates[0].id, 'lru');
+}
+
+/**
+ * Браузер, на который не смотрит ни одна сессия.
+ *
+ * Закрываем только заведённые под hostMap: на каждый набор правил разрешения имён нужен свой
+ * процесс, и такие копятся по одному на стенд за vhost. Базовые движки оставляем жить — их
+ * почти наверняка попросят снова, а старт webkit стоит секунд.
+ */
+async function reapBrowsers() {
+  const inUse = new Set([...sessions.values()].map((s) => s.browserKey));
+  for (const [key, browser] of [...browsers]) {
+    if (inUse.has(key) || !key.includes('|')) continue;
+    browsers.delete(key);
+    await browser.close().catch(() => {});
+  }
+}
+
+async function sweep() {
+  const now = Date.now();
+  for (const session of [...sessions.values()]) {
+    if (session.owned) continue;
+    if (CONFIG.sessionIdleMs && now - session.lastUsedMs >= CONFIG.sessionIdleMs) {
+      await closeSession(session.id, 'idle');
+      continue;
+    }
+    if (CONFIG.sessionMaxAgeMs && now - session.createdMs >= CONFIG.sessionMaxAgeMs) {
+      await closeSession(session.id, 'maxAge');
+    }
+  }
+  await reapBrowsers();
+}
+
+let sweeper = null;
+function startSweeper() {
+  if (sweeper || !CONFIG.sessionSweepMs) return;
+  sweeper = setInterval(() => {
+    sweep().catch(() => {});
+  }, CONFIG.sessionSweepMs);
+  /* Таймер не должен удерживать процесс: в stdio-режиме выход происходит по сигналу, а
+     разовый вызов lt обязан завершиться сам. Без unref он не давал бы этого ни тому, ни другому. */
+  sweeper.unref?.();
+}
+
+export async function createSession(profileInput = {}, { owned = null } = {}) {
+  await makeRoom();
   const profile = normalizeProfile(profileInput);
+  const browserKey = browserCacheKey(profile.browser, profile.hostMap);
   const browser = await getBrowser(profile.browser, profile.hostMap);
   const context = await newContext(browser, profile);
   context.setDefaultTimeout(CONFIG.defaultTimeout);
@@ -113,50 +285,107 @@ export async function createSession(profileInput = {}) {
   await applyProfileToPage(page, profile);
   await applyThrottle(page, profile).catch(() => {});
 
-  const id = randomUUID().slice(0, 8);
+  /* Восьми знаков хватает с запасом, но журнал закрытых делает id значимым и после смерти
+     сессии: повтор выдал бы чужую подсказку по восстановлению. */
+  let id;
+  do {
+    id = randomUUID().slice(0, 8);
+  } while (sessions.has(id) || evicted.has(id));
+
+  const now = Date.now();
+  const { args: reopen, needsAuth } = reopenArgs(profileInput);
   const session = {
     id,
     profile,
     key: profileKey(profile),
     context,
     page,
+    browserKey,
+    /** internal — сессия одноразового прогона: её не вытесняют, у неё свой finally. */
+    owned,
     logs: { console: [], errors: [], network: [] },
     /** Патчи CSS/JS, переживающие навигацию, — см. browser/inject.js. */
     injections: [],
     /** Правила перехвата запросов — см. browser/routes.js. */
     routes: [],
     unsupported: context.__ltUnsupported || [],
-    createdAt: new Date().toISOString(),
+    createdAt: new Date(now).toISOString(),
+    createdMs: now,
+    lastUsedMs: now,
+    reopen,
+    needsAuth,
   };
+  /* Страница падает и отдельно от браузера: тогда сессия числится живой, но мертва по сути. */
+  page.on('crash', () => forget(session, 'crashed'));
   attachCollectors(page, session.logs);
   sessions.set(id, session);
+  startSweeper();
   return session;
 }
 
 export function getSession(id) {
   const session = sessions.get(id);
-  if (!session) {
-    throw new Error(`Сессия ${id} не найдена. Откройте новую через browser_open.`);
-  }
+  if (!session) throw sessionGone(id);
+  /* Единственное место, где отмечается обращение: через getSession проходят все инструменты,
+     берущие sessionId, и рассыпать отметки по ним значило бы рано или поздно забыть про одну. */
+  session.lastUsedMs = Date.now();
   return session;
 }
 
-export function listSessions() {
-  return [...sessions.values()].map((s) => ({
-    id: s.id,
-    key: s.key,
-    url: s.page.url(),
-    createdAt: s.createdAt,
-    unsupported: s.unsupported,
-    injections: (s.injections || []).length,
-    routes: (s.routes || []).length,
+/** Последние закрытые сессии: чтобы browser_sessions отвечал на «куда делась моя». */
+export function listEvicted(limit = 5) {
+  return [...evicted.entries()].slice(-limit).map(([id, e]) => ({
+    id,
+    reason: e.reason,
+    why: REASONS[e.reason] || e.reason,
+    at: e.at,
+    url: e.url,
+    key: e.key,
+    reopen: e.reopen,
   }));
 }
 
-export async function closeSession(id) {
+
+/**
+ * Список живых сессий.
+ *
+ * Всё, что читается со страницы, — под защитой. У закрытой или упавшей страницы page.url()
+ * бросает, а этим списком пользуются browser_sessions и stand_info, то есть ровно те два
+ * инструмента, которыми агент выясняет, что со стендом. Одна мёртвая сессия не должна
+ * лишать его обоих: она попадает в список с alive: false, а не роняет весь ответ.
+ *
+ * Адрес — через sanitizeUrl: иначе basic-auth из URL уезжает в вывод stand_info.
+ */
+export function listSessions() {
+  return [...sessions.values()].map((s) => {
+    let url = null;
+    let alive = false;
+    try {
+      alive = !s.page.isClosed();
+      url = sanitizeUrl(s.page.url());
+    } catch {
+      /* Страница мертва. Сессию всё равно показываем — по ней видно, что чистить. */
+    }
+    return {
+      id: s.id,
+      key: s.key,
+      url,
+      alive,
+      createdAt: s.createdAt,
+      /* Сколько сессия простаивает — по этому числу видно, какая закроется следующей. */
+      idleMs: Date.now() - s.lastUsedMs,
+      owned: s.owned,
+      unsupported: s.unsupported,
+      injections: (s.injections || []).length,
+      routes: (s.routes || []).length,
+    };
+  });
+}
+
+export async function closeSession(id, reason = 'closed') {
   const session = sessions.get(id);
   if (!session) return false;
-  sessions.delete(id);
+  forget(session, reason);
   await session.context.close().catch(() => {});
   return true;
 }
@@ -280,7 +509,9 @@ export async function gotoAndSettle(
  * Закрывается всегда, даже если проверка бросила.
  */
 export async function withSession(profileInput, fn) {
-  const session = await createSession(profileInput);
+  /* owned: внутренние прогоны идут долго и между шагами могут не трогать сессию минутами.
+     По простою их закрывать нельзя — за ними следит собственный finally, а не сборщик. */
+  const session = await createSession(profileInput, { owned: 'internal' });
   try {
     return await fn(session);
   } finally {
@@ -289,6 +520,10 @@ export async function withSession(profileInput, fn) {
 }
 
 export async function closeAll() {
+  if (sweeper) {
+    clearInterval(sweeper);
+    sweeper = null;
+  }
   for (const id of [...sessions.keys()]) await closeSession(id);
   for (const [name, browser] of browsers) {
     await browser.close().catch(() => {});

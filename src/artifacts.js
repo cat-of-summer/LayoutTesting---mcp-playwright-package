@@ -37,7 +37,7 @@ async function autoPrune(runId) {
   if (!CONFIG.artifactsKeep || lastPrunedFor === runId) return;
   lastPrunedFor = runId;
   try {
-    const runs = await listRuns();
+    const runs = await listPrunableRuns();
     for (const run of runs.slice(CONFIG.artifactsKeep)) {
       if (run === runId) continue;
       await fs.rm(path.join(DIRS.artifacts, run), { recursive: true, force: true });
@@ -103,19 +103,47 @@ export async function writeJson(absPath, data) {
   return absPath;
 }
 
-export async function listRuns() {
+/**
+ * Как выглядит имя каталога прогона: метка времени из newRunId.
+ * Ширина полей фиксированная, поэтому лексикографический порядок совпадает с хронологическим.
+ */
+const RUN_ID = /^\d{4}-\d{2}-\d{2}T\d{2}-\d{2}-\d{2}(_|$)/;
+
+async function artifactDirs() {
   await ensureDirs();
   const entries = await fs.readdir(DIRS.artifacts, { withFileTypes: true });
-  return entries
-    .filter((e) => e.isDirectory())
-    .map((e) => e.name)
-    .sort()
-    .reverse();
+  return entries.filter((e) => e.isDirectory()).map((e) => e.name);
 }
 
-/** Оставляет keep последних прогонов, остальные удаляет. */
+/**
+ * Прогоны от свежих к старым.
+ *
+ * Раньше здесь был простой .sort().reverse() по имени каталога. Пока в artifacts/ лежат одни
+ * прогоны, это верно — имя начинается с метки времени. Но каталог, чьё имя начинается не с
+ * цифры, в такой сортировке оказывался «самым свежим»: он навсегда занимал место в начале
+ * списка, сам не удалялся никогда, а настоящие прогоны за ним вычищались раньше срока.
+ * Тестовые каталоги вроде test-isolate застревали именно так.
+ *
+ * Теперь прогоном считается то, что похоже на прогон. Посторонние каталоги уходят в конец —
+ * они по-прежнему видны в artifacts_list, но автоочистка их не трогает: положил их туда
+ * человек, ему и решать.
+ */
+export async function listRuns() {
+  const names = await artifactDirs();
+  const runs = names.filter((n) => RUN_ID.test(n)).sort().reverse();
+  const rest = names.filter((n) => !RUN_ID.test(n)).sort();
+  return [...runs, ...rest];
+}
+
+/** Только настоящие прогоны — то, что имеет право удалять очистка. */
+export async function listPrunableRuns() {
+  const names = await artifactDirs();
+  return names.filter((n) => RUN_ID.test(n)).sort().reverse();
+}
+
+/** Оставляет keep последних прогонов, остальные удаляет. Посторонние каталоги не трогает. */
 export async function pruneRuns(keep = CONFIG.artifactsKeep) {
-  const runs = await listRuns();
+  const runs = await listPrunableRuns();
   const doomed = runs.slice(keep);
   for (const run of doomed) {
     await fs.rm(path.join(DIRS.artifacts, run), { recursive: true, force: true });

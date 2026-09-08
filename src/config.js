@@ -1,22 +1,14 @@
-import { fileURLToPath } from 'node:url';
-import path from 'node:path';
+/**
+ * Настройки стенда, читаемые из окружения.
+ *
+ * Пути, справочники и параметры обновления живут в constants.js — тот модуль сознательно
+ * обходится без playwright, чтобы описания инструментов и тесты на манифест не тянули
+ * браузерный слой. Здесь остаётся только то, ради чего playwright всё-таки нужен, плюс
+ * реэкспорт: для остальных файлов ничего не меняется, импорт по-прежнему из config.js.
+ */
 import { chromium } from 'playwright';
 
-const here = path.dirname(fileURLToPath(import.meta.url));
-
-/** Корень рабочей директории — она же корень раздачи nginx. */
-export const ROOT = path.resolve(here, '..');
-
-export const DIRS = {
-  root: ROOT,
-  artifacts: path.join(ROOT, 'artifacts'),
-  baselines: path.join(ROOT, 'baselines'),
-  fixtures: path.join(ROOT, 'fixtures'),
-  /** Архив обходов и зеркала сохранённых страниц. Не чистится автоматически, в отличие от artifacts. */
-  sites: path.join(ROOT, 'sites'),
-  /** storageState сессий. Наружу не отдаётся: см. DENIED_DIRS в paths.js. */
-  state: path.join(ROOT, 'state'),
-};
+export { ROOT, DIRS, BROWSERS, VIEWPORTS, UPDATE } from './constants.js';
 
 function safeExecutablePath() {
   try {
@@ -49,36 +41,22 @@ export const CONFIG = {
   artifactsKeep: Number(process.env.ARTIFACTS_KEEP || 50),
   /** Предел journal-буфера сессии на каждый вид записей: консоль, ошибки, сеть. */
   logBufferSize: Number(process.env.LOG_BUFFER_SIZE || 2000),
+  /*
+   * Границы жизни сессий браузера.
+   *
+   * Раньше границ не было вовсе: сессия жила до явного browser_close или до остановки
+   * процесса. В коротком прогоне это незаметно, в долгой работе агента — нет: каждая
+   * забытая сессия держит свой контекст, а контекст стоит сотни мегабайт.
+   *
+   * Простой в 15 минут заведомо длиннее любого хода агента и заведомо короче, чем
+   * «забыли и ушли». Предельный возраст нужен отдельно: сессию можно трогать раз в минуту
+   * сутками, и по простою она не закроется никогда.
+   */
+  maxSessions: Number(process.env.LT_MAX_SESSIONS || 8),
+  sessionIdleMs: Number(process.env.LT_SESSION_IDLE_MS || 15 * 60 * 1000),
+  sessionMaxAgeMs: Number(process.env.LT_SESSION_MAX_AGE_MS || 60 * 60 * 1000),
+  sessionSweepMs: Number(process.env.LT_SESSION_SWEEP_MS || 60 * 1000),
   defaultTimeout: Number(process.env.DEFAULT_TIMEOUT || 30000),
   /** Порог расхождения визуальной регрессии в процентах пикселей. */
   visualThreshold: Number(process.env.VISUAL_THRESHOLD || 0.1),
-};
-
-/**
- * Откуда стенд узнаёт о своих обновлениях.
- *
- * Держится здесь, рядом с остальной конфигурацией, а не в коде проверки: у форка или
- * внутренней сборки репозиторий и реестр образов свои, и менять их правкой исходника —
- * значит расходиться с апстримом в файле, который потом придётся мерджить.
- */
-export const UPDATE = {
-  repo: process.env.LT_UPDATE_REPO || 'cat-of-summer/LayoutTesting---mcp-playwright-package',
-  image: process.env.LT_UPDATE_IMAGE || 'ghcr.io/cat-of-summer/layouttesting---mcp-playwright-package',
-  /** Пустое значение выключает проверку целиком — для стендов без выхода наружу. */
-  enabled: process.env.LT_UPDATE_CHECK !== '0',
-};
-
-UPDATE.releases = `https://github.com/${UPDATE.repo}/releases`;
-UPDATE.api = `https://api.github.com/repos/${UPDATE.repo}/releases/latest`;
-
-export const BROWSERS = ['chromium', 'firefox', 'webkit'];
-
-/** Именованные viewport'ы для матрицы условий. */
-export const VIEWPORTS = {
-  mobile: { width: 375, height: 812 },
-  'mobile-sm': { width: 320, height: 568 },
-  tablet: { width: 768, height: 1024 },
-  laptop: { width: 1366, height: 768 },
-  desktop: { width: 1440, height: 900 },
-  wide: { width: 1920, height: 1080 },
 };

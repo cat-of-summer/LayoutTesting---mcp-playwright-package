@@ -64,7 +64,22 @@ export function resolveViewport(value) {
   );
 }
 
+/**
+ * Метка уже нормализованного профиля.
+ *
+ * normalizeProfile применяет zoom к области просмотра, и делать это дважды нельзя: второй
+ * проход сжимает уже сжатое. А вызывается она именно дважды — createSession нормализует
+ * профиль один раз и хранит его в сессии, после чего contextOptions и profileKey нормализуют
+ * тот же объект повторно. При zoom: 200 контекст получал 360x225 вместо 720x450, и это же
+ * неверное число уезжало в profileKey, то есть в имя эталона.
+ *
+ * Символ, а не обычное поле: он не виден ни в Object.keys, ни в JSON.stringify, поэтому не
+ * протекает ни в ответы инструментов, ни в имена файлов.
+ */
+const NORMALIZED = Symbol('profile:normalized');
+
 export function normalizeProfile(input = {}) {
+  if (input && input[NORMALIZED]) return input;
   const { auth, ...rest } = input;
   const p = { ...PROFILE_DEFAULTS, ...rest };
   if (auth) p.httpCredentials = parseAuth(auth);
@@ -80,6 +95,7 @@ export function normalizeProfile(input = {}) {
       height: Math.max(200, Math.round((p.viewport.height * 100) / zoom)),
     };
   }
+  Object.defineProperty(p, NORMALIZED, { value: true });
   return p;
 }
 
