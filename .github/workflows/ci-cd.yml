@@ -61,7 +61,11 @@ jobs:
   ci-cd:
     uses: cat-of-summer/git_toolkit/.github/workflows/ci-cd.yml@main
     secrets:
+      DEPLOY_KEY: ${{ secrets.DEPLOY_KEY }}
+      DOCKER_TOKEN: ${{ secrets.DOCKER_TOKEN }}
       PAT_TOKEN: ${{ secrets.PAT_TOKEN }}
+      PACKAGIST_API_TOKEN: ${{ secrets.PACKAGIST_API_TOKEN }}
+      SECRETS_JSON: ${{ secrets.SECRETS_JSON }}
     with:
       run_ci: ${{ inputs.run_ci == null && true || inputs.run_ci }}
       run_release: ${{ inputs.run_release == null && true || inputs.run_release }}
