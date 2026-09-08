@@ -25,8 +25,8 @@ export function register(server) {
     {
       title: t({ ru: 'Скриншот', en: "Screenshot" }),
       description: t({
-        ru: 'Снимок страницы или элемента. Возвращает путь и URL; картинку в ответ вкладывает только при inline=true. Снимок по selector — это область элемента: наехавшие на неё чужие блоки в кадр попадут. Если часть ресурсов страницы не загрузилась, в ответе будет warnings — снимок в этом случае неполный.',
-        en: "A shot of the page or one element. Returns a path and a URL; the image itself is attached to the answer only with inline=true. A shot by selector is the element area: neighbours overlapping it will be in frame. If some resources failed to load, warnings say so — the shot is incomplete in that case.",
+        ru: "Снимок страницы или элемента. Возвращает адрес артефакта; картинку вкладывает в ответ только при inline: true. Если часть ресурсов не загрузилась, в ответе будет warnings — снимок тогда неполный.",
+        en: "A screenshot of the page or of one element. Returns the artifact address; the image itself is embedded in the response only with inline: true. If some resources failed to load the response carries warnings — the shot is incomplete then.",
       }),
       inputSchema: {
         sessionId: z.string(),

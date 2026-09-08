@@ -171,6 +171,9 @@ const EN = {
   'Имя сохранённого профиля условий: остальные условия берутся из него. Список — в stand_info':
     'Name of a saved condition profile: the remaining conditions are taken from it. See stand_info for the list',
   'По умолчанию list': 'Default list',
+  'Тема. Без аргументов — список тем': 'Topic. With no arguments, lists the topics',
+  'Имя инструмента: оговорки и нюансы именно его':
+    'Tool name: the caveats and details specific to it',
   'Сессия, с которой снимаются условия — нужен для save':
     'The session whose conditions are captured — required for save',
   'Имя профиля — нужно для save и remove': 'Profile name — required for save and remove',

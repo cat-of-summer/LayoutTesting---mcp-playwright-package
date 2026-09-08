@@ -117,8 +117,8 @@ export function register(server) {
     {
       title: t({ ru: 'Сохранить страницу локально', en: "Save the page locally" }),
       description: t({
-        ru: 'Кладёт страницу в локальное зеркало: отрендеренный DOM с переписанными на локальные копии ссылками, отдельно сырой ответ сервера до JS, отдельно ресурсы с дедупликацией по содержимому. Копия открывается через browser_goto по internalUrl, и к ней применимы все остальные инструменты — layout_audit, screenshot, computed_styles. Дальше страницу можно разбирать сколько угодно, не обращаясь к чужому серверу.',
-        en: "Puts the page into a local mirror: the rendered DOM with links rewritten to local copies, the raw server response before JS kept separately, and resources deduplicated by content. The copy opens through browser_goto by its internalUrl and every other tool applies to it — layout_audit, screenshot, computed_styles. After that the page can be examined as many times as needed without touching the remote server.",
+        ru: "Кладёт страницу в локальное зеркало: отрендеренный DOM с переписанными на локальные копии ссылками, отдельно сырой ответ сервера до JS, отдельно ресурсы. Дальше страницу разбирают сколько угодно, не обращаясь к чужому серверу.",
+        en: "Puts the page into a local mirror: the rendered DOM with links rewritten to local copies, the raw server response before JS kept separately, and the resources. After that the page can be examined as much as needed without touching the remote server.",
       }),
       inputSchema: {
         sessionId: z.string().optional().describe(d('Сохранить текущую страницу сессии')),

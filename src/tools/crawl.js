@@ -41,8 +41,8 @@ export function register(server) {
     {
       title: t({ ru: 'Обход сайта', en: "Crawl a site" }),
       description: t({
-        ru: 'Обходит сайт по внутренним ссылкам и складывает страницы в локальный архив: сначала обычным HTTP-запросом (дёшево и видно то же, что видит робот без JS), а если ответ пустой — переоткрывает в браузере. Возвращает управление сразу, обход идёт фоном; смотреть прогресс через action: status. По умолчанию уважает robots.txt, держит паузу между запросами и не выходит за пределы хоста.',
-        en: "Walks a site by its internal links and stores pages in a local archive: first with a plain HTTP request (cheap, and it shows exactly what a crawler without JS sees), then reopening a page in the browser if the response looks empty. Returns immediately, the crawl runs in the background; watch progress with action: status. By default it respects robots.txt, keeps a pause between requests and stays on the same host.",
+        ru: "Обходит сайт по внутренним ссылкам и складывает страницы в локальный архив. Управление возвращает сразу, обход идёт фоном — прогресс смотреть через action: status. По готовому архиву работают crawl_pages, crawl_query и seo_report.",
+        en: "Crawls a site along its internal links and stores the pages in a local archive. Returns control immediately and runs in the background — follow the progress with action: status. crawl_pages, crawl_query and seo_report work off the finished archive.",
       }),
       inputSchema: {
         action: z.enum(['start', 'status', 'stop', 'resume', 'list', 'delete']).optional().describe(d('По умолчанию start')),
@@ -224,8 +224,8 @@ export function register(server) {
     {
       title: t({ ru: 'Сводный SEO-отчёт по сайту', en: "Site-wide SEO report" }),
       description: t({
-        ru: 'Собирает по архиву обхода то, чего не видно на отдельной странице: дубли title, description, h1 и самого содержимого; битые внутренние ссылки с указанием, откуда на них ведут; страницы-сироты без единой входящей ссылки; цепочки редиректов; вопросы к canonical и взаимности hreflang; тонкое содержимое; смешанный контент. Адреса, объявленные в canonical и hreflang, но лежащие вне обхода, проверяются отдельными одиночными запросами — иначе про них нечего сказать. Отдельно сводит то, что НЕ проверялось: закрытое robots.txt, упёршееся в лимиты, неудачные запросы. Кладёт JSON и самодостаточный HTML.',
-        en: "Collects from a crawl archive what is invisible on a single page: duplicate titles, descriptions, h1s and duplicate content; broken internal links with the pages that link to them; orphan pages with no inbound links at all; redirect chains; canonical and hreflang reciprocity problems; thin content; mixed content. Addresses declared in canonical and hreflang but lying outside the crawl are verified with separate one-off requests, otherwise there is nothing to say about them. Separately summarizes what was NOT checked: blocked by robots.txt, cut off by limits, failed requests. Writes JSON and a self-contained HTML report.",
+        ru: "Собирает по архиву обхода то, чего не видно на отдельной странице: дубли title, description, h1 и содержимого; битые внутренние ссылки с указанием, откуда на них ведут; страницы-сироты; цепочки редиректов; вопросы к canonical и взаимности hreflang; тонкое содержимое; смешанный контент. Отдельно сводит то, что НЕ проверялось. Кладёт JSON и самодостаточный HTML.",
+        en: "Sums up from a crawl archive what is invisible on a single page: duplicate titles, descriptions, h1s and content; broken internal links with the pages that lead to them; orphan pages; redirect chains; canonical and hreflang reciprocity issues; thin content; mixed content. Summarizes separately what was NOT checked. Writes JSON and a self-contained HTML report.",
       }),
       inputSchema: {
         siteId: z.string().describe(d('Обход, по которому строить отчёт. Список — crawl с action: list')),

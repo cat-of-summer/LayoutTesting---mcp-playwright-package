@@ -24,7 +24,20 @@ const SRC = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../src')
  * где инструментов нет, и проверка «нашлось ли хоть что-то» перестала бы что-либо значить.
  * Добавили группу — добавьте её сюда; забыли — упадёт первый же тест, он для этого и стоит.
  */
-const GROUPS = ['session', 'observe', 'layout', 'visual', 'a11y', 'perf', 'seo', 'static', 'composite', 'artifacts', 'crawl'];
+const GROUPS = [
+  'session',
+  'observe',
+  'layout',
+  'visual',
+  'a11y',
+  'perf',
+  'seo',
+  'static',
+  'composite',
+  'artifacts',
+  'crawl',
+  'help',
+];
 const FILES = GROUPS.map((g) => `tools/${g}.js`);
 
 /**

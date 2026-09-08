@@ -41,6 +41,11 @@ const RU = `Стенд тестирования вёрстки: живой бр�
 Разбор дешевле начинать с page_snapshot: текстовый слепок страницы с готовыми селекторами
 обходится на порядок дешевле скриншота. Скриншот нужен, когда вопрос именно про внешний вид.
 
+Описания инструментов намеренно короткие: в них симптом и отличие от соседа. Оговорки про
+поддержку движками, нюансы параметров, действующие потолки на объём ответов и порядок разбора
+типовой задачи лежат в help — help без аргументов перечисляет темы, help с tool: имя даёт
+оговорки конкретного инструмента.
+
 Куда обращаться. Стенд живёт в контейнере, и localhost внутри него указывает на сам стенд, а не
 на машину пользователя. Локальный проект — по имени его контейнера в общей docker-сети
 (http://nginx_myapp/), приложение на хосте — http://host.docker.internal:5173, боевой сайт — по
@@ -76,6 +81,11 @@ Where to start, by what the user asks:
 
 Prefer page_snapshot to start with: a text outline of the page with ready-to-use selectors costs
 an order of magnitude less than a screenshot. Take a screenshot when the question is about looks.
+
+Tool descriptions are deliberately short: they carry the symptom and the difference from a
+neighbouring tool. Engine support caveats, parameter details, the response size caps in force and
+the order of working through a typical task live in help — help with no arguments lists the
+topics, help with tool: name gives the caveats of one tool.
 
 Addressing targets. The stand runs inside a container, so localhost there points at the stand
 itself, not at the user's machine. A local project is reachable by its container name on the

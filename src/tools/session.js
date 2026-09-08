@@ -181,8 +181,8 @@ export function register(server) {
     {
       title: t({ ru: 'Перехват запросов', en: "Intercept requests" }),
       description: t({
-        ru: 'Правила на сетевые запросы страницы: отрезать аналитику и чаты, подменить таблицу стилей или скрипт своей версией, подставить заглушки вместо отсутствующих картинок, переписать адреса — когда сайт отдаёт абсолютные ссылки на боевой домен. Переживает навигацию; в list виден счётчик попаданий, чтобы отличить несработавшее правило от сработавшего.',
-        en: "Rules over the page network requests: cut off analytics and chat widgets that keep a page from reaching load, swap a stylesheet or script for your own build, stub missing images, rewrite addresses when a site serves absolute links to the production domain. Survives navigation; list shows a hit counter so a silent rule is distinguishable from a working one.",
+        ru: "Правила на сетевые запросы страницы: отрезать аналитику и чаты, подменить таблицу стилей или скрипт своей версией, подставить заглушки вместо отсутствующих картинок, переписать адреса, когда сайт отдаёт абсолютные ссылки на боевой домен.",
+        en: "Rules over the page network requests: cut analytics and chat widgets, replace a stylesheet or a script with your own version, stub missing images, rewrite addresses when the site returns absolute links to a production domain.",
       }),
       inputSchema: {
         sessionId: z.string(),
@@ -247,8 +247,8 @@ export function register(server) {
     {
       title: t({ ru: 'Куки и хранилища', en: "Cookies and storage" }),
       description: t({
-        ru: 'Читает и подкладывает куки, localStorage и sessionStorage, а export и import сохраняют состояние сессии на диск и возвращают его в новую. Так логин переживает browser_close: сохранённое имя потом передаётся в storageState при открытии любой сессии. Важно: localStorage и sessionStorage снимаются с текущей страницы, а не со всего сайта — API уровня контекста у них нет.',
-        en: "Reads and injects cookies, localStorage and sessionStorage; export and import save a session state to disk and restore it into a new session. That is how a login survives browser_close: pass the saved name as storageState when opening any session. Note: localStorage and sessionStorage are read from the current page, not from the whole site — Playwright has no context-level API for them.",
+        ru: "Читает и подкладывает куки, localStorage и sessionStorage; export и import переносят состояние сессии через диск. Так логин переживает browser_close и перезапуск стенда.",
+        en: "Reads and injects cookies, localStorage and sessionStorage; export and import carry a session state through disk. That is how a login survives browser_close and a stand restart.",
       }),
       inputSchema: {
         sessionId: z.string().optional().describe(d('Не нужен только для action: list')),
@@ -286,8 +286,8 @@ export function register(server) {
     {
       title: t({ ru: 'Профили условий просмотра', en: "Viewing condition profiles" }),
       description: t({
-        ru: 'Закрепляет условия открытой сессии под именем, чтобы потом задавать их одним словом: profile: "mobile-dark" в audit, screenshot, seo_page, web_vitals, page_save. Так редкие условия — zoom, RTL, троттлинг, hostMap, псевдолокализация — остаются доступны этим инструментам, не занимая места в их описании. Порядок такой: browser_open с нужными условиями, убедиться, что страница отрисовалась как надо, затем save. Пароли и заголовки в профиль не пишутся; логин переносят через storageState.',
-        en: "Pins the conditions of an open session under a name, so later they can be given as a single word: profile: \"mobile-dark\" in audit, screenshot, seo_page, web_vitals, page_save. That keeps rare conditions — zoom, RTL, throttling, hostMap, pseudo-localization — reachable from those tools without taking up room in their schema. The order is: browser_open with the conditions you need, check the page renders as expected, then save. Passwords and headers are never written into a profile; carry a login through storageState instead.",
+        ru: "Закрепляет условия открытой сессии под именем, чтобы задавать их одним словом: profile: \"mobile-dark\" в audit, screenshot, seo_page, web_vitals, page_save. Так редкие условия — zoom, RTL, троттлинг, hostMap, псевдолокализация — остаются доступны этим инструментам, не занимая места в их схеме.",
+        en: "Pins the conditions of an open session under a name, so they can be given as one word: profile: \"mobile-dark\" in audit, screenshot, seo_page, web_vitals, page_save. That keeps rare conditions — zoom, RTL, throttling, hostMap, pseudo-localization — reachable from those tools without taking up room in their schema.",
       }),
       inputSchema: {
         action: z.enum(['save', 'list', 'remove']).optional().describe(d('По умолчанию list')),

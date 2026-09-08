@@ -28,6 +28,7 @@ import { register as registerStatic } from './tools/static.js';
 import { register as registerComposite } from './tools/composite.js';
 import { register as registerCrawl } from './tools/crawl.js';
 import { register as registerArtifacts } from './tools/artifacts.js';
+import { register as registerHelp } from './tools/help.js';
 
 /*
  * Проверка обновлений — один раз на процесс, а не на каждое подключение.
@@ -112,6 +113,9 @@ export async function createServer() {
   // перезапрашивается на каждый вызов stand_info. Группа не отключается никогда: без
   // stand_info агенту нечем выяснить, почему остального нет.
   registerArtifacts(server, { update, toolSet: set.name, toolSets: Object.keys(TOOL_SETS) });
+  /* help не отключается по той же причине, что и stand_info: он объясняет то, что вынуто из
+     описаний, и без него сокращённые описания превратились бы просто в неполные. */
+  registerHelp(server);
 
   /* Ставится последним: обработчики tools/list и tools/call к этому моменту уже на месте,
      а патч забирает прежние себе и вызывает их сам. */

@@ -67,8 +67,8 @@ export function register(server) {
     {
       title: t({ ru: 'Какое правило победило', en: "Which rule won" }),
       description: t({
-        ru: 'Все CSS-правила, матчащие элемент: селектор, специфичность, файл и строка, объявления — и по каждому свойству кто победил, а кого перебили. Отвечает на вопрос «почему моя правка не применилась», на который getComputedStyle не отвечает. Понимает псевдоэлементы. Только chromium.',
-        en: "Every CSS rule matching an element: selector, specificity, file and line, declarations — and for each property, which declaration won and which were overridden. Answers \"why is my change not applied\", which getComputedStyle cannot answer. Understands pseudo-elements. Chromium only.",
+        ru: "Какое CSS-правило победило и где оно объявлено: селектор, специфичность, файл и строка, а по каждому свойству — кто перебил кого. Отвечает на вопрос «почему моя правка не применилась», на который getComputedStyle не отвечает.",
+        en: "Which CSS rule won and where it is declared: selector, specificity, file and line, and for each property who overrode whom. Answers the question \"why did my change not apply\", which getComputedStyle cannot answer.",
       }),
       inputSchema: {
         sessionId: z.string(),
@@ -92,8 +92,8 @@ export function register(server) {
     {
       title: t({ ru: 'Слои и перекрытия', en: "Layers and overlaps" }),
       description: t({
-        ru: 'Почему элемента не видно и кто лежит сверху: порядок отрисовки, цепочка стек-контекстов над элементом, перекрывающие соседи и что реально нарисовано в его точках. Отдельно предупреждает про z-index на position: static и про z-index, который считается внутри чужого стек-контекста.',
-        en: "Why an element is invisible and what lies on top of it: paint order, the chain of stacking contexts above it, overlapping neighbours and what is actually painted at its points. Separately warns about z-index on position: static and about z-index resolved inside someone else's stacking context.",
+        ru: "Почему элемента не видно и кто лежит сверху. Отдельно предупреждает про мёртвый z-index: заданный на position: static или посчитанный внутри чужого стек-контекста.",
+        en: "Why an element is invisible and who lies on top of it. Warns separately about a dead z-index: set on position: static, or resolved inside somebody else stacking context.",
       }),
       inputSchema: {
         sessionId: z.string(),
