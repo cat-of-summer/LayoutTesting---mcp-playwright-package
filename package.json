@@ -1,6 +1,6 @@
 {
   "name": "layout-testing-mcp",
-  "version": "0.3.0",
+  "version": "0.4.0",
   "private": true,
   "type": "module",
   "description": "MCP-сервер и CLI для тестирования вёрстки в браузере",
@@ -12,7 +12,8 @@
     "mcp:stdio": "node src/index.js --transport=stdio",
     "lt": "node bin/lt.mjs",
     "test": "node --test \"test/*.test.js\"",
-    "test:browser": "LT_BROWSER_TESTS=1 node --test \"test/*.test.js\""
+    "test:browser": "LT_BROWSER_TESTS=1 node --test \"test/*.test.js\"",
+    "docs": "node bin/gen-tools-doc.mjs && LT_LANG=en node bin/gen-tools-doc.mjs"
   },
   "engines": {
     "node": ">=22"

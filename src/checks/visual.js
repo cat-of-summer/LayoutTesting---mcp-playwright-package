@@ -334,3 +334,45 @@ export async function listBaselines(dirPath) {
     return [];
   }
 }
+
+/**
+ * Удаление эталонов.
+ *
+ * До сих пор их можно было только перечислять, и они копились без предела: profileKey входит в
+ * имя файла, поэтому широкая матрица заводит по эталону на каждое сочетание ширины, темы, zoom
+ * и RTL. Каталог рос молча — в отличие от artifacts/, у которого есть автоочистка.
+ *
+ * Автоочистки здесь нет и не будет: эталон это не побочный продукт прогона, а решение человека
+ * о том, как страница должна выглядеть. Удалять такое по расписанию нельзя.
+ */
+export async function removeBaseline(dirPath, name, { apply = false } = {}) {
+  const file = `${path.basename(String(name)).replace(/\.png$/i, '')}.png`;
+  const abs = path.join(dirPath, file);
+  const exists = await fs
+    .stat(abs)
+    .then(() => true)
+    .catch(() => false);
+  if (!exists) return { name: file, found: false, removed: false };
+  if (!apply) return { name: file, found: true, removed: false, wouldRemove: true };
+  await fs.rm(abs, { force: true });
+  return { name: file, found: true, removed: true };
+}
+
+export async function pruneBaselines(dirPath, { olderThanDays = 90, apply = false } = {}) {
+  const all = await listBaselines(dirPath);
+  const edge = Date.now() - olderThanDays * 24 * 60 * 60 * 1000;
+  const doomed = all.filter((item) => new Date(item.mtime).getTime() < edge);
+  /* По умолчанию вхолостую: удаление эталона делает следующее сравнение бессмысленным —
+     сравнивать станет не с чем, — и увидеть список до, а не после, здесь важнее обычного. */
+  if (!apply) {
+    return {
+      olderThanDays,
+      total: all.length,
+      wouldRemove: doomed.map((d) => d.name),
+      applied: false,
+      note: 'Ничего не удалено. Повторите с apply: true, если список верен.',
+    };
+  }
+  for (const item of doomed) await fs.rm(item.path, { force: true });
+  return { olderThanDays, total: all.length, removed: doomed.map((d) => d.name), applied: true };
+}

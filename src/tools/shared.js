@@ -29,7 +29,50 @@ export const IMAGE_MIME = {
  * результат человеку, форматирует его сам. Файлы, которые открывают глазами, — writeJson
  * в artifacts.js и кэш update.js — по-прежнему с отступами.
  */
-export const json = (data) => ({ content: [{ type: 'text', text: JSON.stringify(data) }] });
+/**
+ * Ссылки на артефакты, найденные в ответе.
+ *
+ * Каждый ref артефакта несёт uri вида lt://artifacts/… — протокол умеет показывать такие
+ * отдельным блоком resource_link, и клиент дальше сам решает, раскрывать содержимое или
+ * оставить ссылкой. Обходим ответ и вытаскиваем их, вместо того чтобы дописывать по блоку
+ * в каждый из восьми инструментов: место, где ref появляется, одно — artifactRef и siteRef, —
+ * и правило должно жить рядом с ним, а не размножаться по обработчикам.
+ *
+ * Потолок нужен: ответ вроде списка прогонов содержит их десятками, и полсотни ссылок
+ * вытеснили бы сам ответ.
+ */
+const MAX_LINKS = 5;
+
+function collectRefs(value, found, seen, depth = 0) {
+  if (!value || typeof value !== 'object' || depth > 6 || found.length >= MAX_LINKS) return found;
+  if (Array.isArray(value)) {
+    for (const item of value) collectRefs(item, found, seen, depth + 1);
+    return found;
+  }
+  const uri = value.uri;
+  if (typeof uri === 'string' && uri.startsWith('lt://') && !seen.has(uri)) {
+    seen.add(uri);
+    found.push({ uri, path: typeof value.path === 'string' ? value.path : null });
+  }
+  for (const item of Object.values(value)) collectRefs(item, found, seen, depth + 1);
+  return found;
+}
+
+export function linkBlocks(data) {
+  const refs = collectRefs(data, [], new Set());
+  return refs.slice(0, MAX_LINKS).map((ref) => ({
+    type: 'resource_link',
+    uri: ref.uri,
+    name: ref.path ? ref.path.split('/').pop() : ref.uri.split('/').pop(),
+    ...(ref.path && IMAGE_MIME[ref.path.slice(ref.path.lastIndexOf('.')).toLowerCase()]
+      ? { mimeType: IMAGE_MIME[ref.path.slice(ref.path.lastIndexOf('.')).toLowerCase()] }
+      : {}),
+  }));
+}
+
+export const json = (data) => ({
+  content: [{ type: 'text', text: JSON.stringify(data) }, ...linkBlocks(data)],
+});
 export const text = (value) => ({ content: [{ type: 'text', text: String(value) }] });
 
 /**

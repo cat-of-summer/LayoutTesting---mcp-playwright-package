@@ -171,6 +171,11 @@ const EN = {
   'Имя сохранённого профиля условий: остальные условия берутся из него. Список — в stand_info':
     'Name of a saved condition profile: the remaining conditions are taken from it. See stand_info for the list',
   'По умолчанию list': 'Default list',
+  'Какой эталон удалить — для delete': 'Which baseline to delete — for delete',
+  'Для prune: старше скольких дней удалять. По умолчанию 90':
+    'For prune: delete baselines older than this many days. Default 90',
+  'delete и prune по умолчанию только показывают, что будет удалено. apply: true выполняет':
+    'delete and prune only show what would be removed; apply: true actually removes it',
   'Тема. Без аргументов — список тем': 'Topic. With no arguments, lists the topics',
   'Имя инструмента: оговорки и нюансы именно его':
     'Tool name: the caveats and details specific to it',

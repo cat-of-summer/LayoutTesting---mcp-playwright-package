@@ -15,7 +15,7 @@ import { listSessions } from '../browser/pool.js';
 import { listProfiles } from '../browser/profiles.js';
 import { readLocalFile } from '../checks/static.js';
 import { ALL_CHECKS } from '../audit.js';
-import { IMAGE_MIME, capped, cappedText, json, pkg, text } from './shared.js';
+import { IMAGE_MIME, capped, cappedText, json, linkBlocks, pkg, text } from './shared.js';
 import { inlineImage } from '../checks/visual.js';
 import { resolveInArtifacts, resolveInRoot } from '../paths.js';
 import { upgradeSteps } from '../update.js';
@@ -121,7 +121,9 @@ export function register(server, ctx = {}) {
         };
       }
 
-      const content = [{ type: 'text', text: JSON.stringify(payload) }];
+      /* Ссылки собираем тем же правилом, что и json(): этот ответ строится вручную ради
+         image-блока, но адресуемость артефакта от этого не меняется. */
+      const content = [{ type: 'text', text: JSON.stringify(payload) }, ...linkBlocks(payload)];
       // Картинку кладём и как image-контент: агенту чаще нужно на неё посмотреть,
       // а не разбирать base64 руками.
       if (mime) content.push({ type: 'image', data: buf.toString('base64'), mimeType: mime });
@@ -181,43 +183,59 @@ export function register(server, ctx = {}) {
       }),
       inputSchema: {},
     },
-    async () => {
-      const vnu = await fetch(`${CONFIG.vnuUrl}/`, { method: 'HEAD' })
-        .then((r) => (r.ok ? 'доступен' : `ответил ${r.status}`))
-        .catch((e) => `недоступен: ${e.message}`);
-      return json({
-        version: pkg.version,
-        /* Порядок обновления кладём прямо сюда: уведомление без инструкции заставляет
-           агента гадать или искать документацию снаружи. */
-        update: update
-          ? { ...update, upgrade: update.upgrade || upgradeSteps(update.latest) }
-          : { updateAvailable: null, unavailable: 'проверка не выполнялась' },
-        language: langInfo(),
-        dirs: DIRS,
-        publicBaseUrl: CONFIG.publicBaseUrl,
-        internalBaseUrl: CONFIG.internalBaseUrl,
-        baseUrlNote:
-          'publicBaseUrl — для человека снаружи. Внутри стенда проброшенного порта нет: в browser_goto подставляйте internalBaseUrl.',
-        vnu: { url: CONFIG.vnuUrl, state: vnu },
-        chromePath: CONFIG.chromePath || '(не задан)',
-        browsers: BROWSERS,
-        viewports: VIEWPORTS,
-        checks: ALL_CHECKS,
-        /* Имена профилей живут здесь, а не в описаниях инструментов: список меняется, а
-           описания при каждом изменении пришлось бы править и переводить заново. */
-        profiles: listProfiles(),
-        /* Какой набор инструментов поднят. Модель, не нашедшая crawl или seo_page, должна
-           узнать причину здесь, а не решить, что стенд неисправен. */
-        tools: {
-          set: toolSet,
-          available: toolSets,
-          note:
-            toolSet === 'all'
-              ? 'Поднят полный набор инструментов.'
-              : `Поднят набор ${toolSet}: часть групп отключена переменной LT_TOOLS. Полный набор — LT_TOOLS=all и перезапуск стенда.`,
-        },
-        sessions: listSessions(),
-      });
-    },
+    async () => json(await buildStandInfo({ update, toolSet, toolSets })),
   );
 }
+
+/**
+ * Сводка о стенде одним куском.
+ *
+ * Вынесена из обработчика, потому что у неё теперь две двери: инструмент stand_info и ресурс
+ * lt://stand/info. Если бы каждая собирала payload сама, они разъехались бы на первой же
+ * правке, и агент получал бы разные ответы на один вопрос в зависимости от того, как спросил.
+ */
+export async function buildStandInfo({ update, toolSet = 'all', toolSets = [] } = {}) {
+  /*
+   * Таймаут обязателен. stand_info — то, куда идут, когда непонятно, что со стендом, и
+   * ожидание недоступного валидатора превращало этот вызов в десятисекундную паузу ровно
+   * тогда, когда что-то уже не работает. Две секунды хватает, чтобы отличить поднятый
+   * контейнер от погашенного.
+   */
+  const vnu = await fetch(`${CONFIG.vnuUrl}/`, { method: 'HEAD', signal: AbortSignal.timeout(2000) })
+    .then((r) => (r.ok ? 'доступен' : `ответил ${r.status}`))
+    .catch((e) => (e.name === 'TimeoutError' ? 'не ответил за 2 с' : `недоступен: ${e.message}`));
+  return {
+    version: pkg.version,
+    /* Порядок обновления кладём прямо сюда: уведомление без инструкции заставляет
+       агента гадать или искать документацию снаружи. */
+    update: update
+      ? { ...update, upgrade: update.upgrade || upgradeSteps(update.latest) }
+      : { updateAvailable: null, unavailable: 'проверка не выполнялась' },
+    language: langInfo(),
+    dirs: DIRS,
+    publicBaseUrl: CONFIG.publicBaseUrl,
+    internalBaseUrl: CONFIG.internalBaseUrl,
+    baseUrlNote:
+      'publicBaseUrl — для человека снаружи. Внутри стенда проброшенного порта нет: в browser_goto подставляйте internalBaseUrl.',
+    vnu: { url: CONFIG.vnuUrl, state: vnu },
+    chromePath: CONFIG.chromePath || '(не задан)',
+    browsers: BROWSERS,
+    viewports: VIEWPORTS,
+    checks: ALL_CHECKS,
+    /* Имена профилей живут здесь, а не в описаниях инструментов: список меняется, а
+       описания при каждом изменении пришлось бы править и переводить заново. */
+    profiles: listProfiles(),
+    /* Какой набор инструментов поднят. Модель, не нашедшая crawl или seo_page, должна
+       узнать причину здесь, а не решить, что стенд неисправен. */
+    tools: {
+      set: toolSet,
+      available: toolSets,
+      note:
+        toolSet === 'all'
+          ? 'Поднят полный набор инструментов.'
+          : `Поднят набор ${toolSet}: часть групп отключена переменной LT_TOOLS. Полный набор — LT_TOOLS=all и перезапуск стенда.`,
+    },
+    sessions: listSessions(),
+  };
+}
+

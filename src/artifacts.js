@@ -17,11 +17,36 @@ export function slug(value) {
     .slice(0, 80);
 }
 
+/**
+ * Кто хочет знать, что в каталоге артефактов появилось новое.
+ *
+ * Нужен ровно одному месту — списку ресурсов MCP, который иначе показывал бы клиенту состояние
+ * на момент подключения. Подписка, а не прямой вызов, потому что artifacts.js не должен знать
+ * про существование протокольного слоя: он про файлы.
+ */
+const changeListeners = new Set();
+
+export function onArtifactsChanged(fn) {
+  changeListeners.add(fn);
+  return () => changeListeners.delete(fn);
+}
+
+function notifyChanged() {
+  for (const fn of changeListeners) {
+    try {
+      fn();
+    } catch {
+      /* Слушатель не должен ронять прогон: он всего лишь хотел знать. */
+    }
+  }
+}
+
 /** Каталог прогона внутри artifacts/, создаётся при первом обращении. */
 export async function runDir(runId) {
   const dir = path.join(DIRS.artifacts, runId);
   await fs.mkdir(dir, { recursive: true });
   await autoPrune(runId);
+  notifyChanged();
   return dir;
 }
 
@@ -71,7 +96,19 @@ export function internalUrl(absPath) {
  * `internalUrl` — из browser_goto, потому что внутри контейнера проброшенного порта нет.
  */
 export function artifactRef(absPath) {
-  return { path: absPath, url: publicUrl(absPath), internalUrl: internalUrl(absPath) };
+  const rel = relToArtifacts(absPath);
+  return {
+    path: absPath,
+    /*
+     * Адрес ресурса MCP. Не file:// — он выдал бы наружу устройство контейнера и звал бы
+     * клиента лезть в чужую файловую систему. И не публичный http — тот зависит от
+     * PUBLIC_BASE_URL, то есть один и тот же артефакт получал бы разную личность на разных
+     * стендах, а адрес ресурса обязан быть его именем, а не маршрутом до него.
+     */
+    uri: rel === null ? null : `lt://artifacts/${rel}`,
+    url: publicUrl(absPath),
+    internalUrl: internalUrl(absPath),
+  };
 }
 
 /**
@@ -83,9 +120,10 @@ export function artifactRef(absPath) {
  */
 export function siteRef(absPath) {
   const rel = path.relative(DIRS.sites, absPath).split(path.sep).join('/');
-  if (rel.startsWith('..')) return { path: absPath, url: null, internalUrl: null };
+  if (rel.startsWith('..')) return { path: absPath, uri: null, url: null, internalUrl: null };
   return {
     path: absPath,
+    uri: `lt://sites/${rel}`,
     url: `${CONFIG.publicBaseUrl}/sites/${rel}`,
     internalUrl: `${CONFIG.internalBaseUrl}/sites/${rel}`,
   };

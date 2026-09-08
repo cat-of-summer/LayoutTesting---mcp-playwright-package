@@ -12,11 +12,18 @@ import { DIRS, BROWSERS } from '../config.js';
 import { newRunId, publicUrl, slug } from '../artifacts.js';
 import { createSession, closeSession, getSession, gotoAndSettle, summarizeFailures } from '../browser/pool.js';
 import { profileKey } from '../browser/profile.js';
-import { takeScreenshot, compareWithBaseline, inlineImage, listBaselines } from '../checks/visual.js';
+import {
+  takeScreenshot,
+  compareWithBaseline,
+  inlineImage,
+  listBaselines,
+  pruneBaselines,
+  removeBaseline,
+} from '../checks/visual.js';
 import { comparePages } from '../checks/compare.js';
 import { compareLayout } from '../checks/compare-dom.js';
 import { buildVisualGuide } from '../checks/guide.js';
-import { json, text } from './shared.js';
+import { json, linkBlocks, text } from './shared.js';
 import { t } from '../i18n.js';
 
 export function register(server) {
@@ -84,7 +91,9 @@ export function register(server) {
       const failures = summarizeFailures(session.logs.network);
       const payload = failures ? { ...shot, warnings: failures } : shot;
 
-      const content = [{ type: 'text', text: JSON.stringify(payload) }];
+      /* Ссылки собираем тем же правилом, что и json(): этот ответ строится вручную ради
+         image-блока, но адресуемость артефакта от этого не меняется. */
+      const content = [{ type: 'text', text: JSON.stringify(payload) }, ...linkBlocks(payload)];
       if (inline) {
         const img = await inlineImage(shot.path);
         content.push({ type: 'image', data: img.data, mimeType: img.mimeType });
@@ -309,11 +318,28 @@ export function register(server) {
     {
       title: t({ ru: 'Эталоны', en: "Baselines" }),
       description: t({
-        ru: 'Сохранённые эталоны визуальной регрессии: для каких страниц и условий просмотра эталон уже есть. То есть где visual_compare найдёт с чем сравнивать, а где первый снимок сам станет эталоном.',
-        en: "Stored visual regression baselines: which pages and viewing conditions already have one. That is, where visual_compare will have something to compare against, and where the first shot will itself become the baseline.",
+        ru: 'Сохранённые эталоны визуальной регрессии: для каких страниц и условий просмотра эталон уже есть, то есть где visual_compare найдёт с чем сравнивать, а где первый снимок сам станет эталоном. Здесь же их удаляют: автоочистки у эталонов нет, а имя включает профиль условий, поэтому широкая матрица заводит по эталону на каждое сочетание.',
+        en: "Stored visual regression baselines: which pages and viewing conditions already have one — that is, where visual_compare will have something to compare against, and where the first shot will itself become the baseline. This is also where they are deleted: baselines are never pruned automatically, and since the name includes the condition profile, a wide matrix creates one per combination.",
       }),
-      inputSchema: {},
+      inputSchema: {
+        action: z.enum(['list', 'delete', 'prune']).optional().describe(d('По умолчанию list')),
+        name: z.string().optional().describe(d('Какой эталон удалить — для delete')),
+        olderThanDays: z.number().optional().describe(d('Для prune: старше скольких дней удалять. По умолчанию 90')),
+        apply: z
+          .boolean()
+          .optional()
+          .describe(d('delete и prune по умолчанию только показывают, что будет удалено. apply: true выполняет')),
+      },
     },
-    async () => json({ dir: DIRS.baselines, baselines: await listBaselines(DIRS.baselines) }),
+    async ({ action = 'list', name, olderThanDays, apply = false }) => {
+      if (action === 'delete') {
+        if (!name) throw new Error('Для delete нужно name — какой эталон удалить.');
+        return json(await removeBaseline(DIRS.baselines, name, { apply }));
+      }
+      if (action === 'prune') {
+        return json(await pruneBaselines(DIRS.baselines, { olderThanDays, apply }));
+      }
+      return json({ dir: DIRS.baselines, baselines: await listBaselines(DIRS.baselines) });
+    },
   );
 }

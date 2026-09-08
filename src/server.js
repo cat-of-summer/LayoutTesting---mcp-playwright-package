@@ -29,6 +29,9 @@ import { register as registerComposite } from './tools/composite.js';
 import { register as registerCrawl } from './tools/crawl.js';
 import { register as registerArtifacts } from './tools/artifacts.js';
 import { register as registerHelp } from './tools/help.js';
+import { register as registerResources } from './tools/resources.js';
+import { register as registerPrompts } from './tools/prompts.js';
+import { buildStandInfo } from './tools/artifacts.js';
 
 /*
  * Проверка обновлений — один раз на процесс, а не на каждое подключение.
@@ -116,6 +119,15 @@ export async function createServer() {
   /* help не отключается по той же причине, что и stand_info: он объясняет то, что вынуто из
      описаний, и без него сокращённые описания превратились бы просто в неполные. */
   registerHelp(server);
+  /* Ресурсы — второй путь к тому же: инструмент возвращает ссылку, клиент решает, когда её
+     раскрыть. Сводку о стенде обе двери берут из одной функции, иначе они разъедутся. */
+  /* Промпты не занимают места в манифесте: клиент перечисляет их отдельно и подтягивает тело
+     только по выбору человека. Поэтому здесь лежит порядок шагов целиком — то, чему в
+     описаниях инструментов места нет. */
+  registerPrompts(server);
+  registerResources(server, {
+    standInfo: () => buildStandInfo({ update, toolSet: set.name, toolSets: Object.keys(TOOL_SETS) }),
+  });
 
   /* Ставится последним: обработчики tools/list и tools/call к этому моменту уже на месте,
      а патч забирает прежние себе и вызывает их сам. */
