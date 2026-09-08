@@ -59,4 +59,17 @@ export const CONFIG = {
   defaultTimeout: Number(process.env.DEFAULT_TIMEOUT || 30000),
   /** Порог расхождения визуальной регрессии в процентах пикселей. */
   visualThreshold: Number(process.env.VISUAL_THRESHOLD || 0.1),
+  /*
+   * Потолки на объём одного ответа.
+   *
+   * Их не было вовсе: read_artifact вклеивал в ответ base64 файла целиком, browser_eval —
+   * что угодно, что вернёт страница. Один такой вызов способен занять больше контекста, чем
+   * весь разговор до него, и заметить это можно только постфактум.
+   *
+   * Потолок не отменяет доступа к данным: у артефакта есть url, у списков — offset. Он лишь
+   * не даёт молча вывалить всё в переписку.
+   */
+  maxTextBytes: Number(process.env.LT_MAX_TEXT_BYTES || 128 * 1024),
+  maxInlineBytes: Number(process.env.LT_MAX_INLINE_BYTES || 1024 * 1024),
+  maxLogEntries: Number(process.env.LT_MAX_LOG_ENTRIES || 100),
 };

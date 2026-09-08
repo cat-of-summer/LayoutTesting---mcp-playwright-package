@@ -10,10 +10,27 @@ import { d } from '../i18n-params.js';
 import { siteRef } from '../artifacts.js';
 import { createSession, closeSession, getSession, gotoAndSettle } from '../browser/pool.js';
 import { pageSnapshot } from '../checks/snapshot.js';
-import { json, profileSchema, text } from './shared.js';
+import { CONFIG } from '../config.js';
+import { cappedTail, json, profileSchema, text } from './shared.js';
 import { savePage } from '../mirror/save.js';
 import { t } from '../i18n.js';
 
+
+/*
+ * Одна console.log сериализованного стора весит мегабайты, и такая запись в ответе вытесняет
+ * все остальные. Значение обрезаем, а не выбрасываем: по началу строки обычно и понятно,
+ * что случилось.
+ */
+const clip = (value, max) =>
+  typeof value === 'string' && value.length > max ? `${value.slice(0, max)}…` : value;
+
+const clipEntry = (entry) => ({
+  ...entry,
+  ...(entry.text !== undefined ? { text: clip(entry.text, 500) } : {}),
+  ...(entry.message !== undefined ? { message: clip(entry.message, 500) } : {}),
+  ...(entry.url !== undefined ? { url: clip(entry.url, 200) } : {}),
+  ...(entry.stack !== undefined ? { stack: clip(entry.stack, 1000) } : {}),
+});
 export function register(server) {
   server.registerTool(
     'page_snapshot',
@@ -53,9 +70,13 @@ export function register(server) {
           .boolean()
           .optional()
           .describe(d('Только записи после последнего перехода. По умолчанию true')),
+        limit: z
+          .number()
+          .optional()
+          .describe(d('Сколько записей каждого вида показать; берутся последние. По умолчанию 100')),
       },
     },
-    async ({ sessionId, kind = 'all', onlyProblems = true, sinceNavigation = true }) => {
+    async ({ sessionId, kind = 'all', onlyProblems = true, sinceNavigation = true, limit }) => {
       const session = getSession(sessionId);
       const { logs } = session;
       /*
@@ -74,8 +95,20 @@ export function register(server) {
         : rawConsole;
       const all = { console: console_, errors: logs.errors.slice(marks.errors), network };
       const scope = sinceNavigation && session.logMarks ? 'с последнего перехода' : 'с открытия сессии';
-      return json({ scope, ...(kind === 'all' ? all : { [kind]: all[kind === 'errors' ? 'errors' : kind] }) });
+
+      /*
+       * Буфер сессии держит до logBufferSize записей на каждый из трёх видов — три тысячи
+       * объектов в одном ответе. Берём хвост по той же причине, по какой буфер и обрезается
+       * с головы: свежая ошибка объясняет происходящее, первая из позапрошлой страницы — нет.
+       */
+      const cap = limit || CONFIG.maxLogEntries;
+      const picked = kind === 'all' ? all : { [kind]: all[kind] };
+      const shown = Object.fromEntries(
+        Object.entries(picked).map(([name, list]) => [name, cappedTail(list.map(clipEntry), cap)]),
+      );
+      return json({ scope, ...shown });
     },
+
   );
 
   server.registerTool(

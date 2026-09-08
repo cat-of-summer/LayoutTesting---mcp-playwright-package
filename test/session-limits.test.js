@@ -33,6 +33,9 @@ test('на потолке вытесняется та, к которой дол�
   const first = await pool.createSession({ viewport: 'mobile' });
   const second = await pool.createSession({ viewport: 'tablet' });
 
+  // Обе созданы вплотную и могут попасть в одну миллисекунду; ждём, чтобы отметка обращения
+  // заведомо оказалась позже, иначе порядок вытеснения определяется не тем, чем проверяем.
+  await new Promise((r) => setTimeout(r, 5));
   // Трогаем первую: теперь дольше всех простаивает вторая, её и должно вытеснить.
   pool.getSession(first.id);
 

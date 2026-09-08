@@ -131,6 +131,7 @@ export function register(server) {
         attr: z.string().optional().describe(d('Какой атрибут снять с найденных узлов')),
         filter: filterSchema,
         limit: z.number().optional().describe(d('Сколько страниц показать подробно. По умолчанию 50')),
+        offset: z.number().optional().describe(d('Пропустить столько страниц с попаданиями — чтобы дойти до тех, что дальше первой выдачи')),
       },
     },
     async ({ siteId, ...opts }) => json(await querySelector(siteId, opts)),

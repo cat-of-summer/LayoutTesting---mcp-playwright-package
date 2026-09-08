@@ -168,6 +168,14 @@ const EN = {
     'Text for fill, key for press, option value for select',
   'Только записи после последнего перехода. По умолчанию true':
     'Only entries after the last navigation. Default true',
+  'Сколько записей каждого вида показать; берутся последние. По умолчанию 100':
+    'How many entries of each kind to return; the most recent ones. Default 100',
+  'С какого символа читать текст, если файл не поместился целиком':
+    'Character offset to read the text from, when the file did not fit in one response',
+  'С какого символа читать, если файл не поместился целиком':
+    'Character offset to read from, when the file did not fit in one response',
+  'Пропустить столько страниц с попаданиями — чтобы дойти до тех, что дальше первой выдачи':
+    'Skip this many matching pages, to reach the ones beyond the first batch',
   'Только ссылки, кнопки и поля': 'Links, buttons and form fields only',
   'Требуемый контраст обычного текста (по умолчанию 4.5)': 'Required contrast for normal text (default 4.5)',
   'Троттлинг (только chromium): network 3g|slow-3g|4g, cpu — множитель замедления':

@@ -14,7 +14,8 @@ import { listRuns, pruneRuns } from '../artifacts.js';
 import { listSessions } from '../browser/pool.js';
 import { readLocalFile } from '../checks/static.js';
 import { ALL_CHECKS } from '../audit.js';
-import { IMAGE_MIME, json, pkg, text } from './shared.js';
+import { IMAGE_MIME, capped, cappedText, json, pkg, text } from './shared.js';
+import { inlineImage } from '../checks/visual.js';
 import { resolveInArtifacts, resolveInRoot } from '../paths.js';
 import { upgradeSteps } from '../update.js';
 import { langInfo, t } from '../i18n.js';
@@ -70,22 +71,68 @@ export function register(server, ctx = {}) {
           .enum(['auto', 'utf8', 'base64'])
           .optional()
           .describe(d('auto (по умолчанию) определяет по расширению')),
+        offset: z.number().optional().describe(d('С какого символа читать текст, если файл не поместился целиком')),
       },
     },
-    async ({ file, encoding = 'auto' }) => {
+    async ({ file, encoding = 'auto', offset = 0 }) => {
       const abs = resolveInArtifacts(file);
 
       const mime = IMAGE_MIME[path.extname(abs).toLowerCase()];
       const binary = encoding === 'base64' || (encoding === 'auto' && Boolean(mime));
-      if (!binary) return text(await readFile(abs, 'utf8'));
+      if (!binary) {
+        const part = cappedText(await readFile(abs, 'utf8'), { max: CONFIG.maxTextBytes, offset });
+        return part.truncated || offset ? json({ file, ...part }) : text(part.text);
+      }
 
       const buf = await readFile(abs);
       const payload = { file, bytes: buf.length, mimeType: mime || 'application/octet-stream', encoding: 'base64' };
+
+      /*
+       * Полностраничный снимок на 10 МБ превращается в 13 МБ base64 — один такой ответ стоит
+       * дороже всего разговора до него. Уменьшенная копия отвечает на тот самый вопрос, ради
+       * которого картинку и запрашивают, а оригинал никуда не делся: он лежит по url артефакта.
+       */
+      if (mime && buf.length > CONFIG.maxInlineBytes) {
+        const small = await inlineImage(abs, 900);
+        /* Уменьшенная копия — не гарантия: у плотного кадра она может остаться выше потолка.
+           Тогда честнее не вклеивать ничего и отправить за оригиналом, чем «соблюсти» потолок
+           на словах. */
+        if (small.bytes > CONFIG.maxInlineBytes) {
+          return json({
+            ...payload,
+            inlined: false,
+            note: `Оригинал ${buf.length} байт, уменьшенная копия ${small.bytes} — обе выше потолка ${CONFIG.maxInlineBytes}. Откройте файл по url артефакта.`,
+          });
+        }
+        return {
+          content: [
+            {
+              type: 'text',
+              text: JSON.stringify({
+                ...payload,
+                downscaled: true,
+                inlineBytes: small.bytes,
+                note: `Оригинал ${buf.length} байт, потолок ${CONFIG.maxInlineBytes}. Показана копия шириной 900px; оригинал целиком — по url артефакта.`,
+              }),
+            },
+            { type: 'image', data: small.data, mimeType: small.mimeType },
+          ],
+        };
+      }
+
       const content = [{ type: 'text', text: JSON.stringify(payload) }];
       // Картинку кладём и как image-контент: агенту чаще нужно на неё посмотреть,
       // а не разбирать base64 руками.
       if (mime) content.push({ type: 'image', data: buf.toString('base64'), mimeType: mime });
-      else content.push({ type: 'text', text: buf.toString('base64') });
+      else if (buf.length > CONFIG.maxInlineBytes) {
+        content.push({
+          type: 'text',
+          text: JSON.stringify({
+            truncated: true,
+            note: `Файл ${buf.length} байт, потолок ${CONFIG.maxInlineBytes} — base64 не вклеивается. Заберите его по url артефакта.`,
+          }),
+        });
+      } else content.push({ type: 'text', text: buf.toString('base64') });
       return { content };
     },
   );
@@ -98,9 +145,12 @@ export function register(server, ctx = {}) {
         ru: 'Читает файл из рабочего каталога стенда — фикстуру, конфиг матрицы, CSS. Если указан каталог, возвращает его содержимое.',
         en: "Reads a file from the stand working directory — a fixture, a matrix config, a CSS file. If a directory is given, returns its listing.",
       }),
-      inputSchema: { file: z.string() },
+      inputSchema: {
+        file: z.string(),
+        offset: z.number().optional().describe(d('С какого символа читать, если файл не поместился целиком')),
+      },
     },
-    async ({ file }) => {
+    async ({ file, offset = 0 }) => {
       const abs = resolveInRoot(file);
 
       // Каталог вместо файла — обычная опечатка в пути. Сырой EISDIR ничего
@@ -111,12 +161,12 @@ export function register(server, ctx = {}) {
       }
       if (info.isDirectory()) {
         const entries = await readdir(abs, { withFileTypes: true });
-        return json({
-          directory: file || '.',
-          entries: entries.map((e) => (e.isDirectory() ? `${e.name}/` : e.name)).sort(),
-        });
+        const names = entries.map((e) => (e.isDirectory() ? `${e.name}/` : e.name)).sort();
+        const page = capped(names, { limit: 500 });
+        return json({ directory: file || '.', entries: page.items, ...(page.truncated ? page : {}) });
       }
-      return text(await readLocalFile(file));
+      const part = cappedText(await readLocalFile(file), { max: CONFIG.maxTextBytes, offset });
+      return part.truncated || offset ? json({ file, ...part }) : text(part.text);
     },
   );
 

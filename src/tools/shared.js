@@ -32,6 +32,56 @@ export const IMAGE_MIME = {
 export const json = (data) => ({ content: [{ type: 'text', text: JSON.stringify(data) }] });
 export const text = (value) => ({ content: [{ type: 'text', text: String(value) }] });
 
+/**
+ * Усечение списка с честным признаком.
+ *
+ * Молчаливый .slice() — худший вариант из возможных: модель видит пятьдесят строк и считает,
+ * что это всё. Вместе с флагом возвращается фраза со следующим offset — голый truncated: true
+ * модель может не отработать, прямое указание, что делать дальше, отрабатывает.
+ */
+export function capped(items, { limit = 50, offset = 0 } = {}) {
+  const total = items.length;
+  const page = items.slice(offset, offset + limit);
+  const shown = offset + page.length;
+  if (offset === 0 && shown === total) return { items: page, total };
+  return {
+    items: page,
+    total,
+    offset,
+    limit,
+    truncated: shown < total,
+    ...(shown < total
+      ? { note: `Показано ${page.length} из ${total}, начиная с ${offset}. Дальше — offset: ${shown}.` }
+      : {}),
+  };
+}
+
+/** То же, но берутся последние записи: для логов важен хвост, а не начало. */
+export function cappedTail(items, limit) {
+  const total = items.length;
+  if (total <= limit) return { items, total };
+  return {
+    items: items.slice(-limit),
+    total,
+    truncated: true,
+    note: `Показаны последние ${limit} записей из ${total}. Раньше — увеличьте limit.`,
+  };
+}
+
+export function cappedText(value, { max, offset = 0 } = {}) {
+  const str = String(value ?? '');
+  const part = str.slice(offset, offset + max);
+  const end = offset + part.length;
+  const out = { text: part, chars: str.length };
+  if (offset) out.offset = offset;
+  if (end < str.length) {
+    out.truncated = true;
+    out.note = `Показано ${part.length} символов из ${str.length}, начиная с ${offset}. Дальше — offset: ${end}.`;
+  }
+  return out;
+}
+
+
 /** Условия просмотра. Подмешивается в каждый инструмент, который открывает свою сессию. */
 export const profileSchema = {
   browser: z.enum(['chromium', 'firefox', 'webkit']).optional().describe(d('Движок браузера')),

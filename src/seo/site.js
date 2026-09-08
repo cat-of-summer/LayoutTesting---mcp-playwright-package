@@ -84,6 +84,19 @@ export async function auditSite(siteId, { verify = true, thinWords = 200, userAg
   const pages = Object.entries(index.pages).map(([url, entry]) => ({ url, ...entry }));
   if (!pages.length) throw new Error(`В архиве ${siteId} нет страниц. Обход не отработал?`);
 
+  /*
+   * Списки в отчёте ограничены: сайт на десять тысяч страниц дал бы отчёт, который нельзя
+   * ни прочитать, ни переслать. Но обрезать молча нельзя — пятьдесят битых ссылок и пять
+   * тысяч требуют разных решений, а по обрезанному списку они неразличимы. Поэтому рядом с
+   * примерами всегда лежит полное число: findings показывает, что именно сломано, counts —
+   * сколько этого на самом деле.
+   */
+  const LIST_LIMIT = 50;
+  const counts = {};
+  const cap = (name, list, limit = LIST_LIMIT) => {
+    counts[name] = list.length;
+    return list.slice(0, limit);
+  };
   const byUrl = new Map(pages.map((p) => [p.url, p]));
   const ok = pages.filter((p) => p.status === 200);
   const inbound = buildGraph(pages);
@@ -97,49 +110,64 @@ export async function auditSite(siteId, { verify = true, thinWords = 200, userAg
   findings.duplicateContent = duplicates(ok, (p) => p.contentHash);
 
   // ---------- ссылки ----------
-  findings.brokenLinks = pages
-    .filter((p) => p.status !== null && p.status >= 400)
-    .map((p) => ({ url: p.url, status: p.status, linkedFrom: (inbound.get(p.url) || []).slice(0, 10) }));
+  findings.brokenLinks = cap(
+    'brokenLinks',
+    pages
+      .filter((p) => p.status !== null && p.status >= 400)
+      .map((p) => ({ url: p.url, status: p.status, linkedFrom: (inbound.get(p.url) || []).slice(0, 10) })),
+  );
 
-  findings.redirected = pages
-    .filter((p) => p.redirected)
-    .map((p) => ({ url: p.url, finalUrl: p.finalUrl }))
-    .slice(0, 50);
+  findings.redirected = cap(
+    'redirected',
+    pages.filter((p) => p.redirected).map((p) => ({ url: p.url, finalUrl: p.finalUrl })),
+  );
 
   /* Сирота — страница, на которую нет ни одной внутренней ссылки. Стартовая не в счёт: на неё
      ссылок изнутри и не должно быть. */
-  findings.orphans = ok
-    .filter((p) => p.url !== normalizeUrl(site.url) && (inbound.get(p.url) || []).length === 0)
-    .map((p) => p.url);
+  findings.orphans = cap(
+    'orphans',
+    ok
+      .filter((p) => p.url !== normalizeUrl(site.url) && (inbound.get(p.url) || []).length === 0)
+      .map((p) => p.url),
+  );
 
-  findings.poorlyLinked = ok
-    .map((p) => ({ url: p.url, inbound: (inbound.get(p.url) || []).length }))
-    .filter((p) => p.inbound === 1)
-    .slice(0, 50);
+  findings.poorlyLinked = cap(
+    'poorlyLinked',
+    ok
+      .map((p) => ({ url: p.url, inbound: (inbound.get(p.url) || []).length }))
+      .filter((p) => p.inbound === 1),
+  );
 
   /* Ссылки на страницы, которые сами закрыты от индексации: вес уходит в никуда. */
-  findings.linksToNoindex = ok
-    .filter((p) => !p.indexable && (inbound.get(p.url) || []).length > 0)
-    .map((p) => ({ url: p.url, reasons: p.reasons, linkedFrom: (inbound.get(p.url) || []).slice(0, 5) }));
+  findings.linksToNoindex = cap(
+    'linksToNoindex',
+    ok
+      .filter((p) => !p.indexable && (inbound.get(p.url) || []).length > 0)
+      .map((p) => ({ url: p.url, reasons: p.reasons, linkedFrom: (inbound.get(p.url) || []).slice(0, 5) })),
+  );
 
   // ---------- содержимое ----------
-  findings.thinContent = ok
-    .filter((p) => (p.words ?? 0) < thinWords)
-    .map((p) => ({ url: p.url, words: p.words ?? 0 }))
-    .sort((a, b) => a.words - b.words)
-    .slice(0, 50);
+  findings.thinContent = cap(
+    'thinContent',
+    ok
+      .filter((p) => (p.words ?? 0) < thinWords)
+      .map((p) => ({ url: p.url, words: p.words ?? 0 }))
+      .sort((a, b) => a.words - b.words),
+  );
 
   findings.missing = {
-    title: ok.filter((p) => !p.title).map((p) => p.url).slice(0, 50),
-    description: ok.filter((p) => !p.description).map((p) => p.url).slice(0, 50),
-    h1: ok.filter((p) => !p.h1).map((p) => p.url).slice(0, 50),
+    title: cap('missing.title', ok.filter((p) => !p.title).map((p) => p.url)),
+    description: cap('missing.description', ok.filter((p) => !p.description).map((p) => p.url)),
+    h1: cap('missing.h1', ok.filter((p) => !p.h1).map((p) => p.url)),
   };
 
-  findings.imagesWithoutAlt = ok
-    .filter((p) => (p.images?.noAlt ?? 0) > 0)
-    .map((p) => ({ url: p.url, noAlt: p.images.noAlt, total: p.images.total }))
-    .sort((a, b) => b.noAlt - a.noAlt)
-    .slice(0, 50);
+  findings.imagesWithoutAlt = cap(
+    'imagesWithoutAlt',
+    ok
+      .filter((p) => (p.images?.noAlt ?? 0) > 0)
+      .map((p) => ({ url: p.url, noAlt: p.images.noAlt, total: p.images.total }))
+      .sort((a, b) => b.noAlt - a.noAlt),
+  );
 
   // ---------- canonical и hreflang ----------
   const outside = new Set();
@@ -194,10 +222,12 @@ export async function auditSite(siteId, { verify = true, thinWords = 200, userAg
   findings.hreflang = hreflangIssues;
 
   // ---------- смешанное содержимое ----------
-  findings.mixedContent = ok
-    .filter((p) => p.url.startsWith('https://') && (p.links || []).some((l) => l.startsWith('http://')))
-    .map((p) => p.url)
-    .slice(0, 50);
+  findings.mixedContent = cap(
+    'mixedContent',
+    ok
+      .filter((p) => p.url.startsWith('https://') && (p.links || []).some((l) => l.startsWith('http://')))
+      .map((p) => p.url),
+  );
 
   // ---------- чего мы не знаем ----------
   const skipped = Object.entries(frontier.skipped || {});
@@ -208,7 +238,7 @@ export async function auditSite(siteId, { verify = true, thinWords = 200, userAg
       .filter(([, info]) => /robots/.test(info.reason))
       .map(([url, info]) => ({ url, linkedFrom: info.from })),
     beyondLimits: (frontier.pending || []).length,
-    failed: (frontier.failed || []).slice(0, 20),
+    failed: cap('notChecked.failed', frontier.failed || [], 20),
   };
 
   // ---------- проверка адресов вне периметра ----------
@@ -223,7 +253,15 @@ export async function auditSite(siteId, { verify = true, thinWords = 200, userAg
     }
   }
 
-  return { siteId, url: site.url, at: new Date().toISOString(), totals: totalsOf(pages, findings), findings };
+  return {
+    siteId,
+    url: site.url,
+    at: new Date().toISOString(),
+    totals: totalsOf(pages, findings),
+    findings,
+    /* Полные размеры списков из findings: примеры обрезаны, счётчики — нет. */
+    counts,
+  };
 }
 
 function totalsOf(pages, findings) {

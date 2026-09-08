@@ -107,7 +107,7 @@ export async function queryPages(siteId, { filter, text, groupBy, fields, limit 
   };
 }
 
-export async function querySelector(siteId, { select, attr, filter, limit = DEFAULT_LIMIT } = {}) {
+export async function querySelector(siteId, { select, attr, filter, limit = DEFAULT_LIMIT, offset = 0 } = {}) {
   if (!select) throw new Error('Нужен select — CSS-селектор.');
   const { parseHTML } = await import('linkedom');
 
@@ -136,7 +136,9 @@ export async function querySelector(siteId, { select, attr, filter, limit = DEFA
 
     pagesWithHits += 1;
     totalMatches += found.length;
-    if (hits.length >= limit) continue;
+    /* Страницы с попаданиями считаются все, а показываются начиная с offset: без него до
+       результатов дальше первой полусотни было не добраться никаким запросом. */
+    if (pagesWithHits <= offset || hits.length >= limit) continue;
 
     hits.push({
       url: row.url,
@@ -155,7 +157,14 @@ export async function querySelector(siteId, { select, attr, filter, limit = DEFA
     scanned,
     pagesWithHits,
     totalMatches,
-    truncated: pagesWithHits > hits.length,
+    offset,
+    limit,
+    truncated: pagesWithHits > offset + hits.length,
+    ...(pagesWithHits > offset + hits.length
+      ? {
+          note: `Показано ${hits.length} страниц с попаданиями из ${pagesWithHits}. Дальше — offset: ${offset + hits.length}.`,
+        }
+      : {}),
     hits,
   };
 }

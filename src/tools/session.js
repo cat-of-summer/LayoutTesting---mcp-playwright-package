@@ -7,7 +7,7 @@
  */
 import { z } from 'zod';
 import { d } from '../i18n-params.js';
-import { DIRS } from '../config.js';
+import { CONFIG, DIRS } from '../config.js';
 import { siteRef } from '../artifacts.js';
 import {
   createSession,
@@ -21,7 +21,7 @@ import { profileKey } from '../browser/profile.js';
 import { evaluateOnPage } from '../browser/evaluate.js';
 import { addInjection, clearInjections, listInjections, removeInjection } from '../browser/inject.js';
 import { addRoute, clearRoutes, listRoutes } from '../browser/routes.js';
-import { json, profileSchema } from './shared.js';
+import { cappedText, json, profileSchema } from './shared.js';
 import { savePage } from '../mirror/save.js';
 import { t } from '../i18n.js';
 import { clearStorage, exportState, getStorage, importState, listStates, setStorage } from '../browser/storage.js';
@@ -121,7 +121,25 @@ export function register(server) {
       }),
       inputSchema: { sessionId: z.string(), expression: z.string() },
     },
-    async ({ sessionId, expression }) => json(await evaluateOnPage(getSession(sessionId).page, expression)),
+    async ({ sessionId, expression }) => {
+      const result = await evaluateOnPage(getSession(sessionId).page, expression);
+      /*
+       * Страница возвращает что угодно: document.body.innerHTML боевого сайта — это мегабайты
+       * в одном ответе. Режем по сериализации, а не по самому значению: длина строки —
+       * единственная мера, общая для массива, объекта и текста.
+       */
+      const serialized = JSON.stringify(result.value ?? null) ?? 'null';
+      if (serialized.length <= CONFIG.maxTextBytes) return json(result);
+      const part = cappedText(serialized, { max: CONFIG.maxTextBytes });
+      return json({
+        ...result,
+        value: part.text,
+        valueSerialized: true,
+        chars: part.chars,
+        truncated: true,
+        note: 'Значение не поместилось и сериализовано с обрезкой. Сузьте выражение: верните нужные поля, а не узел целиком.',
+      });
+    },
   );
 
   server.registerTool(
