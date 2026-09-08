@@ -7,6 +7,7 @@
  */
 import { z } from 'zod';
 import { d } from '../i18n-params.js';
+import { t } from '../i18n.js';
 import { readFile } from 'node:fs/promises';
 import { VIEWPORTS } from '../config.js';
 
@@ -28,7 +29,15 @@ export const text = (value) => ({ content: [{ type: 'text', text: String(value) 
 /** Условия просмотра. Подмешивается в каждый инструмент, который открывает свою сессию. */
 export const profileSchema = {
   browser: z.enum(['chromium', 'firefox', 'webkit']).optional().describe(d('Движок браузера')),
-  viewport: z.string().optional().describe(`Размер: WxH или имя (${Object.keys(VIEWPORTS).join(', ')})`),
+  viewport: z
+    .string()
+    .optional()
+    .describe(
+      t({
+        ru: `Размер: WxH или имя (${Object.keys(VIEWPORTS).join(', ')})`,
+        en: `Size: WxH or a preset name (${Object.keys(VIEWPORTS).join(', ')})`,
+      }),
+    ),
   colorScheme: z.enum(['light', 'dark', 'no-preference']).optional(),
   forcedColors: z.enum(['none', 'active']).optional().describe(d('Режим высокой контрастности Windows')),
   reducedMotion: z.enum(['reduce', 'no-preference']).optional(),

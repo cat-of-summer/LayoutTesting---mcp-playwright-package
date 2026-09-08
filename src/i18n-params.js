@@ -33,6 +33,12 @@ const EN = {
   'true — только те, что пришлось открывать в браузере': 'true — only pages that had to be opened in a browser',
   'true (по умолчанию) — только тот же хост; false пускает на поддомены':
     'true (default) — same host only; false also allows subdomains',
+  'block — оборвать, fulfill — отдать body, file — отдать файл стенда, redirect — увести все совпадения на один url, rewrite — заменить кусок адреса, сохранив путь':
+    'block — abort, fulfill — return a body, file — serve a file from the stand, redirect — send every match to one url, rewrite — replace part of the address while keeping the path',
+  'Для rewrite: что заменить в адресе. Подстрока или регулярное выражение в виде /…/flags. Например /^https?:\\/\\/site\\.ru/':
+    'For rewrite: what to replace in the address. A substring or a regular expression written as /…/flags, e.g. /^https?:\\/\\/site\\.ru/',
+  'Оставить в кадре только эти элементы, остальных соседей убрать из потока (display: none). Так снимают пару соседних блоков без остальных — например, чтобы показать наложение':
+    'Keep only these elements in frame and take the remaining siblings out of flow (display: none). This is how a pair of adjacent blocks is captured without the rest — to show an overlap, for instance',
   'Абзац-введение под заголовком': 'An intro paragraph under the title',
   'Адрес, относительно которого разрешать ссылки в html или file. Без него относительные адреса и саморефренс canonical не посчитать':
     'The address to resolve links against for html or file input. Without it relative URLs and canonical self-reference cannot be computed',

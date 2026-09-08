@@ -166,7 +166,7 @@ export function register(server) {
           .enum(['block', 'fulfill', 'file', 'redirect', 'rewrite', 'passthrough'])
           .optional()
           .describe(
-            'block — оборвать, fulfill — отдать body, file — отдать файл стенда, redirect — увести все совпадения на один url, rewrite — заменить кусок адреса, сохранив путь',
+            d('block — оборвать, fulfill — отдать body, file — отдать файл стенда, redirect — увести все совпадения на один url, rewrite — заменить кусок адреса, сохранив путь'),
           ),
         body: z.string().optional(),
         contentType: z.string().optional(),
@@ -177,7 +177,7 @@ export function register(server) {
           .string()
           .optional()
           .describe(
-            'Для rewrite: что заменить в адресе. Подстрока или регулярное выражение в виде /…/flags. Например /^https?:\\/\\/site\\.ru/',
+            d('Для rewrite: что заменить в адресе. Подстрока или регулярное выражение в виде /…/flags. Например /^https?:\\/\\/site\\.ru/'),
           ),
         to: z.string().optional().describe(d('Для rewrite: чем заменить. В регулярном выражении работают $1, $2')),
       },

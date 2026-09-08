@@ -27,6 +27,16 @@ const SRC = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../src')
 const GROUPS = ['session', 'observe', 'layout', 'visual', 'a11y', 'perf', 'seo', 'static', 'composite', 'artifacts', 'crawl'];
 const FILES = GROUPS.map((g) => `tools/${g}.js`);
 
+/**
+ * Из текста исходника — в строку, какой она будет в рантайме.
+ *
+ * Ключ словаря — это значение строки, а не то, как она записана: в коде стоит '\\/' , а в
+ * памяти живёт '\/'. Сравнивать исходный текст с ключом значит не найти совпадения там, где
+ * оно есть, и объявить перевод пропущенным, а сам перевод — мёртвым. Ровно так этот тест
+ * один раз и соврал.
+ */
+const unescape = (raw) => raw.replace(/\\(.)/g, '$1');
+
 async function toolBlocks(file) {
   const src = await readFile(path.join(SRC, file), 'utf8');
   const names = [...src.matchAll(/registerTool\(\s*'([a-z0-9_]+)'/g)].map((m) => m[1]);
@@ -100,11 +110,9 @@ test('каждая строка d() есть в словаре переводо�
     } catch {
       continue;
     }
-    /* Экранированных кавычек в этих строках нет — внутри используются « » и двойные кавычки,
-       поэтому простого [^'] достаточно и незачем городить разбор экранирования. */
     for (const m of src.matchAll(/\bd\('([^']*)'\)/g)) {
       seen += 1;
-      if (!(m[1] in KNOWN)) missing.add(m[1]);
+      if (!(unescape(m[1]) in KNOWN)) missing.add(unescape(m[1]));
     }
   }
 
@@ -124,7 +132,7 @@ test('в словаре нет записей, которых больше не�
     } catch {
       continue;
     }
-    for (const m of src.matchAll(/\bd\('([^']*)'\)/g)) used.add(m[1]);
+    for (const m of src.matchAll(/\bd\('([^']*)'\)/g)) used.add(unescape(m[1]));
   }
   const dead = Object.keys(KNOWN).filter((k) => !used.has(k));
   assert.deepEqual(dead, [], `мёртвые записи словаря:\n${dead.join('\n')}`);
