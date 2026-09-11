@@ -113,7 +113,10 @@ export function register(server, ctx = {}) {
                 ...payload,
                 downscaled: true,
                 inlineBytes: small.bytes,
-                note: `Оригинал ${buf.length} байт, потолок ${CONFIG.maxInlineBytes}. Показана копия шириной 900px; оригинал целиком — по url артефакта.`,
+                note:
+                  `Оригинал ${buf.length} байт, потолок ${CONFIG.maxInlineBytes}. Показана копия шириной 900px` +
+                  (small.cropped ? `, обрезанная по высоте до ${small.cropped.shownHeight} из ${small.cropped.fullHeight} точек` : '') +
+                  '; оригинал целиком — по url артефакта.',
               }),
             },
             { type: 'image', data: small.data, mimeType: small.mimeType },
@@ -217,7 +220,22 @@ export async function buildStandInfo({ update, toolSet = 'all', toolSets = [] } 
     internalBaseUrl: CONFIG.internalBaseUrl,
     baseUrlNote:
       'publicBaseUrl — для человека снаружи. Внутри стенда проброшенного порта нет: в browser_goto подставляйте internalBaseUrl.',
-    vnu: { url: CONFIG.vnuUrl, state: vnu },
+    vnu: {
+      url: CONFIG.vnuUrl,
+      state: vnu,
+      /* Недоступный валидатор — не тупик: validate_html сам переходит на локальную проверку
+         и пишет об этом в ответе. Без этой фразы «не ответил за 2 с» читается как «проверять
+         разметку нечем», и инструмент не вызывают вовсе. */
+      ...(vnu === 'доступен'
+        ? {}
+        : {
+            hint:
+              'Валидатор — отдельный сервис (адрес в VNU_URL), он стартует дольше остального стенда, ' +
+              'и две секунды здесь проверяют живость, а не выносят приговор. validate_html при ' +
+              'недоступном vnu не падает: он переключается на локальную проверку html-validate и ' +
+              'сообщает об этом полями source и fallbackReason.',
+          }),
+    },
     chromePath: CONFIG.chromePath || '(не задан)',
     browsers: BROWSERS,
     viewports: VIEWPORTS,

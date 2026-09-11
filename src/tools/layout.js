@@ -32,10 +32,24 @@ export function register(server) {
           .array(z.enum(AUDIT_CATEGORIES))
           .optional()
           .describe(d('Подробности только по этим категориям. Счётчики по всем возвращаются всегда')),
+        include: z
+          .array(z.string())
+          .optional()
+          .describe(d('Разбирать только эти блоки — шапка и подвал иначе набивают счётчики своими находками')),
+        exclude: z.array(z.string()).optional().describe(d('Не разбирать эти блоки')),
       },
     },
-    async ({ sessionId, minTarget, contrastRatio, maxItems, categories }) =>
-      json(await layoutAudit(getSession(sessionId).page, { minTarget, contrastRatio, maxItems, categories })),
+    async ({ sessionId, minTarget, contrastRatio, maxItems, categories, include, exclude }) =>
+      json(
+        await layoutAudit(getSession(sessionId).page, {
+          minTarget,
+          contrastRatio,
+          maxItems,
+          categories,
+          include,
+          exclude,
+        }),
+      ),
   );
 
   server.registerTool(

@@ -387,3 +387,36 @@ test('visual_guide не падает целиком из-за одного пл�
   assert.equal(result.missing, 1);
   assert.ok(result.warnings.length > 0, 'о пропущенном варианте надо сказать явно');
 });
+
+/*
+ * Вложенная картинка: полностраничный снимок мобильной страницы бывает в тысячи точек
+ * высотой, и ужатая до 900px полоса нечитаема совсем, а стоит как обычная картинка.
+ * Браузер для проверки не нужен — нужен высокий PNG.
+ */
+test('непропорционально высокий кадр вкладывается обрезанным', options, async () => {
+  const { inlineImage } = await import('../src/checks/visual.js');
+
+  const tall = path.join(tmp, 'tall.png');
+  await sharp({ create: { width: 1200, height: 9000, channels: 3, background: { r: 200, g: 200, b: 200 } } })
+    .png()
+    .toFile(tall);
+
+  const img = await inlineImage(tall);
+  assert.ok(img.cropped, 'об обрезке надо сказать, иначе агент считает, что видит страницу целиком');
+  assert.equal(img.width, 900);
+  assert.equal(img.height, 3600, 'верхние четыре ширины — столько ещё можно разглядеть');
+  assert.equal(img.cropped.fullHeight, 6750);
+});
+
+test('обычный кадр вкладывается целиком', options, async () => {
+  const { inlineImage } = await import('../src/checks/visual.js');
+
+  const normal = path.join(tmp, 'normal.png');
+  await sharp({ create: { width: 1200, height: 800, channels: 3, background: { r: 10, g: 20, b: 30 } } })
+    .png()
+    .toFile(normal);
+
+  const img = await inlineImage(normal);
+  assert.equal(img.cropped, undefined);
+  assert.equal(img.height, 600);
+});

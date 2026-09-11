@@ -204,13 +204,37 @@ export async function takeScreenshot(page, {
   };
 }
 
-/** Уменьшенная копия для инлайн-отдачи агенту: полный PNG съедает контекст. */
-export async function inlineImage(absPath, maxWidth = 900) {
+/**
+ * Уменьшенная копия для инлайн-отдачи агенту: полный PNG съедает контекст.
+ *
+ * У полностраничного снимка мобильной страницы высота бывает в семь тысяч точек. Ужатая до
+ * 900px по ширине, такая полоса нечитаема совсем — и при этом стоит как обычная картинка.
+ * Поэтому непропорционально высокий кадр обрезается по верхней части, а факт обрезки
+ * возвращается наверх: целиком снимок никуда не делся, он лежит по url артефакта.
+ */
+export async function inlineImage(absPath, maxWidth = 900, { maxRatio = 4 } = {}) {
   const buf = await sharp(absPath)
     .resize({ width: maxWidth, withoutEnlargement: true })
     .png({ compressionLevel: 9 })
     .toBuffer();
-  return { data: buf.toString('base64'), mimeType: 'image/png', bytes: buf.length };
+  const meta = await sharp(buf).metadata();
+  const done = (data, height, cropped = null) => ({
+    data: data.toString('base64'),
+    mimeType: 'image/png',
+    bytes: data.length,
+    width: meta.width,
+    height,
+    ...(cropped ? { cropped } : {}),
+  });
+
+  if (!maxRatio || meta.height <= meta.width * maxRatio) return done(buf, meta.height);
+
+  const shownHeight = Math.round(meta.width * maxRatio);
+  const cut = await sharp(buf)
+    .extract({ left: 0, top: 0, width: meta.width, height: shownHeight })
+    .png({ compressionLevel: 9 })
+    .toBuffer();
+  return done(cut, shownHeight, { fullHeight: meta.height, shownHeight });
 }
 
 /**

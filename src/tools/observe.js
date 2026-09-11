@@ -25,6 +25,16 @@ import { t } from '../i18n.js';
 const clip = (value, max) =>
   typeof value === 'string' && value.length > max ? `${value.slice(0, max)}…` : value;
 
+/**
+ * Виды ресурсов, без которых страница нерабочая, а не просто неполная.
+ *
+ * Когда дев-сервер пересобирается, браузер успевает получить документ со ссылкой на уже
+ * удалённый bundle.<hash>.js. Страница при этом отвечает 200 и выглядит целой, JS на ней нет,
+ * а клики «проходят», ничего не делая. Необработанных исключений при этом не возникает, и
+ * kind: errors оставался пустым ровно там, где причина и была.
+ */
+const CRITICAL_RESOURCES = new Set(['script', 'stylesheet', 'document']);
+
 const clipEntry = (entry) => ({
   ...entry,
   ...(entry.text !== undefined ? { text: clip(entry.text, 500) } : {}),
@@ -60,12 +70,12 @@ export function register(server) {
     {
       title: t({ ru: 'Логи страницы', en: "Page logs" }),
       description: t({
-        ru: 'Консоль, необработанные ошибки JS и неудачные сетевые запросы. По умолчанию — только с последнего перехода; sinceNavigation: false отдаёт всё с момента открытия сессии.',
-        en: "Console output, unhandled JS errors and failed network requests. By default only since the last navigation; sinceNavigation: false returns everything since the session was opened.",
+        ru: 'Консоль, необработанные ошибки JS, неудачные сетевые запросы и показанные страницей диалоги (alert, confirm, prompt). Рядом с ошибками — resourceErrors: не доехавшие скрипты и стили, из-за которых страница выглядит целой, но не работает. По умолчанию — только с последнего перехода; sinceNavigation: false отдаёт всё с момента открытия сессии.',
+        en: "Console output, unhandled JS errors, failed network requests and the dialogs the page showed (alert, confirm, prompt). Next to the errors sits resourceErrors: scripts and stylesheets that never arrived, which leave a page looking whole but dead. By default only since the last navigation; sinceNavigation: false returns everything since the session was opened.",
       }),
       inputSchema: {
         sessionId: z.string(),
-        kind: z.enum(['all', 'console', 'errors', 'network']).optional(),
+        kind: z.enum(['all', 'console', 'errors', 'network', 'dialogs']).optional(),
         onlyProblems: z.boolean().optional(),
         sinceNavigation: z
           .boolean()
@@ -84,7 +94,7 @@ export function register(server) {
        * По умолчанию показываем только текущую страницу: иначе ошибка, оставшаяся от
        * позапрошлого перехода, приезжает в разбор нынешнего и уводит в сторону.
        */
-      const marks = (sinceNavigation && session.logMarks) || { console: 0, errors: 0, network: 0 };
+      const marks = (sinceNavigation && session.logMarks) || { console: 0, errors: 0, network: 0, dialogs: 0 };
       const rawNetwork = logs.network.slice(marks.network);
       const rawConsole = logs.console.slice(marks.console);
 
@@ -94,7 +104,14 @@ export function register(server) {
       const console_ = onlyProblems
         ? rawConsole.filter((c) => c.type === 'error' || c.type === 'warning')
         : rawConsole;
-      const all = { console: console_, errors: logs.errors.slice(marks.errors), network };
+      const failedNetwork = rawNetwork.filter((n) => n.failure || (n.status && n.status >= 400));
+      const all = {
+        console: console_,
+        errors: logs.errors.slice(marks.errors),
+        resourceErrors: failedNetwork.filter((n) => CRITICAL_RESOURCES.has(n.resourceType)),
+        network,
+        dialogs: logs.dialogs.slice(marks.dialogs || 0),
+      };
       const scope = sinceNavigation && session.logMarks ? 'с последнего перехода' : 'с открытия сессии';
 
       /*
@@ -103,9 +120,19 @@ export function register(server) {
        * с головы: свежая ошибка объясняет происходящее, первая из позапрошлой страницы — нет.
        */
       const cap = limit || CONFIG.maxLogEntries;
-      const picked = kind === 'all' ? all : { [kind]: all[kind] };
+      /* resourceErrors идут вместе с ошибками: спрашивают про них одним и тем же вопросом
+         «почему не работает», а лежат они в разных источниках. */
+      const picked =
+        kind === 'all'
+          ? all
+          : kind === 'errors'
+            ? { errors: all.errors, resourceErrors: all.resourceErrors }
+            : { [kind]: all[kind] };
       const shown = Object.fromEntries(
-        Object.entries(picked).map(([name, list]) => [name, cappedTail(list.map(clipEntry), cap)]),
+        Object.entries(picked)
+          /* Пустой resourceErrors в каждом ответе — шум: его показываем, только когда есть что. */
+          .filter(([name, list]) => name !== 'resourceErrors' || list.length)
+          .map(([name, list]) => [name, cappedTail(list.map(clipEntry), cap)]),
       );
       return json({ scope, ...shown });
     },

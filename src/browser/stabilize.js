@@ -109,6 +109,16 @@ export async function stabilize(
   page,
   {
     pseudoLoc = false,
+    /**
+     * Останавливать ли движение.
+     *
+     * По умолчанию да: без этого визуальная регрессия краснеет на каждом прогоне. Но
+     * проверить саму анимацию в такой странице нельзя — через сто миллисекунд элемент уже
+     * в конечном состоянии, и transitionDuration в вычисленных стилях сведён к нулю.
+     * Остальная стабилизация при killMotion: false остаётся: она про полноту кадра
+     * (шрифты, ленивые картинки, блоки по прокрутке), а не про движение.
+     */
+    killMotion = true,
     waitFonts = true,
     settleMs = 150,
     imagesTimeoutMs = 5000,
@@ -116,7 +126,7 @@ export async function stabilize(
     placeholderSize = 1000,
   } = {},
 ) {
-  await page.addStyleTag({ content: KILL_MOTION_CSS }).catch(() => {});
+  if (killMotion) await page.addStyleTag({ content: KILL_MOTION_CSS }).catch(() => {});
 
   if (pseudoLoc) {
     await page.evaluate((map) => {

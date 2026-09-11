@@ -3,7 +3,7 @@
 Generated from the server itself: `node bin/gen-tools-doc.mjs`. Do not edit by hand —
 edit the descriptions in `src/tools/` and regenerate.
 
-Tools in total: **44**. Manifest size: **46645** characters.
+Tools in total: **44**. Manifest size: **49418** characters.
 
 ## `a11y_axe`
 
@@ -75,16 +75,19 @@ A composite check of one page: opens the URL under the given viewing conditions 
 
 **Act on the page**
 
-Click, type, press a key, hover, scroll, select an option or wait for a selector. Needed when the state you want to check only appears after an action: an expanded menu, an opened tab, a filled form, a page behind a login. Ready-to-use selectors come from page_snapshot.
+Click, type, press a key, hover, scroll, select an option, wait for a selector, pick files for upload or decide what to do with alert and confirm. Needed when the state you want to check only appears after an action: an expanded menu, an opened tab, a filled form, a page behind a login. Ready-to-use selectors come from page_snapshot.
 
 | Parameters | | |
 |---|---|---|
 | `sessionId` | string | required |
-| `action` | `click` | `fill` | `press` | `hover` | `scroll` | `wait` | `select` | required |
-| `selector` | string |  |
-| `value` | string | Text for fill, key for press, option value for select |
-| `x` | number | Horizontal scroll amount |
-| `y` | number | Vertical scroll amount |
+| `action` | `click` | `fill` | `press` | `hover` | `scroll` | `wait` | `select` | `upload` | `dialog` | required |
+| `selector` | string | Not required for scroll, for dialog, and for press or a click by coordinates |
+| `value` | string | Text for fill, key for press, option value for select, accept | dismiss | reply text for dialog |
+| `files` | array | For upload: file paths relative to the stand working directory |
+| `x` | number | Horizontal scroll amount; for a click without a selector, the x coordinate |
+| `y` | number | Vertical scroll amount; for a click without a selector, the y coordinate |
+| `timeout` | number | How long to wait for the element, ms. Default 30000 |
+| `force` | boolean | Click without waiting for the element to be actionable: under pointer-events: none it otherwise waits out the whole timeout |
 
 ## `browser_close`
 
@@ -111,13 +114,14 @@ Evaluates an expression or a function body in the page context and returns the r
 
 **Navigate**
 
-Navigates in an already open session. The page is stabilized before checks run: animations are stopped and fonts are awaited, otherwise screenshots and measurements drift between runs. If some resources failed to load, that is reported in warnings rather than left to be discovered as empty boxes on a finished screenshot.
+Navigates in an already open session. The page is stabilized before checks run: animations are stopped and fonts are awaited, otherwise screenshots and measurements drift between runs. animations: "allow" brings the motion back — here for one navigation, in browser_open for the whole session. If some resources failed to load, that is reported in warnings rather than left to be discovered as empty boxes on a finished screenshot.
 
 | Parameters | | |
 |---|---|---|
 | `sessionId` | string | required |
 | `url` | string | required |
 | `waitUntil` | `load` | `domcontentloaded` | `networkidle` | `commit` |  |
+| `animations` | `freeze` | `allow` | One-off, for this navigation only: allow leaves the page motion alone |
 | `save` | boolean | Save the page into the local mirror right after navigating — after that it can be examined without touching the remote server |
 
 ## `browser_open`
@@ -134,6 +138,7 @@ Creates a browser session with the given viewing conditions and, if a url is pas
 | `colorScheme` | `light` | `dark` | `no-preference` |  |
 | `forcedColors` | `none` | `active` | Windows high contrast mode |
 | `reducedMotion` | `reduce` | `no-preference` |  |
+| `animations` | `freeze` | `allow` | allow leaves the motion alone: transitions and animations keep running |
 | `rtl` | boolean | Flip the page to right-to-left |
 | `zoom` | number | Page zoom in percent: 200 halves the viewport |
 | `textZoom` | number | Text-only zoom in percent (WCAG 1.4.4) |
@@ -141,6 +146,7 @@ Creates a browser session with the given viewing conditions and, if a url is pas
 | `deviceScaleFactor` | number | Device pixel ratio: 1, 2, 3 |
 | `locale` | string |  |
 | `timezoneId` | string |  |
+| `userAgent` | string | A User-Agent string of your own: some sites answer a headless browser with 403 |
 | `freezeTime` | boolean | Freeze Date and Math.random for stable screenshots |
 | `throttle` | object | Throttling (chromium only): network 3g|slow-3g|4g, cpu is a slowdown multiplier |
 | `auth` | string | HTTP basic auth as "user:password". Do not put credentials in the URL itself — they leak into every response afterwards |
@@ -166,12 +172,12 @@ Pins the conditions of an open session under a name, so they can be given as one
 
 **Intercept requests**
 
-Rules over the page network requests: cut analytics and chat widgets, replace a stylesheet or a script with your own version, stub missing images, rewrite addresses when the site returns absolute links to a production domain.
+Rules over the page network requests: cut analytics and chat widgets, replace a stylesheet or a script with your own version, stub missing images, rewrite addresses when the site returns absolute links to a production domain. With record a rule also captures what actually went to the server — read it back with action: requests.
 
 | Parameters | | |
 |---|---|---|
 | `sessionId` | string | required |
-| `action` | `add` | `list` | `clear` | Default add |
+| `action` | `add` | `list` | `clear` | `requests` | Default add. requests returns what the rules with record captured |
 | `pattern` | string | A glob (**/analytics/**) or a regular expression written as /…/flags |
 | `handler` | `block` | `fulfill` | `file` | `redirect` | `rewrite` | `passthrough` | block — abort, fulfill — return a body, file — serve a file from the stand, redirect — send every match to one url, rewrite — replace part of the address while keeping the path |
 | `body` | string |  |
@@ -181,6 +187,9 @@ Rules over the page network requests: cut analytics and chat widgets, replace a 
 | `file` | string | Path relative to the stand working directory |
 | `from` | string | For rewrite: what to replace in the address. A substring or a regular expression written as /…/flags, e.g. /^https?:\/\/site\.ru/ |
 | `to` | string | For rewrite: the replacement. $1, $2 work with a regular expression |
+| `record` | boolean | Capture matching requests: method, address, headers and body. For multipart — the field list and file names |
+| `id` | string | For requests: show the entries of this rule only |
+| `limit` | number | For requests: how many of the most recent entries to show. Default 20 |
 
 ## `browser_sessions`
 
@@ -361,6 +370,8 @@ Finds horizontal scroll, elements past the viewport, overlapping content, clippe
 | `contrastRatio` | number | Required contrast for normal text (default 4.5) |
 | `maxItems` | number | How many examples to show per category (default 50) |
 | `categories` | array | Details for these categories only. Counters for all of them are always returned |
+| `include` | array | Inspect only these blocks — the header and the footer otherwise pad the counters with their own findings |
+| `exclude` | array | Skip these blocks |
 
 ## `lighthouse`
 
@@ -428,12 +439,12 @@ Runs a page across the cartesian product of axes (browsers x viewport x color sc
 
 **Page logs** — _read-only_
 
-Console output, unhandled JS errors and failed network requests. By default only since the last navigation; sinceNavigation: false returns everything since the session was opened.
+Console output, unhandled JS errors, failed network requests and the dialogs the page showed (alert, confirm, prompt). Next to the errors sits resourceErrors: scripts and stylesheets that never arrived, which leave a page looking whole but dead. By default only since the last navigation; sinceNavigation: false returns everything since the session was opened.
 
 | Parameters | | |
 |---|---|---|
 | `sessionId` | string | required |
-| `kind` | `all` | `console` | `errors` | `network` |  |
+| `kind` | `all` | `console` | `errors` | `network` | `dialogs` |  |
 | `onlyProblems` | boolean |  |
 | `sinceNavigation` | boolean | Only entries after the last navigation. Default true |
 | `limit` | number | How many entries of each kind to return; the most recent ones. Default 100 |
@@ -496,14 +507,15 @@ Reads a file from the stand working directory — a fixture, a matrix config, a 
 
 **Screenshot**
 
-A screenshot of the page or of one element. Returns the artifact address; the image itself is embedded in the response only with inline: true. If some resources failed to load the response carries warnings — the shot is incomplete then.
+A screenshot of the page or of one element. By default the whole page is captured rather than the visible area: on a long page that is a frame thousands of pixels tall, so a selector or a clip is usually what you want. Returns the artifact address; the image itself is embedded in the response only with inline: true. If some resources failed to load the response carries warnings — the shot is incomplete then.
 
 | Parameters | | |
 |---|---|---|
 | `sessionId` | string | required |
 | `name` | string |  |
-| `fullPage` | boolean |  |
+| `fullPage` | boolean | The whole page rather than the visible area. Default true |
 | `selector` | string | Capture only this element |
+| `clip` | object | Capture a rectangle of the page in CSS pixels — when there is no element a selector could target |
 | `mask` | array | Selectors of unstable areas — they get painted over |
 | `hide` | array | Remove from frame: cookie banners, chat widgets, popups. Uses visibility: hidden, so layout does not shift |
 | `isolate` | array | Keep only these elements in frame and take the remaining siblings out of flow (display: none). This is how a pair of adjacent blocks is captured without the rest — to show an overlap, for instance |
@@ -676,4 +688,4 @@ CLS, LCP, FCP and TTFB for a URL, with the elements that shifted the layout list
 
 ---
 
-_Generated: 2026-09-08_
+_Generated: 2026-09-11_

@@ -16,11 +16,14 @@ import {
   listEvicted,
   listSessions,
   gotoAndSettle,
+  takeNavigationSince,
 } from '../browser/pool.js';
 import { profileKey } from '../browser/profile.js';
 import { evaluateOnPage } from '../browser/evaluate.js';
+import { resolveInRoot } from '../paths.js';
+import { stat } from 'node:fs/promises';
 import { addInjection, clearInjections, listInjections, removeInjection } from '../browser/inject.js';
-import { addRoute, clearRoutes, listRoutes } from '../browser/routes.js';
+import { addRoute, clearRoutes, listRecorded, listRoutes } from '../browser/routes.js';
 import { cappedText, json, profileSchema } from './shared.js';
 import { listProfiles, removeProfile, saveProfile } from '../browser/profiles.js';
 import { savePage } from '../mirror/save.js';
@@ -56,22 +59,26 @@ export function register(server) {
     {
       title: t({ ru: 'Перейти по адресу', en: "Navigate" }),
       description: t({
-        ru: 'Переход в уже открытой сессии. Страница стабилизируется перед проверками: анимации останавливаются, шрифты догружаются — иначе снимки и замеры пляшут между прогонами. Если часть ресурсов не доехала, об этом сказано в warnings, а не оставлено выясняться по пустым рамкам на готовом кадре.',
-        en: "Navigates in an already open session. The page is stabilized before checks run: animations are stopped and fonts are awaited, otherwise screenshots and measurements drift between runs. If some resources failed to load, that is reported in warnings rather than left to be discovered as empty boxes on a finished screenshot.",
+        ru: 'Переход в уже открытой сессии. Страница стабилизируется перед проверками: анимации останавливаются, шрифты догружаются — иначе снимки и замеры пляшут между прогонами. Живое движение возвращает animations: "allow" — здесь на один переход, в browser_open на всю сессию. Если часть ресурсов не доехала, об этом сказано в warnings, а не оставлено выясняться по пустым рамкам на готовом кадре.',
+        en: "Navigates in an already open session. The page is stabilized before checks run: animations are stopped and fonts are awaited, otherwise screenshots and measurements drift between runs. animations: \"allow\" brings the motion back — here for one navigation, in browser_open for the whole session. If some resources failed to load, that is reported in warnings rather than left to be discovered as empty boxes on a finished screenshot.",
       }),
       inputSchema: {
         sessionId: z.string(),
         url: z.string(),
         waitUntil: z.enum(['load', 'domcontentloaded', 'networkidle', 'commit']).optional(),
+        animations: z
+          .enum(['freeze', 'allow'])
+          .optional()
+          .describe(d('Разово, на этот переход: allow не глушит движение на странице')),
         save: z
           .boolean()
           .optional()
           .describe(d('Сохранить страницу в локальное зеркало сразу после перехода — дальше её можно разбирать, не трогая чужой сервер')),
       },
     },
-    async ({ sessionId, url, waitUntil, save }) => {
+    async ({ sessionId, url, waitUntil, animations, save }) => {
       const session = getSession(sessionId);
-      const navigation = await gotoAndSettle(session, url, { waitUntil });
+      const navigation = await gotoAndSettle(session, url, { waitUntil, animations });
       if (!save) return json(navigation);
 
       const saved = await savePage(session);
@@ -84,31 +91,83 @@ export function register(server) {
     {
       title: t({ ru: 'Действие на странице', en: "Act on the page" }),
       description: t({
-        ru: 'Клик, ввод текста, нажатие клавиши, наведение, прокрутка, выбор в списке или ожидание селектора. Нужен, когда проверяемое состояние возникает только после действия: раскрытое меню, открытая вкладка, заполненная форма, страница после логина. Готовые селекторы удобно брать из page_snapshot.',
-        en: "Click, type, press a key, hover, scroll, select an option or wait for a selector. Needed when the state you want to check only appears after an action: an expanded menu, an opened tab, a filled form, a page behind a login. Ready-to-use selectors come from page_snapshot.",
+        ru: 'Клик, ввод текста, нажатие клавиши, наведение, прокрутка, выбор в списке, ожидание селектора, выбор файлов и ответ на alert с confirm. Нужен, когда проверяемое состояние возникает только после действия: раскрытое меню, открытая вкладка, заполненная форма, страница после логина. Готовые селекторы удобно брать из page_snapshot.',
+        en: "Click, type, press a key, hover, scroll, select an option, wait for a selector, pick files for upload or decide what to do with alert and confirm. Needed when the state you want to check only appears after an action: an expanded menu, an opened tab, a filled form, a page behind a login. Ready-to-use selectors come from page_snapshot.",
       }),
       inputSchema: {
         sessionId: z.string(),
-        action: z.enum(['click', 'fill', 'press', 'hover', 'scroll', 'wait', 'select']),
-        selector: z.string().optional(),
-        value: z.string().optional().describe(d('Текст для fill, клавиша для press, значение для select')),
-        x: z.number().optional().describe(d('Прокрутка по горизонтали')),
-        y: z.number().optional().describe(d('Прокрутка по вертикали')),
+        action: z.enum(['click', 'fill', 'press', 'hover', 'scroll', 'wait', 'select', 'upload', 'dialog']),
+        selector: z.string().optional().describe(d('Не нужен для scroll, для dialog и для press с кликом по координатам')),
+        value: z
+          .string()
+          .optional()
+          .describe(d('Текст для fill, клавиша для press, значение для select, accept | dismiss | текст ответа для dialog')),
+        files: z
+          .array(z.string())
+          .optional()
+          .describe(d('Для upload: пути к файлам относительно рабочего каталога стенда')),
+        x: z.number().optional().describe(d('Смещение прокрутки по горизонтали; для click без селектора — координата')),
+        y: z.number().optional().describe(d('Смещение прокрутки по вертикали; для click без селектора — координата')),
+        timeout: z.number().optional().describe(d('Сколько ждать элемент, мс. По умолчанию 30000')),
+        force: z
+          .boolean()
+          .optional()
+          .describe(d('Кликнуть, не дожидаясь кликабельности: элемент под pointer-events: none иначе ждёт весь таймаут')),
       },
     },
-    async ({ sessionId, action, selector, value, x = 0, y = 0 }) => {
-      const { page } = getSession(sessionId);
+    async ({ sessionId, action, selector, value, files, x = 0, y = 0, timeout, force }) => {
+      const session = getSession(sessionId);
+      const { page } = session;
+      const wait = timeout === undefined ? {} : { timeout };
+
+      /*
+       * Диалог — не действие над элементом, а настройка сессии: политика применяется к
+       * следующему alert, confirm или prompt, в том числе на уже открытой странице. Текст
+       * диалогов пишется в журнал всегда и читается через page_logs с kind: dialogs.
+       */
+      if (action === 'dialog') {
+        const wanted = String(value ?? 'dismiss');
+        session.dialogPolicy =
+          wanted === 'dismiss'
+            ? { action: 'dismiss', promptText: null }
+            : { action: 'accept', promptText: wanted === 'accept' ? null : wanted };
+        return json({ ok: true, action, dialogPolicy: session.dialogPolicy });
+      }
+
+      /*
+       * Клавиша и клик по координатам обходятся без селектора: Escape закрывают на уровне
+       * страницы, а по координатам кликают там, где подходящего узла в DOM просто нет.
+       * Раньше press без селектора уходил в locator('undefined') и падал по таймауту через
+       * полминуты — по такой ошибке не понять, что не так с вызовом.
+       */
+      if (!selector && action !== 'scroll') {
+        if (action === 'press') {
+          await page.keyboard.press(value ?? 'Enter');
+          return done(session, { action, key: value ?? 'Enter' });
+        }
+        if (action === 'click') {
+          if (!x && !y) throw new Error('Для click без selector нужны координаты x и y.');
+          await page.mouse.click(x, y);
+          return done(session, { action, at: { x, y } });
+        }
+        throw new Error(`Для действия ${action} нужен selector.`);
+      }
+
+      const target = selector ? page.locator(selector).first() : null;
+      const pressed = { ...wait, ...(force ? { force: true } : {}) };
+
       switch (action) {
-        case 'click': await page.locator(selector).first().click(); break;
-        case 'fill': await page.locator(selector).first().fill(value ?? ''); break;
-        case 'press': await page.locator(selector).first().press(value ?? 'Enter'); break;
-        case 'hover': await page.locator(selector).first().hover(); break;
-        case 'select': await page.locator(selector).first().selectOption(value ?? ''); break;
+        case 'click': await target.click(pressed); break;
+        case 'fill': await target.fill(value ?? '', wait); break;
+        case 'press': await target.press(value ?? 'Enter', wait); break;
+        case 'hover': await target.hover(pressed); break;
+        case 'select': await target.selectOption(value ?? '', wait); break;
         case 'scroll': await page.evaluate(([sx, sy]) => window.scrollBy(sx, sy), [x, y]); break;
-        case 'wait': await page.locator(selector).first().waitFor({ state: 'visible' }); break;
+        case 'wait': await target.waitFor({ state: 'visible', ...wait }); break;
+        case 'upload': return done(session, { action, selector, ...(await upload(page, target, files, wait, pressed)) });
         default: throw new Error(`Неизвестное действие: ${action}`);
       }
-      return json({ ok: true, action, selector, url: page.url() });
+      return done(session, { action, selector });
     },
   );
 
@@ -123,7 +182,12 @@ export function register(server) {
       inputSchema: { sessionId: z.string(), expression: z.string() },
     },
     async ({ sessionId, expression }) => {
-      const result = await evaluateOnPage(getSession(sessionId).page, expression);
+      const session = getSession(sessionId);
+      const result = await evaluateOnPage(session.page, expression);
+      /* Между вызовами страница могла перезагрузиться сама — тогда замер относится уже к
+         другой странице, и знать об этом надо до того, как по нему сделан вывод. */
+      const navigated = takeNavigationSince(session);
+      if (navigated) result.navigatedSince = navigated;
       /*
        * Страница возвращает что угодно: document.body.innerHTML боевого сайта — это мегабайты
        * в одном ответе. Режем по сериализации, а не по самому значению: длина строки —
@@ -181,12 +245,15 @@ export function register(server) {
     {
       title: t({ ru: 'Перехват запросов', en: "Intercept requests" }),
       description: t({
-        ru: "Правила на сетевые запросы страницы: отрезать аналитику и чаты, подменить таблицу стилей или скрипт своей версией, подставить заглушки вместо отсутствующих картинок, переписать адреса, когда сайт отдаёт абсолютные ссылки на боевой домен.",
-        en: "Rules over the page network requests: cut analytics and chat widgets, replace a stylesheet or a script with your own version, stub missing images, rewrite addresses when the site returns absolute links to a production domain.",
+        ru: "Правила на сетевые запросы страницы: отрезать аналитику и чаты, подменить таблицу стилей или скрипт своей версией, подставить заглушки вместо отсутствующих картинок, переписать адреса, когда сайт отдаёт абсолютные ссылки на боевой домен. С record правило ещё и записывает, что именно ушло на сервер, — читается через action: requests.",
+        en: "Rules over the page network requests: cut analytics and chat widgets, replace a stylesheet or a script with your own version, stub missing images, rewrite addresses when the site returns absolute links to a production domain. With record a rule also captures what actually went to the server — read it back with action: requests.",
       }),
       inputSchema: {
         sessionId: z.string(),
-        action: z.enum(['add', 'list', 'clear']).optional().describe(d('По умолчанию add')),
+        action: z
+          .enum(['add', 'list', 'clear', 'requests'])
+          .optional()
+          .describe(d('По умолчанию add. requests — что записали правила с record')),
         pattern: z.string().optional().describe(d('Glob (**/analytics/**) или регулярное выражение в виде /…/flags')),
         handler: z
           .enum(['block', 'fulfill', 'file', 'redirect', 'rewrite', 'passthrough'])
@@ -206,12 +273,19 @@ export function register(server) {
             d('Для rewrite: что заменить в адресе. Подстрока или регулярное выражение в виде /…/flags. Например /^https?:\\/\\/site\\.ru/'),
           ),
         to: z.string().optional().describe(d('Для rewrite: чем заменить. В регулярном выражении работают $1, $2')),
+        record: z
+          .boolean()
+          .optional()
+          .describe(d('Записывать совпавшие запросы: метод, адрес, заголовки и тело. У multipart — состав полей и имена файлов')),
+        id: z.string().optional().describe(d('Для requests: показать записи только этого правила')),
+        limit: z.number().optional().describe(d('Для requests: сколько последних записей показать. По умолчанию 20')),
       },
     },
-    async ({ sessionId, action = 'add', ...rest }) => {
+    async ({ sessionId, action = 'add', id, limit, ...rest }) => {
       const session = getSession(sessionId);
       if (action === 'clear') return json({ cleared: await clearRoutes(session) });
       if (action === 'list') return json({ routes: listRoutes(session) });
+      if (action === 'requests') return json({ recorded: listRecorded(session, { id, limit }) });
       return json({ added: await addRoute(session, rest), routes: listRoutes(session) });
     },
   );
@@ -317,3 +391,57 @@ export function register(server) {
     },
   );
 }
+
+/**
+ * Ответ действия.
+ *
+ * Признак навигации приклеивается здесь, а не в каждой ветке: страница перезагружается сама —
+ * live reload дев-сервера, редирект, meta refresh, — и без этого поля «модалка закрыта» после
+ * клика неотличимо от «клик не сработал». Поле появляется, только если переход был.
+ */
+function done(session, payload) {
+  const navigated = takeNavigationSince(session);
+  return json({
+    ok: true,
+    ...payload,
+    url: session.page.url(),
+    ...(navigated ? { navigatedSince: navigated } : {}),
+  });
+}
+
+/**
+ * Выбор файлов.
+ *
+ * Два разных пути, и оба нужны. Скрытый input[type=file] за стилизованным label — самый
+ * частый случай, и setInputFiles работает с ним прямо, не требуя видимости. Всё остальное —
+ * кнопка, скрепка, зона перетаскивания — открывает системный диалог выбора, и его ловим
+ * событием: без этого путь «клик по скрепке → выбор файла» проверить нечем.
+ */
+async function upload(page, target, files, wait, pressed) {
+  if (!files || !files.length) {
+    throw new Error('Для upload нужен files — пути к файлам относительно рабочего каталога стенда.');
+  }
+
+  const picked = [];
+  for (const name of files) {
+    const abs = resolveInRoot(name);
+    const info = await stat(abs).catch(() => null);
+    if (!info || !info.isFile()) throw new Error(`Файла ${name} нет в рабочем каталоге стенда.`);
+    picked.push({ path: name, abs, bytes: info.size });
+  }
+  const paths = picked.map((f) => f.abs);
+
+  const isFileInput = await target
+    .evaluate((el) => el instanceof HTMLInputElement && el.type === 'file')
+    .catch(() => false);
+
+  if (isFileInput) {
+    await target.setInputFiles(paths, wait);
+    return { via: 'input', files: picked.map(({ path, bytes }) => ({ path, bytes })) };
+  }
+
+  const [chooser] = await Promise.all([page.waitForEvent('filechooser', wait), target.click(pressed)]);
+  await chooser.setFiles(paths);
+  return { via: 'filechooser', files: picked.map(({ path, bytes }) => ({ path, bytes })) };
+}
+

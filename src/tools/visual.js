@@ -32,14 +32,18 @@ export function register(server) {
     {
       title: t({ ru: 'Скриншот', en: "Screenshot" }),
       description: t({
-        ru: "Снимок страницы или элемента. Возвращает адрес артефакта; картинку вкладывает в ответ только при inline: true. Если часть ресурсов не загрузилась, в ответе будет warnings — снимок тогда неполный.",
-        en: "A screenshot of the page or of one element. Returns the artifact address; the image itself is embedded in the response only with inline: true. If some resources failed to load the response carries warnings — the shot is incomplete then.",
+        ru: "Снимок страницы или элемента. По умолчанию снимается страница целиком, а не видимая область: на длинной странице это кадр в тысячи точек, и для разбора обычно нужен selector или clip. Возвращает адрес артефакта; картинку вкладывает в ответ только при inline: true. Если часть ресурсов не загрузилась, в ответе будет warnings — снимок тогда неполный.",
+        en: "A screenshot of the page or of one element. By default the whole page is captured rather than the visible area: on a long page that is a frame thousands of pixels tall, so a selector or a clip is usually what you want. Returns the artifact address; the image itself is embedded in the response only with inline: true. If some resources failed to load the response carries warnings — the shot is incomplete then.",
       }),
       inputSchema: {
         sessionId: z.string(),
         name: z.string().optional(),
-        fullPage: z.boolean().optional(),
+        fullPage: z.boolean().optional().describe(d('Страница целиком, а не видимая область. По умолчанию true')),
         selector: z.string().optional().describe(d('Снять только этот элемент')),
+        clip: z
+          .object({ x: z.number(), y: z.number(), width: z.number(), height: z.number() })
+          .optional()
+          .describe(d('Снять прямоугольник страницы в CSS-пикселях — когда подходящего элемента для selector нет')),
         mask: z.array(z.string()).optional().describe(d('Селекторы нестабильных зон — закрашиваются')),
         hide: z
           .array(z.string())
@@ -63,6 +67,7 @@ export function register(server) {
       name = 'screenshot',
       fullPage = true,
       selector,
+      clip,
       mask,
       hide,
       isolate,
@@ -78,6 +83,7 @@ export function register(server) {
         name: `${slug(name)}__${slug(session.key)}`,
         fullPage,
         selector,
+        clip,
         mask,
         hide,
         isolate,
@@ -86,18 +92,34 @@ export function register(server) {
         maxWidth,
       });
 
-      // Снимок «удался» и при полностью битой странице: сообщаем об этом здесь,
-      // а не оставляем агенту выяснять по пустым рамкам на готовом кадре.
-      const failures = summarizeFailures(session.logs.network);
+      /*
+       * Снимок «удался» и при полностью битой странице: сообщаем об этом здесь,
+       * а не оставляем агенту выяснять по пустым рамкам на готовом кадре.
+       *
+       * Считаем с последнего перехода, а не с открытия сессии. Иначе после пересборки
+       * дев-сервера в ответе копятся 404 от бандлов с прошлыми хэшами — их легко принять
+       * за поломку текущей страницы, хотя к ней они отношения не имеют.
+       */
+      const failures = summarizeFailures(session.logs.network.slice(session.logMarks?.network || 0));
       const payload = failures ? { ...shot, warnings: failures } : shot;
+
+      const img = inline ? await inlineImage(shot.path) : null;
+      /* Обрезку вложенной картинки объявляем: иначе агент разбирает верхнюю треть страницы,
+         считая, что видит её целиком. */
+      const body = img?.cropped
+        ? {
+            ...payload,
+            inlineNote:
+              `Кадр ${shot.width}×${shot.height} вложен обрезанным по высоте: полоса такой длины ` +
+              'в уменьшенном виде нечитаема. Целиком — по url артефакта; для разбора снимайте ' +
+              'selector или clip.',
+          }
+        : payload;
 
       /* Ссылки собираем тем же правилом, что и json(): этот ответ строится вручную ради
          image-блока, но адресуемость артефакта от этого не меняется. */
-      const content = [{ type: 'text', text: JSON.stringify(payload) }, ...linkBlocks(payload)];
-      if (inline) {
-        const img = await inlineImage(shot.path);
-        content.push({ type: 'image', data: img.data, mimeType: img.mimeType });
-      }
+      const content = [{ type: 'text', text: JSON.stringify(body) }, ...linkBlocks(body)];
+      if (img) content.push({ type: 'image', data: img.data, mimeType: img.mimeType });
       return { content };
     },
   );

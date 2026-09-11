@@ -1,0 +1,45 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Фикстура: alert, confirm и prompt</title>
+<!--
+  Библиотеки до сих пор сообщают об ошибке через alert(), и до появления журнала диалогов
+  этот текст пропадал бесследно: playwright закрывает диалог сам и молча.
+
+  Результат confirm и prompt страница записывает в #result — по нему видно не только то,
+  что диалог был, но и чем он закончился, то есть подействовала ли смена политики.
+-->
+<style>
+  body { margin: 0; font: 16px/1.6 system-ui, sans-serif; color: #16181d; background: #fff; }
+  main { max-width: 560px; margin: 0 auto; padding: 24px 16px; }
+  button { min-height: 44px; padding: 0 16px; margin: 0 8px 8px 0; border: 0; border-radius: 8px;
+           background: #1a4fd6; color: #fff; font: inherit; cursor: pointer; }
+  #result { font-size: 14px; color: #444a55; min-height: 22px; }
+</style>
+</head>
+<body>
+<main>
+  <h1>Диалоги</h1>
+  <button id="alert" type="button">Показать alert</button>
+  <button id="confirm" type="button">Спросить confirm</button>
+  <button id="prompt" type="button">Спросить prompt</button>
+  <p id="result"></p>
+</main>
+
+<script>
+  var result = document.getElementById('result');
+  document.getElementById('alert').addEventListener('click', function () {
+    window.alert('Файл слишком большой: 12 МБ при пределе 5 МБ');
+    result.textContent = 'alert закрыт';
+  });
+  document.getElementById('confirm').addEventListener('click', function () {
+    result.textContent = 'confirm: ' + window.confirm('Удалить отклик?');
+  });
+  document.getElementById('prompt').addEventListener('click', function () {
+    result.textContent = 'prompt: ' + window.prompt('Как вас зовут?', 'Аноним');
+  });
+</script>
+</body>
+</html>

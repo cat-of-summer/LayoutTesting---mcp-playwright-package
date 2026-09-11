@@ -140,6 +140,10 @@ export const profileSchema = {
   colorScheme: z.enum(['light', 'dark', 'no-preference']).optional(),
   forcedColors: z.enum(['none', 'active']).optional().describe(d('Режим высокой контрастности Windows')),
   reducedMotion: z.enum(['reduce', 'no-preference']).optional(),
+  animations: z
+    .enum(['freeze', 'allow'])
+    .optional()
+    .describe(d('allow не глушит движение: переходы и анимации остаются живыми')),
   rtl: z.boolean().optional().describe(d('Развернуть страницу справа налево')),
   zoom: z.number().optional().describe(d('Масштаб страницы в процентах: 200 сжимает viewport вдвое')),
   textZoom: z.number().optional().describe(d('Масштаб только шрифта в процентах (WCAG 1.4.4)')),
@@ -147,6 +151,7 @@ export const profileSchema = {
   deviceScaleFactor: z.number().optional().describe(d('DPR: 1, 2, 3')),
   locale: z.string().optional(),
   timezoneId: z.string().optional(),
+  userAgent: z.string().optional().describe(d('Своя строка User-Agent: часть сайтов отдаёт headless-браузеру 403')),
   freezeTime: z.boolean().optional().describe(d('Заморозить Date и Math.random для стабильных снимков')),
   throttle: z
     .object({ network: z.string().optional(), cpu: z.number().optional() })

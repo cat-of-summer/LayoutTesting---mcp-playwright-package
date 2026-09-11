@@ -77,7 +77,7 @@ Directories whose names do not look like a run are never pruned: a human put the
     title: t({ ru: 'Условия просмотра и профили', en: 'Viewing conditions and profiles' }),
     body: () =>
       t({
-        ru: `Полный набор условий объявлен в одном месте — browser_open. Их девятнадцать: движок, размер, тема, forced-colors, reduced-motion, RTL, zoom страницы, zoom шрифта, псевдолокализация, DPR, локаль, таймзона, заморозка времени, троттлинг сети и CPU, basic-auth, заголовки, подмена разрешения имён, сохранённый логин, Service Workers.
+        ru: `Полный набор условий объявлен в одном месте — browser_open. Их двадцать один: движок, размер, тема, forced-colors, reduced-motion, движение (animations), RTL, zoom страницы, zoom шрифта, псевдолокализация, DPR, локаль, таймзона, User-Agent, заморозка времени, троттлинг сети и CPU, basic-auth, заголовки, подмена разрешения имён, сохранённый логин, Service Workers.
 
 Инструменты, открывающие сессию сами (audit, web_vitals, seo_page, page_save, storybook_audit), принимают три самых частых параметра прямо — browser, viewport, colorScheme, — а остальные по имени профиля.
 
@@ -85,8 +85,10 @@ Directories whose names do not look like a run are never pruned: a human put the
 
 Профиль живёт в памяти процесса; persist: true записывает его на диск, чтобы он пережил перезапуск. Пароли и заголовки в профиль не пишутся — логин переносят через storageState, его имя профиль хранит.
 
-zoom стоит понимать буквально: увеличение страницы уменьшает область просмотра в CSS-пикселях, ровно как в браузере. zoom: 200 при desktop даёт 720x450, и это же попадает в имя эталона.`,
-        en: `The full set of conditions is declared in exactly one place — browser_open. There are nineteen: engine, size, color scheme, forced-colors, reduced-motion, RTL, page zoom, text zoom, pseudo-localization, DPR, locale, timezone, frozen time, network and CPU throttling, basic auth, headers, host resolution override, saved login, Service Workers.
+zoom стоит понимать буквально: увеличение страницы уменьшает область просмотра в CSS-пикселях, ровно как в браузере. zoom: 200 при desktop даёт 720x450, и это же попадает в имя эталона.
+
+Про движки. chromium умеет всё: троттлинг, подмену разрешения имён, matched_rules — они идут через CDP, которого у остальных нет. У firefox и webkit в стенде нет WebGL, поэтому приложения, которые его требуют (тот же редактор Figma), в них не откроются. Часть боевых сайтов отдаёт headless-браузеру 403 ещё на CDN — помогает своя строка userAgent.`,
+        en: `The full set of conditions is declared in exactly one place — browser_open. There are twenty-one: engine, size, color scheme, forced-colors, reduced-motion, motion (animations), RTL, page zoom, text zoom, pseudo-localization, DPR, locale, timezone, User-Agent, frozen time, network and CPU throttling, basic auth, headers, host resolution override, saved login, Service Workers.
 
 Tools that open a session themselves (audit, web_vitals, seo_page, page_save, storybook_audit) take the three most frequent parameters directly — browser, viewport, colorScheme — and the rest by profile name.
 
@@ -94,7 +96,9 @@ The order of work: browser_open with the conditions you need, check the page ren
 
 A profile lives in process memory; persist: true writes it to disk so it survives a restart. Passwords and headers are never written into a profile — carry a login through storageState, whose name a profile does keep.
 
-Take zoom literally: magnifying the page shrinks the viewport in CSS pixels, exactly as a browser does. zoom: 200 on desktop gives 720x450, and that is what goes into the baseline name.`,
+Take zoom literally: magnifying the page shrinks the viewport in CSS pixels, exactly as a browser does. zoom: 200 on desktop gives 720x450, and that is what goes into the baseline name.
+
+About the engines. chromium can do everything: throttling, host resolution override, matched_rules — those go through CDP, which the others do not have. firefox and webkit in this stand have no WebGL, so applications that require it (the Figma editor, for one) will not open in them. Some production sites answer a headless browser with 403 at the CDN — a userAgent string of your own is what helps.`,
       }),
   },
 };
@@ -199,8 +203,8 @@ const DETAILS = {
     }),
   browser_route: () =>
     t({
-      ru: 'Правила переживают навигацию: заданные один раз, они действуют и после browser_goto. В action: list виден счётчик попаданий по каждому правилу — без него несработавшее правило не отличить от сработавшего, и это самая частая причина, по которой подмена кажется неприменившейся. Ошибка внутри обработчика записывается в lastError, а запрос всё равно пропускается: иначе он повис бы навсегда.',
-      en: 'Routes survive navigation: set once, they keep working after browser_goto. action: list shows a hit counter per route — without it a route that never matched is indistinguishable from one that did, and that is the most common reason an override looks like it did not apply. An error inside a handler is recorded in lastError and the request is let through anyway: otherwise it would hang forever.',
+      ru: 'Правила переживают навигацию: заданные один раз, они действуют и после browser_goto. В action: list виден счётчик попаданий по каждому правилу — без него несработавшее правило не отличить от сработавшего, и это самая частая причина, по которой подмена кажется неприменившейся. Ошибка внутри обработчика записывается в lastError, а запрос всё равно пропускается: иначе он повис бы навсегда. record ортогонален обработчику: fulfill вместе с record отдаёт заглушку и записывает, что именно ушло на сервер. Записи читаются через action: requests — метод, адрес, заголовки и тело; у multipart перечисляются поля с их значениями и файлы с именем и типом. Содержимое файлов браузер в тело запроса не отдаёт вовсе, поэтому их размер там нулевой — об этом сказано отдельной заметкой, чтобы не читалось как «ушёл пустой файл». Cookie и Authorization в журнал не попадают, на правило держится последние полсотни запросов.',
+      en: 'Routes survive navigation: set once, they keep working after browser_goto. action: list shows a hit counter per route — without it a route that never matched is indistinguishable from one that did, and that is the most common reason an override looks like it did not apply. An error inside a handler is recorded in lastError and the request is let through anyway: otherwise it would hang forever. record is orthogonal to the handler: fulfill together with record returns the stub and captures what actually went to the server. Read the captures with action: requests — method, address, headers and body; for multipart the fields are listed with their values and the files with name and type. The browser never puts file contents into the request body, so their size there is zero — a separate note says so, to keep it from reading as "an empty file was sent". Cookie and Authorization never reach the log, and each rule keeps the last fifty requests.',
     }),
   browser_storage: () =>
     t({
@@ -232,8 +236,37 @@ Object.assign(DETAILS, {
     }),
   screenshot: () =>
     t({
-      ru: 'hide убирает элементы из кадра целиком, mask закрашивает область — первое для баннеров и чатов, второе для мест с меняющимся содержимым. isolate оставляет в кадре только перечисленное: так показывают наложение двух блоков. inline: true вкладывает уменьшенную копию прямо в ответ; без него возвращается только адрес артефакта.',
-      en: 'hide removes elements from the frame entirely, mask paints over a region — the first for banners and chat widgets, the second for areas with changing content. isolate keeps only what is listed in the frame: that is how you show two blocks overlapping. inline: true embeds a downscaled copy right in the response; without it only the artifact address comes back.',
+      ru: 'fullPage по умолчанию true: снимается страница целиком, а не видимая область. На длинной мобильной странице это кадр в тысячи точек, и разбирать по нему нечего — берите selector для элемента или clip для прямоугольника в CSS-пикселях. hide убирает элементы из кадра целиком, mask закрашивает область — первое для баннеров и чатов, второе для мест с меняющимся содержимым. isolate оставляет в кадре только перечисленное: так показывают наложение двух блоков. inline: true вкладывает уменьшенную копию прямо в ответ; непропорционально высокий кадр при этом обрезается по верхней части, о чём сказано полем inlineNote, — оригинал остаётся по url артефакта.',
+      en: 'fullPage defaults to true: the whole page is captured, not the visible area. On a long mobile page that is a frame thousands of pixels tall and nothing can be read off it — use selector for an element or clip for a rectangle in CSS pixels. hide removes elements from the frame entirely, mask paints over a region — the first for banners and chat widgets, the second for areas with changing content. isolate keeps only what is listed in the frame: that is how you show two blocks overlapping. inline: true embeds a downscaled copy right in the response; a disproportionately tall frame is cropped to its top part, which inlineNote states — the original stays at the artifact url.',
+    }),
+});
+
+
+Object.assign(DETAILS, {
+  browser_act: () =>
+    t({
+      ru: 'upload выбирает файлы: если под селектором input[type=file], файлы кладутся прямо в него — видимость при этом не нужна, а именно скрытый инпут за стилизованным label и встречается чаще всего. Под любым другим элементом (кнопка, скрепка) ловится системный диалог выбора, то есть проверяется и путь «клик → выбор файла». Пути — относительно рабочего каталога стенда. dialog задаёт, что делать со следующим alert, confirm и prompt: value accept, dismiss или текст ответа для prompt; сами диалоги пишутся в журнал всегда и читаются через page_logs с kind: dialogs. press без селектора нажимает клавишу на уровне страницы, click без селектора кликает по координатам x и y. force кликает, не дожидаясь кликабельности, timeout сокращает ожидание — под pointer-events: none элемент иначе ждёт все тридцать секунд. Если между вызовами страница перезагрузилась сама, в ответе появится navigatedSince: без него «модалка закрыта» после клика неотличимо от «клик не сработал».',
+      en: 'upload picks files: when the selector points at an input[type=file], files go straight into it — visibility is not required, and a hidden input behind a styled label is exactly the common case. On any other element (a button, a paperclip) the native file chooser is intercepted, so the "click → pick a file" path is covered too. Paths are relative to the stand working directory. dialog sets what happens to the next alert, confirm and prompt: value accept, dismiss, or the reply text for a prompt; the dialogs themselves are always logged and read back with page_logs, kind: dialogs. press without a selector presses a key at page level, click without a selector clicks at the x and y coordinates. force clicks without waiting for actionability, timeout shortens the wait — under pointer-events: none an element otherwise waits out all thirty seconds. If the page reloaded itself between calls, the answer carries navigatedSince: without it "the modal is closed" after a click is indistinguishable from "the click did nothing".',
+    }),
+  browser_goto: () =>
+    t({
+      ru: 'Стабилизация останавливает переходы и анимации: без этого снимки и замеры пляшут между прогонами. Проверить саму анимацию в такой странице нельзя — через сто миллисекунд элемент уже в конечном состоянии. animations: "allow" возвращает движение: здесь на один переход, в browser_open на всю сессию. Заодно снимается reducedMotion: reduce, иначе аккуратно написанная страница глушит анимации сама медиа-запросом и переключатель выглядел бы сломанным. Остальная стабилизация остаётся: шрифты, ленивые картинки, блоки, появляющиеся по прокрутке, — она про полноту кадра, а не про движение. Для визуальной регрессии такую сессию использовать не надо: два прогона подряд дадут разные пиксели.',
+      en: 'Stabilization stops transitions and animations: without it screenshots and measurements drift between runs. That also makes the animation itself impossible to check — a hundred milliseconds in, the element is already in its final state. animations: "allow" brings the motion back: here for one navigation, in browser_open for the whole session. It also lifts reducedMotion: reduce, since a well-written page mutes its own animations by media query and the switch would look broken. The rest of the stabilization stays — fonts, lazy images, blocks revealed on scroll — that part is about a complete frame, not about motion. Do not use such a session for visual regression: two consecutive runs will differ in pixels.',
+    }),
+  page_logs: () =>
+    t({
+      ru: 'Четыре вида записей: консоль, необработанные исключения, сетевые запросы и диалоги (alert, confirm, prompt) с их текстом и тем, как они были закрыты. Рядом с ошибками отдаётся resourceErrors — не доехавшие скрипты, стили и документы. Это отдельная категория потому, что именно она объясняет самый запутанный случай: страница отвечает 200 и выглядит целой, но её бандл ответил 404 после пересборки, JS на странице нет, клики «проходят» и ничего не делают, а необработанных исключений при этом не возникает. По умолчанию показывается только то, что случилось после последнего перехода; sinceNavigation: false отдаёт всё с открытия сессии. onlyProblems: false добавляет обычные записи консоли и удачные запросы.',
+      en: 'Four kinds of entries: console, unhandled exceptions, network requests, and dialogs (alert, confirm, prompt) with their text and how they were closed. Next to the errors comes resourceErrors — scripts, stylesheets and documents that never arrived. It is a category of its own because it explains the most confusing case: the page answers 200 and looks whole, but its bundle returned 404 after a rebuild, there is no JS on the page, clicks "succeed" and do nothing, and no unhandled exception is raised at all. By default only what happened after the last navigation is shown; sinceNavigation: false returns everything since the session was opened. onlyProblems: false adds ordinary console entries and successful requests.',
+    }),
+  layout_audit: () =>
+    t({
+      ru: 'Счётчики возвращаются по всем категориям всегда, подробности — по тем, что перечислены в categories. include и exclude сужают саму область разбора, и вместе с подробностями уходят и числа: шапка с подвалом на странице те же, что вчера, и их мелкие тач-таргеты с низким контрастом перебивают собой то, ради чего разбор и затевали. Сужение видно в ответе полем scope — пустой отчёт по опечатке в селекторе иначе не отличить от пустого отчёта по здоровой странице. Горизонтальный скролл документа считается всегда по всей странице: это её свойство, а не свойство блока.',
+      en: 'Counters come back for every category always, details only for those listed in categories. include and exclude narrow the inspected area itself, and the numbers narrow with the details: the header and the footer are the same as yesterday, and their small tap targets and low contrast drown out whatever the audit was actually for. The narrowing shows up in the answer as scope — otherwise an empty report caused by a typo in a selector is indistinguishable from an empty report on a healthy page. Document-level horizontal scroll is always measured across the whole page: it is a property of the page, not of a block.',
+    }),
+  validate_html: () =>
+    t({
+      ru: 'Разметка уходит в Nu HTML Checker — отдельный сервис, адрес которого задаётся в VNU_URL. Он стартует дольше остального стенда, и stand_info с «не ответил за 2 с» означает проверку живости, а не отсутствие валидатора в сборке. Вызывать инструмент можно в любом случае: при недоступном vnu он переключается на локальную проверку html-validate и честно пишет об этом полями source и fallbackReason. Наборы правил у них разные: html-validate строже к стилю разметки и мягче к тому, что считается ошибкой по спецификации.',
+      en: 'The markup goes to the Nu HTML Checker — a separate service whose address is set by VNU_URL. It starts slower than the rest of the stand, so "no answer in 2s" in stand_info reports a liveness check, not a validator missing from the build. Call the tool either way: when vnu is unreachable it falls back to the local html-validate check and says so in the source and fallbackReason fields. Their rule sets differ: html-validate is stricter about markup style and softer about what counts as an error by the specification.',
     }),
 });
 

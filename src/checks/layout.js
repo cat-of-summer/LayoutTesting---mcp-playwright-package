@@ -4,7 +4,7 @@
  */
 
 function collectLayoutIssues(options) {
-  const { minTarget, contrastRatio, maxItems, categories } = options;
+  const { minTarget, contrastRatio, maxItems, categories, include, exclude } = options;
 
   const cssPath = (el) => {
     if (!el || el.nodeType !== 1) return '';
@@ -221,7 +221,55 @@ function collectLayoutIssues(options) {
     };
   }
 
-  const all = Array.from(document.body ? document.body.querySelectorAll('*') : []);
+  /*
+   * Область разбора.
+   *
+   * Без include берём всё тело — так было и раньше. С include проверяются только
+   * перечисленные блоки вместе с их содержимым: шапка и подвал на странице те же, что вчера,
+   * и их мелкие тач-таргеты с низким контрастом перебивают собой то, ради чего разбор и
+   * затевали. exclude отрезает ветки уже внутри выбранного.
+   *
+   * Счётчики считаются по этому же набору: смысл сужения в том, чтобы уходили и подробности,
+   * и числа, иначе в ответе остаётся тот же шум, только без имён.
+   */
+  const roots = include && include.length
+    ? include.flatMap((sel) => {
+        try {
+          return Array.from(document.querySelectorAll(sel));
+        } catch {
+          return [];
+        }
+      })
+    : document.body
+      ? [document.body]
+      : [];
+
+  const seen = new Set();
+  const picked = [];
+  for (const root of roots) {
+    // Сам указанный блок тоже проверяется — в отличие от body, который узлом разбора не был.
+    if (include && include.length && !seen.has(root)) {
+      seen.add(root);
+      picked.push(root);
+    }
+    for (const el of root.querySelectorAll('*')) {
+      if (seen.has(el)) continue;
+      seen.add(el);
+      picked.push(el);
+    }
+  }
+
+  const dropped = (el) =>
+    (exclude || []).some((sel) => {
+      try {
+        return Boolean(el.closest(sel));
+      } catch {
+        return false;
+      }
+    });
+
+  const all = exclude && exclude.length ? picked.filter((el) => !dropped(el)) : picked;
+  const inScope = new Set(all);
   const visible = [];
   const overflowing = [];
 
@@ -418,6 +466,8 @@ function collectLayoutIssues(options) {
     .map(({ el, right, ...rest }) => rest);
 
   for (const img of Array.from(document.images)) {
+    // Картинки живут отдельным списком документа, поэтому сужение применяем к ним явно.
+    if (!inScope.has(img)) continue;
     const rect = img.getBoundingClientRect();
     /*
      * Подменённая заглушкой картинка грузится, и по naturalWidth её уже не отличить от
@@ -511,6 +561,11 @@ function collectLayoutIssues(options) {
     total: Object.values(counts).reduce((a, b) => a + b, 0),
     counts,
     ...(wanted ? { categories: [...wanted] } : {}),
+    /* Сужение показываем в ответе: иначе пустой отчёт по опечатке в селекторе не отличить
+       от пустого отчёта по здоровой странице. */
+    ...(include?.length || exclude?.length
+      ? { scope: { ...(include?.length ? { include, nodes: all.length } : {}), ...(exclude?.length ? { exclude } : {}) } }
+      : {}),
     issues: shown,
   };
 }
@@ -531,9 +586,9 @@ export const AUDIT_CATEGORIES = [
 
 export async function layoutAudit(
   page,
-  { minTarget = 24, contrastRatio = 4.5, maxItems = 50, categories = null } = {},
+  { minTarget = 24, contrastRatio = 4.5, maxItems = 50, categories = null, include = null, exclude = null } = {},
 ) {
-  return page.evaluate(collectLayoutIssues, { minTarget, contrastRatio, maxItems, categories });
+  return page.evaluate(collectLayoutIssues, { minTarget, contrastRatio, maxItems, categories, include, exclude });
 }
 
 /** Дамп вычисленных стилей — «почему этот блок не там, где я жду». */

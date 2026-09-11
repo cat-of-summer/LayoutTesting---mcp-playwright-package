@@ -1,0 +1,71 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Фикстура: выбор файлов двумя путями</title>
+<!--
+  Два пути к одному input[type=file], и проверять надо оба.
+
+  Первый — инпут напрямую: он скрыт за стилизованным label, видимости у него нет, и любая
+  проверка, требующая видимого элемента, на нём споткнётся. Второй — кнопка, которая
+  открывает системный диалог выбора: в DOM после клика не меняется ничего, и без перехвата
+  диалога этот путь не проверить вовсе.
+
+  Форма отправляется как multipart, чтобы на ней же проверялась запись тела запроса.
+-->
+<style>
+  body { margin: 0; font: 16px/1.6 system-ui, sans-serif; color: #16181d; background: #fff; }
+  main { max-width: 640px; margin: 0 auto; padding: 24px 16px; }
+  h1 { font-size: 22px; margin: 0 0 16px; }
+  .row { margin: 0 0 16px; }
+  .drop { display: inline-flex; align-items: center; min-height: 44px; padding: 0 16px;
+          border: 1px dashed #9aa2b1; border-radius: 8px; cursor: pointer; }
+  .clip { min-height: 44px; padding: 0 16px; border: 0; border-radius: 8px;
+          background: #1a4fd6; color: #fff; font: inherit; cursor: pointer; }
+  /* Инпут спрятан так, как это делают в жизни: не display: none, но и не видим. */
+  #files { position: absolute; width: 1px; height: 1px; opacity: 0; pointer-events: none; }
+  #picked { margin: 0; font-size: 14px; color: #444a55; min-height: 22px; }
+  input[type=text] { min-height: 44px; padding: 0 12px; font: inherit;
+                     border: 1px solid #9aa2b1; border-radius: 8px; }
+</style>
+</head>
+<body>
+<main>
+  <h1>Отклик на вакансию</h1>
+
+  <form id="form" action="/api/vacancy" method="post" enctype="multipart/form-data">
+    <div class="row">
+      <label class="field" for="name">Имя</label><br>
+      <input id="name" name="name" type="text" value="Иван">
+    </div>
+
+    <div class="row">
+      <label class="drop" for="files">Перетащите файлы или нажмите</label>
+      <input id="files" name="files[]" type="file" multiple>
+    </div>
+
+    <div class="row">
+      <button class="clip" id="clip" type="button">Скрепка</button>
+    </div>
+
+    <p id="picked"></p>
+    <button class="clip" id="send" type="submit">Отправить</button>
+  </form>
+</main>
+
+<script>
+  var input = document.getElementById('files');
+  var picked = document.getElementById('picked');
+
+  // Кнопка открывает системный диалог выбора — тот самый путь, который иначе непроверяем.
+  document.getElementById('clip').addEventListener('click', function () { input.click(); });
+
+  input.addEventListener('change', function () {
+    picked.textContent = Array.prototype.map.call(input.files, function (f) {
+      return f.name + ' (' + f.size + ')';
+    }).join(', ');
+  });
+</script>
+</body>
+</html>

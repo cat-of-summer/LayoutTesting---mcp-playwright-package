@@ -11,6 +11,11 @@ export const PROFILE_DEFAULTS = {
   deviceScaleFactor: 1,
   colorScheme: 'light',
   reducedMotion: 'reduce',
+  /**
+   * Что делать с движением: freeze останавливает переходы и анимации перед проверками,
+   * allow оставляет страницу живой. См. stabilize() и normalizeProfile ниже.
+   */
+  animations: 'freeze',
   forcedColors: 'none',
   locale: 'ru-RU',
   timezoneId: 'UTC',
@@ -83,6 +88,15 @@ export function normalizeProfile(input = {}) {
   const { auth, ...rest } = input;
   const p = { ...PROFILE_DEFAULTS, ...rest };
   if (auth) p.httpCredentials = parseAuth(auth);
+  /*
+   * Одного снятия служебного CSS мало: reducedMotion по умолчанию reduce, а аккуратно
+   * написанная страница глушит свои анимации сама медиа-запросом. Переключатель, не
+   * трогающий его, давал бы ровно тот же неподвижный результат — и выглядел бы сломанным.
+   *
+   * Явное значение сильнее: reducedMotion: 'reduce' вместе с animations: 'allow' — это
+   * проверка «уважает ли страница настройку», и переписывать её нельзя.
+   */
+  if (p.animations === 'allow' && rest.reducedMotion === undefined) p.reducedMotion = 'no-preference';
   p.viewport = resolveViewport(p.viewport);
   /* storageState принимается именем файла из state/, а не путём: путь наружу отдавать незачем,
      а имя разворачивается здесь один раз — иначе каждый инструмент разворачивал бы его сам. */

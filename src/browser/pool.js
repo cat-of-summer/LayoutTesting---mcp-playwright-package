@@ -114,7 +114,9 @@ function pushCapped(list, entry) {
   if (list.length > CONFIG.logBufferSize) list.splice(0, list.length - CONFIG.logBufferSize);
 }
 
-function attachCollectors(page, store) {
+function attachCollectors(page, session) {
+  const store = session.logs;
+
   page.on('console', (msg) => {
     pushCapped(store.console, {
       type: msg.type(),
@@ -143,6 +145,67 @@ function attachCollectors(page, store) {
       status: res.status(),
       failure: null,
     });
+  });
+
+  /*
+   * Диалоги. Без обработчика playwright закрывает их сам и молча — библиотека, показывающая
+   * ошибку через alert(), выглядит с той стороны как библиотека, которая ничего не сказала.
+   * Здесь текст попадает в журнал, а закрывается диалог ровно так же, как и раньше.
+   *
+   * Политика читается в момент события, а не запоминается при подписке: её меняют посреди
+   * сценария, когда выясняется, что confirm пора не отклонять, а принимать.
+   */
+  page.on('dialog', async (dialog) => {
+    const policy = session.dialogPolicy || {};
+    const accept = policy.action === 'accept';
+    pushCapped(store.dialogs, {
+      type: dialog.type(),
+      message: dialog.message(),
+      defaultValue: dialog.defaultValue() || null,
+      action: accept ? 'accept' : 'dismiss',
+      at: new Date().toISOString(),
+    });
+    try {
+      if (accept) await dialog.accept(policy.promptText ?? undefined);
+      else await dialog.dismiss();
+    } catch {
+      /* Диалог мог закрыться вместе со страницей — это не повод ронять сессию. */
+    }
+  });
+
+  /*
+   * Счётчик навигаций главного фрейма.
+   *
+   * Страница перезагружается и без ведома агента: live reload дев-сервера, редирект, meta
+   * refresh. Открытая модалка при этом закрывается, и «карточка закрыта» становится
+   * неотличимо от «клик не сработал». Считаем переходы, чтобы ответ действия мог сказать,
+   * что между вызовами страница сменилась.
+   */
+  page.on('framenavigated', (frame) => {
+    if (frame !== page.mainFrame()) return;
+    session.navSeq += 1;
+    let url = null;
+    try {
+      url = sanitizeUrl(frame.url());
+    } catch {
+      /* Фрейм уже мёртв — счётчик всё равно верен. */
+    }
+    session.lastNavigation = { url, at: new Date().toISOString() };
+  });
+
+  /*
+   * Патчи CSS и JS обещают пережить навигацию — см. browser/inject.js. До сих пор они
+   * переживали только browser_goto: после самопроизвольной перезагрузки страница оставалась
+   * без них, и разбор шёл по неправленому состоянию.
+   *
+   * Стабилизацию здесь не гоняем: она прокручивает документ целиком и стоит секунды, а
+   * срабатывал бы этот обработчик на каждый чих дев-сервера.
+   */
+  page.on('load', () => {
+    /* Свой переход патчи вернёт gotoAndSettle — и вернёт последними, уже после стабилизации.
+       Здесь отрабатываются только чужие переходы, иначе JS-патч выполнялся бы дважды. */
+    if (session.navByTool) return;
+    reapplyInjections(session).catch(() => {});
   });
 }
 
@@ -303,7 +366,13 @@ export async function createSession(profileInput = {}, { owned = null } = {}) {
     browserKey,
     /** internal — сессия одноразового прогона: её не вытесняют, у неё свой finally. */
     owned,
-    logs: { console: [], errors: [], network: [] },
+    logs: { console: [], errors: [], network: [], dialogs: [] },
+    /** Что делать с alert/confirm/prompt. Меняется через browser_act с action: dialog. */
+    dialogPolicy: { action: 'dismiss', promptText: null },
+    /** Сколько раз главный фрейм переходил и сколько из них агент уже видел. */
+    navSeq: 0,
+    navSeen: 0,
+    lastNavigation: null,
     /** Патчи CSS/JS, переживающие навигацию, — см. browser/inject.js. */
     injections: [],
     /** Правила перехвата запросов — см. browser/routes.js. */
@@ -317,7 +386,7 @@ export async function createSession(profileInput = {}, { owned = null } = {}) {
   };
   /* Страница падает и отдельно от браузера: тогда сессия числится живой, но мертва по сути. */
   page.on('crash', () => forget(session, 'crashed'));
-  attachCollectors(page, session.logs);
+  attachCollectors(page, session);
   sessions.set(id, session);
   startSweeper();
   return session;
@@ -330,6 +399,19 @@ export function getSession(id) {
      берущие sessionId, и рассыпать отметки по ним значило бы рано или поздно забыть про одну. */
   session.lastUsedMs = Date.now();
   return session;
+}
+
+/**
+ * Была ли навигация с прошлого обращения — и сразу отметить, что агент об этом узнал.
+ *
+ * Возвращает null, когда переходов не было: пустое поле в ответе дешевле, чем
+ * navigated: false в каждом вызове.
+ */
+export function takeNavigationSince(session) {
+  const count = (session.navSeq || 0) - (session.navSeen || 0);
+  session.navSeen = session.navSeq || 0;
+  if (count <= 0) return null;
+  return { count, ...(session.lastNavigation || {}) };
 }
 
 /** Последние закрытые сессии: чтобы browser_sessions отвечал на «куда делась моя». */
@@ -433,7 +515,7 @@ export function summarizeFailures(entries, { limit = 5 } = {}) {
 export async function gotoAndSettle(
   session,
   url,
-  { waitUntil = 'load', stabilizePage = true, timeout = CONFIG.defaultTimeout } = {},
+  { waitUntil = 'load', stabilizePage = true, timeout = CONFIG.defaultTimeout, animations = null } = {},
 ) {
   let response = null;
   let timedOut = false;
@@ -447,14 +529,20 @@ export async function gotoAndSettle(
     console: session.logs.console.length,
     errors: session.logs.errors.length,
     network: logMark,
+    dialogs: session.logs.dialogs.length,
   };
 
+  session.navByTool = true;
   try {
     response = await session.page.goto(url, { waitUntil, timeout });
   } catch (err) {
     // Боевые сайты сплошь и рядом не доходят до load: висит аналитика, чат,
     // long-poll. Страница при этом отрисована, и проверять её можно и нужно.
-    if (!/Timeout .* exceeded/i.test(err.message)) throw err;
+    if (!/Timeout .* exceeded/i.test(err.message)) {
+      // Иначе признак «идёт свой переход» остался бы поднятым на всю жизнь сессии.
+      session.navByTool = false;
+      throw err;
+    }
     timedOut = true;
     await session.page.waitForLoadState('domcontentloaded', { timeout: 5000 }).catch(() => {});
   }
@@ -462,12 +550,18 @@ export async function gotoAndSettle(
   let images = null;
   let stubbed = null;
   if (stabilizePage) {
-    ({ images, stubbed } = await stabilize(session.page, { pseudoLoc: session.profile.pseudoLoc }));
+    ({ images, stubbed } = await stabilize(session.page, {
+      pseudoLoc: session.profile.pseudoLoc,
+      /* Разовое значение перебивает условие сессии: иногда живая анимация нужна на одном
+         переходе, а переоткрывать сессию ради этого незачем. */
+      killMotion: (animations || session.profile.animations) !== 'allow',
+    }));
   }
 
   // Патчи агента возвращаем последними: они должны перебивать и стили страницы,
   // и служебный CSS стабилизации.
   await reapplyInjections(session);
+  session.navByTool = false;
 
   /* Заголовки и редиректы нужны SEO-проверкам и живут только здесь: дальше Response недоступен. */
   session.lastResponse = await responseFacts(response);
@@ -498,6 +592,10 @@ export async function gotoAndSettle(
       note: 'Часть ресурсов страницы не загрузилась — снимок будет неполным. Подробности: page_logs.',
     };
   }
+  /* Переход, о котором попросили, неожиданностью не является: отметку сдвигаем, иначе
+     первое же действие после browser_goto сообщало бы о навигации, и признак обесценился бы. */
+  session.navSeen = session.navSeq;
+
   if (status === 401) {
     result.hint = 'Страница за HTTP-аутентификацией. Передайте auth: "пользователь:пароль" при открытии сессии — в URL логин зашивать не надо.';
   }

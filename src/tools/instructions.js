@@ -35,6 +35,9 @@ const RU = `Стенд тестирования вёрстки: живой бр�
 - «обойди сайт», «собери все страницы», «найди дубли заголовков», «где битые ссылки» — crawl,
   затем crawl_pages (выборка страниц), crawl_query (селектор по всем страницам) и seo_report
   (сводный отчёт по сайту);
+- «заполни форму», «загрузи файл», «страница показала alert», «что именно ушло на сервер» —
+  browser_act (click, fill, upload, dialog) и browser_route с record: он записывает состав
+  запроса, а не только факт попадания;
 - «сохрани страницу», «работай по копии, не дёргай сайт» — page_save;
 - нужен доступ за логином — browser_storage: сохранить состояние и подставлять его по имени.
 
@@ -76,6 +79,9 @@ Where to start, by what the user asks:
 - "crawl the site", "collect all pages", "find duplicate titles", "find broken links" — crawl,
   then crawl_pages (select pages), crawl_query (run a selector across every page) and seo_report
   (site-wide report);
+- "fill the form", "upload a file", "the page shows an alert", "what did the form actually
+  send" — browser_act (click, fill, upload, dialog) and browser_route with record, which
+  captures the request body rather than just the fact that a rule matched;
 - "save the page", "work off a local copy, stop hitting the site" — page_save;
 - something is behind a login — browser_storage: save the state, then pass it by name.
 

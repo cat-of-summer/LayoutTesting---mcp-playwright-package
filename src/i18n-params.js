@@ -123,8 +123,6 @@ const EN = {
   'Проверяемая страница': 'The page under test',
   'Проверять ли одиночными запросами адреса вне обхода: canonical и hreflang наружу. По умолчанию да':
     'Whether to verify addresses outside the crawl with one-off requests: canonical and hreflang pointing away. Default yes',
-  'Прокрутка по вертикали': 'Vertical scroll amount',
-  'Прокрутка по горизонтали': 'Horizontal scroll amount',
   'Псевдолокализация: диакритика и +40% длины строк': 'Pseudo-localization: diacritics and +40% string length',
   'Пути относительно рабочего каталога, глоб поддерживается':
     'Paths relative to the working directory; globs are supported',
@@ -164,8 +162,6 @@ const EN = {
   'Страницы, где этих полей нет': 'Pages where these fields are missing',
   'Таймаут навигации, мс': 'Navigation timeout, ms',
   'Текст CSS': 'CSS text',
-  'Текст для fill, клавиша для press, значение для select':
-    'Text for fill, key for press, option value for select',
   'Только записи после последнего перехода. По умолчанию true':
     'Only entries after the last navigation. Default true',
   'Имя сохранённого профиля условий: остальные условия берутся из него. Список — в stand_info':
@@ -210,6 +206,39 @@ const EN = {
   'Ширина вшитых картинок, по умолчанию 1000': 'Width of the embedded images, default 1000',
   'Ширины: имена пресетов или WxH. По умолчанию ["desktop","mobile"]':
     'Widths: preset names or WxH. Default ["desktop","mobile"]',
+  'allow не глушит движение: переходы и анимации остаются живыми':
+    'allow leaves the motion alone: transitions and animations keep running',
+  'Своя строка User-Agent: часть сайтов отдаёт headless-браузеру 403':
+    'A User-Agent string of your own: some sites answer a headless browser with 403',
+  'Не нужен для scroll, для dialog и для press с кликом по координатам':
+    'Not required for scroll, for dialog, and for press or a click by coordinates',
+  'Текст для fill, клавиша для press, значение для select, accept | dismiss | текст ответа для dialog':
+    'Text for fill, key for press, option value for select, accept | dismiss | reply text for dialog',
+  'Для upload: пути к файлам относительно рабочего каталога стенда':
+    'For upload: file paths relative to the stand working directory',
+  'Смещение прокрутки по горизонтали; для click без селектора — координата':
+    'Horizontal scroll amount; for a click without a selector, the x coordinate',
+  'Смещение прокрутки по вертикали; для click без селектора — координата':
+    'Vertical scroll amount; for a click without a selector, the y coordinate',
+  'Сколько ждать элемент, мс. По умолчанию 30000': 'How long to wait for the element, ms. Default 30000',
+  'Кликнуть, не дожидаясь кликабельности: элемент под pointer-events: none иначе ждёт весь таймаут':
+    'Click without waiting for the element to be actionable: under pointer-events: none it otherwise waits out the whole timeout',
+  'По умолчанию add. requests — что записали правила с record':
+    'Default add. requests returns what the rules with record captured',
+  'Записывать совпавшие запросы: метод, адрес, заголовки и тело. У multipart — состав полей и имена файлов':
+    'Capture matching requests: method, address, headers and body. For multipart — the field list and file names',
+  'Для requests: показать записи только этого правила': 'For requests: show the entries of this rule only',
+  'Для requests: сколько последних записей показать. По умолчанию 20':
+    'For requests: how many of the most recent entries to show. Default 20',
+  'Разово, на этот переход: allow не глушит движение на странице':
+    'One-off, for this navigation only: allow leaves the page motion alone',
+  'Разбирать только эти блоки — шапка и подвал иначе набивают счётчики своими находками':
+    'Inspect only these blocks — the header and the footer otherwise pad the counters with their own findings',
+  'Не разбирать эти блоки': 'Skip these blocks',
+  'Страница целиком, а не видимая область. По умолчанию true':
+    'The whole page rather than the visible area. Default true',
+  'Снять прямоугольник страницы в CSS-пикселях — когда подходящего элемента для selector нет':
+    'Capture a rectangle of the page in CSS pixels — when there is no element a selector could target',
 };
 
 /**

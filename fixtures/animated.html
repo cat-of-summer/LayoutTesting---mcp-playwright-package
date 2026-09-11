@@ -1,0 +1,52 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Фикстура: раскрытие карточки с переходом</title>
+<!--
+  Карточка раскрывается переходом по grid-template-rows — приём, которым добиваются
+  плавного раскрытия блока неизвестной высоты.
+
+  Здесь проверяется сама стабилизация: по умолчанию стенд глушит переходы, и через сто
+  миллисекунд после клика карточка уже раскрыта полностью. С animations: "allow" на том же
+  моменте она должна быть раскрыта частично — то есть переход действительно идёт.
+
+  Медиа-запрос на prefers-reduced-motion стоит намеренно: аккуратная страница глушит свои
+  анимации сама, и переключатель обязан снимать и его тоже, иначе он бесполезен.
+-->
+<style>
+  body { margin: 0; font: 16px/1.6 system-ui, sans-serif; color: #16181d; background: #fff; }
+  main { max-width: 560px; margin: 0 auto; padding: 24px 16px; }
+  .card__body { display: grid; grid-template-rows: 0fr; transition: grid-template-rows 1.2s linear; }
+  .card.is-open .card__body { grid-template-rows: 1fr; }
+  .card__inner { overflow: hidden; }
+  button { min-height: 44px; padding: 0 16px; border: 0; border-radius: 8px;
+           background: #1a4fd6; color: #fff; font: inherit; cursor: pointer; }
+
+  @media (prefers-reduced-motion: reduce) {
+    .card__body { transition: none; }
+  }
+</style>
+</head>
+<body>
+<main>
+  <div class="card" id="card">
+    <button id="toggle" type="button">Подробнее о вакансии</button>
+    <div class="card__body">
+      <div class="card__inner" id="inner">
+        <p>Первый абзац описания вакансии, занимающий заметную высоту.</p>
+        <p>Второй абзац описания вакансии, чтобы раскрытая карточка была явно выше закрытой.</p>
+        <p>Третий абзац описания вакансии.</p>
+      </div>
+    </div>
+  </div>
+</main>
+
+<script>
+  document.getElementById('toggle').addEventListener('click', function () {
+    document.getElementById('card').classList.toggle('is-open');
+  });
+</script>
+</body>
+</html>
