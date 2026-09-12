@@ -5,7 +5,8 @@
  * Пишется генератором, а не руками, по одной причине: рукописный список описаний уже был — в
  * README, — и он разъехался с кодом. Половина README пересказывала описания инструментов, при
  * этом шестнадцать инструментов в нём не упоминались вовсе, а шесть разделов показывали
- * несуществующие команды. Сгенерированный файл разъехаться не может.
+ * несуществующие команды. Сгенерированный файл разъехаться не может. Выход с кодом 1, если у
+ * какого-то инструмента пустое название или описание.
  *
  *   node bin/gen-tools-doc.mjs            # docs/tools.md по-русски
  *   LT_LANG=en node bin/gen-tools-doc.mjs # то же по-английски
@@ -61,6 +62,20 @@ await client.connect(clientSide);
 const { tools } = await client.listTools();
 const { prompts } = await client.listPrompts().catch(() => ({ prompts: [] }));
 const { resourceTemplates } = await client.listResourceTemplates().catch(() => ({ resourceTemplates: [] }));
+
+/*
+ * Файл в git не хранится, собирается на сборке — и там же служит проверкой: инструмент без
+ * описания модель видит как одно имя и не знает, когда его звать. Такая сборка должна падать,
+ * а не выпускать справочник с пустым разделом. Проверяются оба языка: перевод описаний живёт
+ * отдельно и может отстать.
+ */
+const undocumented = tools.filter((tool) => !tool.title?.trim() || !tool.description?.trim());
+if (undocumented.length) {
+  console.error(`LT_LANG=${lang}: у инструментов пустое название или описание:`);
+  for (const tool of undocumented) console.error(`  - ${tool.name}`);
+  await closeAll();
+  process.exit(1);
+}
 
 const lines = [];
 lines.push(`# ${words.title}`, '');

@@ -102,6 +102,7 @@ export async function exportRender(refs, { client = getRestClient(), cacheDir = 
       return {
         id,
         node,
+        snapshot,
         scale: s,
         cached: path.join(cacheDir, group.fileKey, snapshot.version, 'renders', `${safeId(id)}@${s}x.png`),
       };
@@ -120,7 +121,10 @@ export async function exportRender(refs, { client = getRestClient(), cacheDir = 
           );
           for (const item of missing) {
             if (res[item.id]?.base64) await writeFile(item.cached, Buffer.from(res[item.id].base64, 'base64'));
-            else item.error = `Редактор не отрисовал узел: ${res[item.id]?.error || 'нет ответа'}.`;
+            else {
+              item.error = `Редактор не отрисовал узел: ${res[item.id]?.error || 'нет ответа'}.`;
+              item.hint = hiddenHint(item.snapshot, item.id);
+            }
           }
         },
         async () => {
@@ -133,9 +137,11 @@ export async function exportRender(refs, { client = getRestClient(), cacheDir = 
               const url = res.images?.[item.id];
               if (!url) {
                 item.error = res.err || 'Figma не отрисовала узел: он пустой, скрыт или больше 32 мегапикселей.';
+                item.hint = hiddenHint(item.snapshot, item.id);
                 continue;
               }
               delete item.error;
+              delete item.hint;
               await writeFile(item.cached, await client.download(url));
             }
           }
@@ -146,7 +152,7 @@ export async function exportRender(refs, { client = getRestClient(), cacheDir = 
     for (const item of plan) {
       const ref = refOf(group.fileKey, item.id);
       if (item.error) {
-        renders.push({ ref, error: item.error });
+        renders.push(strip({ ref, error: item.error, hint: item.hint }));
         continue;
       }
       const base = `${slug(item.node.name) || 'node'}-${safeId(item.id)}@${item.scale}x`;
@@ -220,6 +226,34 @@ export function normalizeSvg(svg, { prefix = 'icon' } = {}) {
   };
 }
 
+/**
+ * Почему узел не выгрузился, если причина видна по снимку.
+ *
+ * Общее «пустой или скрыт» оставляло агента дорисовывать иконку на глаз — и с размерами из
+ * головы. Скрытое Figma не рендерит ни в SVG, ни в PNG, но геометрия скрытого узла в снимке есть.
+ */
+export function hiddenHint(snapshot, id) {
+  const node = snapshot?.nodes?.[id];
+  if (!node) return undefined;
+  let hidden = null;
+  for (let current = node; current; current = snapshot.nodes[current.parent]) {
+    if (current.visible === false) {
+      hidden = current;
+      break;
+    }
+  }
+  const size = node.box ? `${round(node.box.w)}x${round(node.box.h)}` : null;
+  if (hidden) {
+    const who = hidden === node ? 'Узел скрыт в макете' : `Скрыт предок ${hidden.id} «${hidden.name ?? ''}»`;
+    return `${who}: Figma скрытое не рендерит. Размеры${size ? ` (${size})` : ''}, обводку и заливку возьмите из figma_inspect с hidden: true — рисовать иконку на глаз не нужно.`;
+  }
+  const kids = node.children?.map((kid) => snapshot.nodes[kid]).filter(Boolean) || [];
+  if (kids.length && kids.every((kid) => kid.visible === false)) {
+    return `Все дети узла скрыты — рисовать нечего. Их геометрию и краску покажет figma_inspect с hidden: true${size ? `; размер узла ${size}` : ''}.`;
+  }
+  return undefined;
+}
+
 export async function exportSvg(refs, { client = getRestClient(), cacheDir = DIRS.figma, editor = null } = {}) {
   const runId = newRunId('figma-svg');
   const dir = await runDir(runId);
@@ -255,7 +289,8 @@ export async function exportSvg(refs, { client = getRestClient(), cacheDir = DIR
     for (const id of group.nodeIds) {
       const ref = refOf(group.fileKey, id);
       if (!sources[id]?.svg) {
-        failed.push({ ref, error: sources[id]?.error || 'Figma не выгрузила SVG: узел пустой или скрыт.' });
+        const { snapshot } = found.get(id);
+        failed.push(strip({ ref, error: sources[id]?.error || 'Figma не выгрузила SVG: узел пустой или скрыт.', hint: hiddenHint(snapshot, id) }));
         continue;
       }
       const { node } = found.get(id);

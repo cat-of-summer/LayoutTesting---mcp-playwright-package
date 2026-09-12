@@ -7,7 +7,7 @@
  * сворачиваются в одну строку с их текстами. И порядок детей берётся не из слоёв, а из потока
  * auto-layout или из положения на холсте: слои в макетах перепутаны чаще, чем нет.
  */
-import { cssText, nodeCss, round } from './css.js';
+import { colorCss, cssText, nodeCss, paintNotes, paintSummary, round } from './css.js';
 import { childNodes, strip } from './snapshot.js';
 
 const isVisible = (node) => node.visible !== false;
@@ -15,6 +15,13 @@ const isVisible = (node) => node.visible !== false;
 const clip = (value, max) => {
   const s = String(value ?? '').replace(/\s+/g, ' ').trim();
   return s.length > max ? `${s.slice(0, max - 1)}…` : s;
+};
+
+/** Обрезка текста узла со счётчиком: сколько текстов ушло с многоточием, ответ говорит прямо. */
+const clipText = (node, max, stats) => {
+  const chars = node.text?.chars ?? '';
+  if (stats && String(chars).replace(/\s+/g, ' ').trim().length > max) stats.clippedTexts = (stats.clippedTexts || 0) + 1;
+  return clip(chars, max);
 };
 
 /**
@@ -62,7 +69,7 @@ export function firstText(snapshot, node) {
   return '';
 }
 
-function describe(node, origin) {
+function describe(node, origin, stats) {
   let line = `${node.id} ${node.type} ${JSON.stringify(node.name ?? '')}`;
   if (node.box) {
     line += ` ${round(node.box.x - origin.x)},${round(node.box.y - origin.y)} ${round(node.box.w)}x${round(node.box.h)}`;
@@ -103,19 +110,21 @@ function describe(node, origin) {
   if (node.type === 'TEXT') {
     const style = node.text?.style || {};
     const font = [style.family, style.size ? `${style.size}/${style.weight ?? ''}` : null].filter(Boolean).join(' ');
-    line += ` «${clip(node.text?.chars, 60)}»${font ? ` ${font}` : ''}`;
+    line += ` «${clipText(node, 60, stats)}»${font ? ` ${font}` : ''}`;
   }
+  const paint = paintSummary(node);
+  if (paint) line += ` {${paint}}`;
   return line;
 }
 
-export function outlineLines(snapshot, rootId, { depth = 6, hidden = false } = {}) {
+export function outlineLines(snapshot, rootId, { depth = 6, hidden = false, stats = null } = {}) {
   const root = snapshot.nodes[rootId];
   const origin = root.box || { x: 0, y: 0 };
   const lines = [];
   const pad = (level) => '  '.repeat(level);
 
   const visit = (node, level) => {
-    lines.push(`${pad(level)}${describe(node, origin)}`);
+    lines.push(`${pad(level)}${describe(node, origin, stats)}`);
     const kids = orderedChildren(snapshot, node, { hidden });
     if (!kids.length) return;
     if (level >= depth) {
@@ -146,7 +155,7 @@ export function outlineLines(snapshot, rootId, { depth = 6, hidden = false } = {
   return lines;
 }
 
-export function cssItems(snapshot, rootId, { depth = 2, hidden = false } = {}) {
+export function cssItems(snapshot, rootId, { depth = 2, hidden = false, stats = null } = {}) {
   const items = [];
   const cssOf = (node, parent) => cssText(nodeCss(node, { parent, children: childNodes(snapshot, node) }));
 
@@ -158,8 +167,9 @@ export function cssItems(snapshot, rootId, { depth = 2, hidden = false } = {}) {
         type: node.type,
         level,
         css: cssOf(node, parent),
-        text: node.type === 'TEXT' ? clip(node.text?.chars, 120) : undefined,
+        text: node.type === 'TEXT' ? clipText(node, 120, stats) : undefined,
         runs: node.text?.runs?.length,
+        notes: paintNotes(node),
         component:
           node.component && !node.component.definition
             ? strip({ set: node.component.set, name: node.component.name, props: node.component.props })
@@ -187,4 +197,69 @@ export function cssItems(snapshot, rootId, { depth = 2, hidden = false } = {}) {
   const root = snapshot.nodes[rootId];
   visit(root, snapshot.nodes[root.parent] ?? null, 0);
   return items;
+}
+
+/**
+ * Тексты поддерева целиком, в порядке чтения.
+ *
+ * Остальные режимы режут строку до 60–120 знаков: дереву нужна форма, а не содержимое. Но
+ * контент в вёрстку переносят именно отсюда, и абзац, оборванный многоточием, уезжает на сайт
+ * оборванным — выглядит он при этом как законченный.
+ */
+export function textItems(snapshot, rootId, { hidden = false } = {}) {
+  const items = [];
+  const visit = (node) => {
+    if (node.type === 'TEXT') {
+      const style = node.text?.style || {};
+      const fill = node.fills?.length === 1 && node.fills[0].kind === 'solid' ? colorCss(node.fills[0].color) : undefined;
+      items.push(
+        strip({
+          id: node.id,
+          text: node.text?.chars ?? '',
+          font: style.size ? `${round(style.size)}/${style.weight ?? ''}` : undefined,
+          color: fill,
+          runs: node.text?.runs?.map((run) =>
+            strip({
+              text: run.text,
+              weight: run.style?.weight,
+              size: run.style?.size,
+              italic: run.style?.italic,
+              decoration: run.style?.decoration,
+              color: run.fills?.[0]?.kind === 'solid' ? colorCss(run.fills[0].color) : undefined,
+            }),
+          ),
+        }),
+      );
+      return;
+    }
+    for (const kid of orderedChildren(snapshot, node, { hidden })) visit(kid);
+  };
+  visit(snapshot.nodes[rootId]);
+  return items;
+}
+
+/**
+ * Переменные Figma, на которые ссылаются показанные узлы, вместе с цепочкой алиасов.
+ *
+ * Раньше css-режим отдавал все переменные снимка в каждом ответе — десятки строк на запрос про
+ * один текст. Дорогой ответ приучает экономить вызовы, а сэкономленный вызов — это цвет,
+ * взятый на глаз.
+ */
+export function usedVariables(snapshot, ids) {
+  const all = snapshot.variables;
+  if (!all) return undefined;
+  const out = {};
+  const add = (id) => {
+    if (out[id] || !all[id]) return;
+    out[id] = all[id];
+    for (const value of Object.values(all[id].modes || {})) {
+      if (value?.type === 'VARIABLE_ALIAS') add(value.id);
+    }
+  };
+  for (const id of ids) {
+    const node = snapshot.nodes[id];
+    if (!node) continue;
+    for (const ref of new Set(JSON.stringify(node).match(/VariableID:[^"\\]+/g) || [])) add(ref);
+  }
+  return Object.keys(out).length ? out : undefined;
 }

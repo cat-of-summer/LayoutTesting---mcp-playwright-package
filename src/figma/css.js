@@ -260,6 +260,72 @@ function strokeParts(node) {
   return { decls: [['border', `${px(stroke.weight)} ${style} ${color}`]], shadow: null };
 }
 
+/**
+ * Краска узла одной строкой — для outline.
+ *
+ * Дерево слоёв без краски провоцирует угадывать: геометрия прочитана, а цвет, толщина линии и
+ * размытие берутся «по смыслу» или из сводки токенов. У LINE высота в рамке всегда 0, и о линии
+ * без обводки не известно ничего, кроме длины. Значения эффектов — уже в единицах CSS, как в
+ * css-режиме: иначе blur 12 из макета так и уезжал бы в blur(12px).
+ */
+export function paintSummary(node) {
+  const bits = [];
+  const fills = [...(node.fills || [])].reverse();
+  if (fills.length) {
+    const words = fills.map((paint) => {
+      if (paint.kind === 'solid') return colorCss(paint.color);
+      if (paint.kind === 'image') {
+        const mode = { FIT: ' fit', TILE: ' tile' }[paint.scaleMode] || '';
+        return `img${mode}${paint.opacity != null && paint.opacity < 1 ? ` op${round(paint.opacity)}` : ''}`;
+      }
+      return `grad-${paint.kind}`;
+    });
+    bits.push(node.type === 'TEXT' ? `color ${words.join('+')}` : words.join('+'));
+  }
+  if (node.type === 'TEXT' && node.text?.runs?.length) bits.push(`runs${node.text.runs.length}`);
+
+  const stroke = node.stroke;
+  const strokePaint = (node.strokes || [])[0];
+  if (stroke && strokePaint && (stroke.weight || stroke.weights)) {
+    const color = strokePaint.kind === 'solid' ? colorCss(strokePaint.color) : `grad-${strokePaint.kind}`;
+    const width = stroke.weights ? stroke.weights.map((w) => round(w || 0)).join('/') : round(stroke.weight);
+    const align = stroke.align === 'OUTSIDE' ? ' out' : stroke.align === 'CENTER' && !SHAPES.has(node.type) ? ' center' : '';
+    bits.push(`stroke ${color} ${width}${align}${stroke.dashes?.length ? ' dash' : ''}`);
+  }
+
+  if (node.type !== 'ELLIPSE' && node.radius) {
+    bits.push(`r${Array.isArray(node.radius) ? node.radius.map((r) => round(r)).join('/') : round(node.radius)}`);
+  }
+  const shadows = (node.effects || []).filter((effect) => effect.type === 'drop' || effect.type === 'inner').length;
+  if (shadows) bits.push(`shadow×${shadows}`);
+  for (const effect of node.effects || []) {
+    if (effect.type === 'blur') bits.push(`blur(${px(effect.blur / 2)})`);
+    if (effect.type === 'backdrop') bits.push(`backdrop blur(${px(effect.blur / 2)})`);
+  }
+  if (node.opacity != null && node.opacity < 1) bits.push(`op${round(node.opacity)}`);
+  if (node.blend && BLEND[node.blend]) bits.push(`blend ${BLEND[node.blend]}`);
+  if (node.isMask) bits.push('mask');
+  return bits.join(', ');
+}
+
+/**
+ * Что в декларации не уместилось, но в макете есть.
+ *
+ * Слой background прозрачности не имеет: картинка с opacity 0.6 в CSS выходит в полную силу, и
+ * страница ярче макета. Маска обрезает соседей выше по слоям — это clip-path или mask-image на
+ * общем родителе, а не свойство самого узла. Выдумывать под это декларацию нельзя, молчать тоже.
+ */
+export function paintNotes(node) {
+  const notes = [];
+  for (const paint of node.fills || []) {
+    if (paint.kind === 'image' && paint.opacity != null && paint.opacity < 1) {
+      notes.push(`заливка-картинка с opacity ${round(paint.opacity)}: в background она не выражается — отдельный слой (<img> или ::before) с opacity`);
+    }
+  }
+  if (node.isMask) notes.push('узел — маска: обрезает слои выше себя в том же родителе; в CSS это clip-path или mask-image');
+  return notes.length ? notes : undefined;
+}
+
 function textDecls(add, node) {
   const style = node.text?.style;
   if (!style) return;

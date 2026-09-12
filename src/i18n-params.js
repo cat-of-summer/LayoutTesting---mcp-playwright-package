@@ -247,11 +247,11 @@ const EN = {
     'Ask Figma again instead of using the check cached for 10 minutes',
   'Сверить версию файла с Figma, даже если снимок свежий': 'Check the file version with Figma even if the snapshot is fresh',
   'Узел: ссылка figma.com или запись ключ:id': 'A node: a figma.com link or a key:id entry',
-  'outline (по умолчанию) — дерево слоёв с раскладкой и текстами; css — стили узлов':
-    'outline (default) — the layer tree with layout and texts; css — node styles',
+  'outline (по умолчанию) — дерево слоёв с раскладкой, краской и текстами; css — стили узлов; text — тексты целиком':
+    'outline (default) — the layer tree with layout, paint and texts; css — node styles; text — full texts',
   'Глубина обхода. По умолчанию 6 для outline и 2 для css': 'Traversal depth. Default 6 for outline and 2 for css',
   'Показывать скрытые слои': 'Include hidden layers',
-  'По умолчанию 200 строк outline или 60 узлов css': 'Default 200 outline lines or 60 css nodes',
+  'По умолчанию 200 строк outline, 60 узлов css или 100 текстов': 'Default 200 outline lines, 60 css nodes or 100 texts',
   'С какой записи продолжить: значение из подсказки note': 'Where to continue: the value from the note hint',
   'render (по умолчанию) — PNG узла; svg — векторы и иконки; image — растровые заливки, кадрированные как в макете':
     'render (default) — a PNG of the node; svg — vectors and icons; image — raster fills cropped as in the design',

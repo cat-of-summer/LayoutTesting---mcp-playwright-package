@@ -179,8 +179,17 @@ Do not retell the tool output in full — name the cause and what exactly produc
 6. figma_tokens${projectUrl ? ` с тем же project` : ''} — палитра, типографика, шкалы. unbound показывает, сколько раз значение вбито литералом при живой переменной Figma. Компонентные переменные — в разделе component.
 7. figma_comments и figma_behavior — требования и связи: что открывает модалку, что переключает состояние, что закреплено при прокрутке. Неподтверждённое (unconfirmed) уточни у человека, а не додумывай.
 8. figma_export — иконки (svg, currentColor) и растровые заливки, кадрированные как в макете. Сначала проверь, нет ли их уже в проекте.
-9. Верстай: порядок DOM = порядок чтения самой узкой вёрстки, перестановки — CSS, декор — псевдоэлементами, значения — токенами.
-10. Проверь: figma_compare${pageUrl ? ` с url: "${pageUrl}"` : ''} по каждому брейкпоинту, затем layout_stress — длинный и пустой текст, список из двенадцати, битая картинка, набор ширин. Расхождение ≤1px и различия рендеринга шрифтов дефектом не считаются.`,
+9. Верстай блок за блоком, и перед каждым блоком — figma_inspect по его узлу:
+   - значения берутся из узла: цвет текста, заливка, обводка и её толщина, радиус, эффекты стоят в outline в фигурных скобках. figma_tokens — справочник имён для этих значений, а не их источник: «цвет по смыслу» и «толщина из шкалы» — это догадка;
+   - у LINE высота рамки всегда 0 — толщина линии только в stroke;
+   - тексты для контента — mode: text: остальные режимы режут строки многоточием (об этом говорит textsClipped);
+   - структура — из дерева макета, а не с картинки: что лежит в макете в одной группе или строке, то и в вёрстке в одном контейнере. Если ритм приходится добивать отступами-константами, неверна структура, а не отступы;
+   - notes в css-ответе (opacity картинки, маска) и effects в figma_tokens — это то, что в background не выражается: воспроизведи отдельным слоем;
+   - расхождение между рендером макета и страницей — повод посмотреть узел, а не объяснение «артефакт масштаба».
+   Порядок DOM = порядок чтения самой узкой вёрстки, перестановки — CSS, декор — псевдоэлементами.
+10. Проверь: figma_compare${pageUrl ? ` с url: "${pageUrl}"` : ''} по каждому брейкпоинту. Разбери и semantic (тексты), и paint (фон, рамки, толщина линий, радиусы, размеры декора). Если found больше показанного — note скажет, как дочитать; до этого сверка не закончена.
+11. Прокликай всё интерактивное в сессии с animations: "allow" — по умолчанию движение заморожено, и снимок работающего слайдера не отличить от сломанного: аккордеон (открыть, закрыть, переключить), слайдер (обе стрелки, крайние положения), hover, модалки, интро при перезагрузке. browser_act, между действиями — screenshot или computed_styles.
+12. layout_stress — длинный и пустой текст, список из двенадцати, битая картинка, набор ширин. Расхождение ≤1px и различия рендеринга шрифтов дефектом не считаются.`,
           en: `Build the page from the design: ${figma}.
 
 One rule: the design is pulled once, and all analysis runs over that snapshot. The REST limit is ten requests a minute, and twenty a month on a View/Collab seat.
@@ -193,8 +202,17 @@ One rule: the design is pulled once, and all analysis runs over that snapshot. T
 6. figma_tokens${projectUrl ? ' with the same project' : ''} — palette, typography, scales. unbound shows how often a value is hardcoded while a Figma variable exists. Component variables are in the component section.
 7. figma_comments and figma_behavior — requirements and links: what opens a modal, what switches a state, what stays pinned while scrolling. Anything marked unconfirmed goes to the human, not to guesswork.
 8. figma_export — icons (svg, currentColor) and raster fills cropped as in the design. First check whether the project already has them.
-9. Build: DOM order = reading order of the narrowest layout, reordering in CSS, decorations as pseudo-elements, values as tokens.
-10. Check: figma_compare${pageUrl ? ` with url: "${pageUrl}"` : ''} at every breakpoint, then layout_stress — long and empty text, a list of twelve, a broken image, a range of widths. A difference of 1px or font rendering is not a defect.`,
+9. Build block by block, and before each block run figma_inspect on its node:
+   - values come from the node: text color, fill, stroke and its weight, radius and effects are in the outline inside curly braces. figma_tokens is a dictionary of names for those values, not their source: "a color that makes sense" and "a weight from the scale" are guesses;
+   - a LINE always has a zero-height box — the line weight lives only in stroke;
+   - content texts come from mode: text: the other modes cut strings with an ellipsis (textsClipped says so);
+   - structure comes from the design tree, not from the picture: what sits in one group or row in the design sits in one container in the markup. If the rhythm has to be patched with constant margins, the structure is wrong, not the margins;
+   - notes in the css answer (image opacity, masks) and effects in figma_tokens are what background cannot express: reproduce them as a separate layer;
+   - a difference between the design render and the page is a reason to inspect the node, not to explain it away as a scaling artifact.
+   DOM order = reading order of the narrowest layout, reordering in CSS, decorations as pseudo-elements.
+10. Check: figma_compare${pageUrl ? ` with url: "${pageUrl}"` : ''} at every breakpoint. Go through both semantic (texts) and paint (backgrounds, borders, line weights, radii, decoration sizes). If found exceeds what is shown, note says how to read the rest; until then the check is not finished.
+11. Click through everything interactive in a session with animations: "allow" — motion is frozen by default, and a screenshot of a working slider looks exactly like a broken one: accordions (open, close, switch), sliders (both arrows, both ends), hover, modals, the intro on reload. Use browser_act, with a screenshot or computed_styles between actions.
+12. layout_stress — long and empty text, a list of twelve, a broken image, a range of widths. A difference of 1px or font rendering is not a defect.`,
         }),
       ),
   );

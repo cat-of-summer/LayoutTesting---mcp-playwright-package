@@ -130,6 +130,7 @@ export function collectTokens(frames, { project = null, minUses = 2 } = {}) {
   const radii = new Map();
   const borders = new Map();
   const shadows = new Map();
+  const effects = new Map();
   const durations = new Map();
   const easings = new Map();
 
@@ -156,6 +157,13 @@ export function collectTokens(frames, { project = null, minUses = 2 } = {}) {
       for (const effect of node.effects || []) {
         if (effect.color) addColor(colors, effect.color, 'shadow', ref, node.styles?.effect);
         if (effect.type === 'drop' || effect.type === 'inner') bump(shadows, shadowCss(effect), ref, { figma: node.styles?.effect });
+        /* Радиус размытия Figma вдвое больше того, что понимает blur(). */
+        if (effect.type === 'blur') bump(effects, `filter: blur(${round(effect.blur / 2)}px)`, ref);
+        if (effect.type === 'backdrop') bump(effects, `backdrop-filter: blur(${round(effect.blur / 2)}px)`, ref);
+      }
+      if (node.blend) bump(effects, `mix-blend-mode: ${node.blend.toLowerCase().replace(/_/g, '-')}`, ref);
+      for (const paint of node.fills || []) {
+        if (paint.kind === 'image' && paint.opacity != null && paint.opacity < 1) bump(effects, `image-fill opacity: ${round(paint.opacity)}`, ref);
       }
 
       if (node.radius) for (const radius of [].concat(node.radius)) if (radius) bump(radii, `${round(radius)}px`, ref);
@@ -291,6 +299,9 @@ export function collectTokens(frames, { project = null, minUses = 2 } = {}) {
     radii: scale(radii, 'radius'),
     borders: scale(borders, 'border'),
     shadows: [...shadows.values()].filter((entry) => entry.uses >= minUses).map((entry, index) => ({ name: `--shadow-${index + 1}`, value: entry.key, uses: entry.uses, refs: entry.refs })),
+    /* Без порога minUses: единственное размытие над фотографией — не токен, но пропустить его
+       значит сверстать страницу ярче и резче макета. */
+    effects: [...effects.values()].map((entry) => ({ value: entry.key, uses: entry.uses, refs: entry.refs })),
     motion: {
       durations: [...durations.values()].map((entry) => ({ name: `--duration-${parseInt(entry.key, 10)}`, value: entry.key, uses: entry.uses })),
       easings: [...easings.values()].map((entry, index) => ({ name: `--ease-${index + 1}`, value: entry.key, uses: entry.uses })),

@@ -1,6 +1,9 @@
 .env
 node_modules/
 dist/
+
+# Справочник инструментов собирает `npm run docs` из самого сервера, в истории ему делать нечего.
+docs/
 artifacts/*
 !artifacts/.gitkeep
 

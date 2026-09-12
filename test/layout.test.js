@@ -199,3 +199,77 @@ test('снимок fullPage дожидается блоков, проявляю�
     await pool.closeSession(session.id);
   }
 });
+
+// ---------------------------------------------------------------------------
+// Намеренные клипы и неподвижная страница.
+// ---------------------------------------------------------------------------
+
+/** Разбор разметки, заданной строкой: фикстура в файле для двух блоков избыточна. */
+async function auditHtml(html, opts = {}) {
+  const session = await pool.createSession({ viewport: 'desktop' });
+  try {
+    await session.page.setContent(html);
+    return await layoutAudit(session.page, opts);
+  } finally {
+    await pool.closeSession(session.id);
+  }
+}
+
+test('обрезанное рамкой считается отдельно и в total не входит', options, async () => {
+  const res = await auditHtml(`<!doctype html><style>body{margin:0}
+    .marquee{width:300px;height:40px;overflow:hidden;background:#eee}
+    .marquee__track{width:2000px;height:40px;display:flex}
+    .card{width:200px;height:40px;background:#ddd}
+    .card__big{width:260px;height:40px}</style>
+    <div class="marquee"><div class="marquee__track">бегущая строка</div></div>
+    <div class="card"><div class="card__big">торчит</div></div>`, { categories: ['boxOverflow'] });
+
+  assert.equal(res.counts.boxOverflowClipped, 1, JSON.stringify(res.counts));
+  assert.equal(res.counts.boxOverflow, 1, 'настоящий вылет остаётся в счёте');
+  assert.equal(res.issues.boxOverflow.at(-1).clipped, true, 'намеренный клип — в конце списка');
+});
+
+test('на замороженной странице с движением ответ несёт motion, на живой — нет', options, async () => {
+  const html = `<!doctype html><style>
+    .acc__body{transition:grid-template-rows 1000ms ease}
+    @keyframes run{to{transform:translateX(-100%)}}
+    .marquee{animation:run 9800ms linear infinite}</style>
+    <button aria-expanded="false">Открыть</button><div class="acc__body">текст</div><div class="marquee">строка</div>`;
+
+  const frozen = await auditHtml(html, { frozen: true });
+  assert.ok(frozen.motion, 'движение на замороженной странице должно быть названо');
+  assert.ok(frozen.motion.rules >= 2, JSON.stringify(frozen.motion));
+  assert.equal(frozen.motion.keyframes, 1);
+  assert.equal(frozen.motion.interactive, 1);
+
+  assert.equal((await auditHtml(html, { frozen: false })).motion, undefined);
+  assert.equal((await auditHtml('<!doctype html><p>статичная</p>', { frozen: true })).motion, undefined);
+});
+
+test('повторный переход на тот же адрес идёт мимо кэша', options, async () => {
+  let cssHits = 0;
+  const srv = http.createServer((req, res) => {
+    if (req.url.startsWith('/app.css')) {
+      cssHits += 1;
+      res.writeHead(200, { 'Content-Type': 'text/css', 'Cache-Control': 'max-age=3600' });
+      res.end('p{color:red}');
+      return;
+    }
+    res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8', 'Cache-Control': 'max-age=3600' });
+    res.end('<!doctype html><link rel="stylesheet" href="/app.css"><p>x</p>');
+  });
+  await new Promise((resolve) => srv.listen(0, '127.0.0.1', resolve));
+  const url = `http://127.0.0.1:${srv.address().port}/page`;
+  const session = await pool.createSession({ viewport: 'desktop' });
+  try {
+    const first = await pool.gotoAndSettle(session, url, { stabilizePage: false });
+    assert.equal(first.reloaded, undefined, 'первый переход — обычный');
+    const second = await pool.gotoAndSettle(session, url, { stabilizePage: false });
+    assert.equal(second.reloaded, true);
+    assert.equal(cssHits, 2, 'стили при повторном переходе должны прийти с сервера, а не из кэша');
+    assert.equal(session.motionFrozen, false, 'без стабилизации страница не заморожена');
+  } finally {
+    await pool.closeSession(session.id);
+    await new Promise((resolve) => srv.close(resolve));
+  }
+});

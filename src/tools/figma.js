@@ -21,7 +21,7 @@ import { issueTokenNow, lastTokenIssue, resolveToken } from '../figma/auth.js';
 import { FIGMA } from '../config.js';
 import { editorChannel, editorLogin, editorLogout, editorStatus } from '../figma/editor.js';
 import { exportImages, exportRender, exportSvg } from '../figma/export.js';
-import { cssItems, outlineLines } from '../figma/inspect.js';
+import { cssItems, outlineLines, textItems, usedVariables } from '../figma/inspect.js';
 import { getRestClient } from '../figma/rest.js';
 import { addRequests, ensureNode, ensureNodes, findNode, syncFigma } from '../figma/snapshot.js';
 import { groupRefs, refOf } from '../figma/url.js';
@@ -185,18 +185,18 @@ export function register(server) {
     {
       title: t({ ru: 'Узел макета', en: 'Design node' }),
       description: t({
-        ru: 'Узел макета по снимку: outline — дерево слоёв с размерами, раскладкой и текстами, одинаковые соседи свёрнуты; css — компактные стили узлов. Замена get_metadata и get_design_context без лимита вызовов.',
-        en: 'A design node from the snapshot: outline — the layer tree with sizes, layout and texts, identical siblings collapsed; css — compact node styles. Replaces get_metadata and get_design_context without a call limit.',
+        ru: 'Узел макета по снимку: outline — дерево слоёв с размерами, раскладкой, краской (цвет, обводка и её толщина, радиус, эффекты) и текстами, одинаковые соседи свёрнуты; css — компактные стили узлов; text — тексты поддерева целиком. Замена get_metadata и get_design_context без лимита вызовов.',
+        en: 'A design node from the snapshot: outline — the layer tree with sizes, layout, paint (color, stroke and its weight, radius, effects) and texts, identical siblings collapsed; css — compact node styles; text — full texts of the subtree. Replaces get_metadata and get_design_context without a call limit.',
       }),
       inputSchema: {
         figma: z.string().describe(d('Узел: ссылка figma.com или запись ключ:id')),
         mode: z
-          .enum(['outline', 'css'])
+          .enum(['outline', 'css', 'text'])
           .optional()
-          .describe(d('outline (по умолчанию) — дерево слоёв с раскладкой и текстами; css — стили узлов')),
+          .describe(d('outline (по умолчанию) — дерево слоёв с раскладкой, краской и текстами; css — стили узлов; text — тексты целиком')),
         depth: z.number().optional().describe(d('Глубина обхода. По умолчанию 6 для outline и 2 для css')),
         hidden: z.boolean().optional().describe(d('Показывать скрытые слои')),
-        limit: z.number().optional().describe(d('По умолчанию 200 строк outline или 60 узлов css')),
+        limit: z.number().optional().describe(d('По умолчанию 200 строк outline, 60 узлов css или 100 текстов')),
         offset: z.number().optional().describe(d('С какой записи продолжить: значение из подсказки note')),
       },
     },
@@ -209,18 +209,23 @@ export function register(server) {
         mode,
         ...(requests ? { requests } : {}),
       };
-      if (mode === 'css') {
-        const items = cssItems(snapshot, node.id, { depth: depth ?? 2, hidden });
-        return json({
-          ...head,
-          ...(snapshot.variables ? { variables: snapshot.variables } : {}),
-          ...capped(items, { limit: limit ?? 60, offset }),
-        });
+      /* Обрезанный абзац выглядит законченным: сколько текстов ушло с многоточием, говорим прямо. */
+      const clippedNote = (stats) =>
+        stats.clippedTexts
+          ? { textsClipped: `${stats.clippedTexts} текстов обрезаны многоточием — полностью их отдаёт mode: text` }
+          : {};
+      if (mode === 'text') {
+        return json({ ...head, ...capped(textItems(snapshot, node.id, { hidden }), { limit: limit ?? 100, offset }) });
       }
-      return json({
-        ...head,
-        ...capped(outlineLines(snapshot, node.id, { depth: depth ?? 6, hidden }), { limit: limit ?? 200, offset }),
-      });
+      if (mode === 'css') {
+        const stats = {};
+        const page = capped(cssItems(snapshot, node.id, { depth: depth ?? 2, hidden, stats }), { limit: limit ?? 60, offset });
+        const variables = usedVariables(snapshot, page.items.map((item) => item.id));
+        return json({ ...head, ...(variables ? { variables } : {}), ...page, ...clippedNote(stats) });
+      }
+      const stats = {};
+      const lines = outlineLines(snapshot, node.id, { depth: depth ?? 6, hidden, stats });
+      return json({ ...head, ...capped(lines, { limit: limit ?? 200, offset }), ...clippedNote(stats) });
     },
   );
 
@@ -250,6 +255,9 @@ export function register(server) {
         body: result.body,
         headings: result.headings,
         ...capped(result.lines, { limit: limit ?? 150, offset }),
+        ...(result.clippedTexts
+          ? { textsClipped: `${result.clippedTexts} текстов обрезаны многоточием — полностью их отдаёт figma_inspect с mode: text` }
+          : {}),
         notes: result.notes.slice(0, 30),
         slots: {
           lists: result.slots.lists,

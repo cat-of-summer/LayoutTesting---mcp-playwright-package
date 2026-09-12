@@ -19,13 +19,28 @@ export async function validateHtmlWithVnu(html, { maxMessages = 50 } = {}) {
     throw new Error(`vnu ответил ${res.status}. Проверьте, что контейнер vnu поднят (${CONFIG.vnuUrl}).`);
   }
   const data = await res.json();
-  const messages = (data.messages || []).map((m) => ({
+  return splitVnuMessages(data.messages || [], { maxMessages });
+}
+
+/**
+ * Сообщения vnu: разметка отдельно, встроенный CSS отдельно.
+ *
+ * CSS-валидатор внутри Nu отстаёт от браузеров на годы: @property, container-type, cqw,
+ * field-sizing, :modal для него «ошибки». На странице с современными стилями это сотни записей,
+ * и две настоящие ошибки разметки приходится выискивать среди них глазами. CSS-сообщения Nu
+ * помечает префиксом «CSS:» — по нему и делим; счёт и примеры остаются, в общий итог не идут.
+ */
+export function splitVnuMessages(raw, { maxMessages = 50 } = {}) {
+  const all = raw.map((m) => ({
     type: m.subType || m.type,
     message: m.message,
     line: m.lastLine ?? null,
     column: m.firstColumn ?? null,
     extract: (m.extract || '').trim().slice(0, 160),
   }));
+  const isCss = (m) => /^CSS:/.test(String(m.message || '').trim());
+  const messages = all.filter((m) => !isCss(m));
+  const css = all.filter(isCss);
   return {
     total: messages.length,
     byType: {
@@ -33,6 +48,15 @@ export async function validateHtmlWithVnu(html, { maxMessages = 50 } = {}) {
       warning: messages.filter((m) => m.type === 'warning' || m.type === 'info').length,
     },
     messages: messages.slice(0, maxMessages),
+    ...(css.length
+      ? {
+          css: {
+            count: css.length,
+            sample: css.slice(0, 5),
+            note: 'Сообщения о встроенном CSS в итог не входят: валидатор не знает многого из современного CSS (@property, container-type, cqw, field-sizing, :modal) и считает это ошибками. Проверять CSS — lint_css.',
+          },
+        }
+      : {}),
   };
 }
 

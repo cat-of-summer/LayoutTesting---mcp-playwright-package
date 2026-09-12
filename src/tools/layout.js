@@ -40,17 +40,20 @@ export function register(server) {
         exclude: z.array(z.string()).optional().describe(d('Не разбирать эти блоки')),
       },
     },
-    async ({ sessionId, minTarget, contrastRatio, maxItems, categories, include, exclude }) =>
-      json(
-        await layoutAudit(getSession(sessionId).page, {
+    async ({ sessionId, minTarget, contrastRatio, maxItems, categories, include, exclude }) => {
+      const session = getSession(sessionId);
+      return json(
+        await layoutAudit(session.page, {
           minTarget,
           contrastRatio,
           maxItems,
           categories,
           include,
           exclude,
+          frozen: Boolean(session.motionFrozen),
         }),
-      ),
+      );
+    },
   );
 
   server.registerTool(

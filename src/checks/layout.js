@@ -4,7 +4,7 @@
  */
 
 function collectLayoutIssues(options) {
-  const { minTarget, contrastRatio, maxItems, categories, include, exclude } = options;
+  const { minTarget, contrastRatio, maxItems, categories, include, exclude, frozen } = options;
 
   const cssPath = (el) => {
     if (!el || el.nodeType !== 1) return '';
@@ -593,9 +593,62 @@ function collectLayoutIssues(options) {
     }
   }
 
+  /*
+   * Намеренные клипы — бегущая строка, свёрнутый аккордеон, карусель — живут в том же списке,
+   * но в общий счёт не идут и стоят после настоящих вылетов: иначе они на каждом прогоне
+   * забивают отчёт, и настоящая находка тонет среди ожидаемых.
+   */
+  const clippedOverflow = issues.boxOverflow.filter((entry) => entry.clipped).length;
+  issues.boxOverflow.sort((a, b) => Number(a.clipped) - Number(b.clipped));
+
   const counts = Object.fromEntries(
     Object.entries(issues).map(([k, v]) => [k, Array.isArray(v) ? v.length : v ? 1 : 0]),
   );
+  counts.boxOverflow -= clippedOverflow;
+  if (clippedOverflow) counts.boxOverflowClipped = clippedOverflow;
+
+  /*
+   * Движение на странице.
+   *
+   * Сессия по умолчанию глушит переходы и анимации ради стабильных снимков, и все проверки идут по
+   * неподвижной странице. Аккордеон, дёргающийся при открытии, и слайдер, который не листает, на
+   * таком снимке неотличимы от исправных. Считаем по правилам стилей, а не по computed-значениям:
+   * заморозка обнуляет длительности, и по элементам движение уже не видно.
+   */
+  let motion = null;
+  if (frozen) {
+    let rules = 0;
+    let keyframes = 0;
+    const scan = (list) => {
+      for (const rule of Array.from(list || [])) {
+        if (rule.type === 7 /* KEYFRAMES_RULE */) keyframes += 1;
+        else if (rule.style) {
+          const s = rule.style;
+          if (/!important/.test(rule.cssText) && /caret-color: transparent/.test(rule.cssText)) continue;
+          const moving = (value) => value && value.split(',').some((part) => parseFloat(part) > 0);
+          if (moving(s.transitionDuration) || (s.animationName && s.animationName !== 'none')) rules += 1;
+        }
+        if (rule.cssRules) scan(rule.cssRules);
+      }
+    };
+    for (const sheet of Array.from(document.styleSheets)) {
+      try {
+        scan(sheet.cssRules);
+      } catch {
+        /* Чужой домен не отдаёт правила — это не повод терять остальное. */
+      }
+    }
+    const widgets = document.querySelectorAll('[aria-expanded], [aria-controls], details, dialog, [role="tab"], .swiper, [class*="slider"], [class*="carousel"]').length;
+    if (rules || keyframes || widgets) {
+      motion = {
+        frozen: true,
+        rules,
+        keyframes,
+        interactive: widgets,
+        note: 'Страница проверена неподвижной: переходы и анимации заморожены. Раскрытие, листание, hover и интро этими проверками не видны — откройте сессию с animations: "allow" и пройдите их через browser_act.',
+      };
+    }
+  }
 
   // Счётчики нужны всегда: по ним видно, что категория непустая, даже когда
   // подробности по ней не запрашивали.
@@ -606,8 +659,11 @@ function collectLayoutIssues(options) {
 
   return {
     viewport: { width: vw, height: vh },
-    total: Object.values(counts).reduce((a, b) => a + b, 0),
+    total: Object.entries(counts)
+      .filter(([k]) => k !== 'boxOverflowClipped')
+      .reduce((a, [, b]) => a + b, 0),
     counts,
+    ...(motion ? { motion } : {}),
     ...(wanted ? { categories: [...wanted] } : {}),
     /* Сужение показываем в ответе: иначе пустой отчёт по опечатке в селекторе не отличить
        от пустого отчёта по здоровой странице. */
@@ -635,9 +691,9 @@ export const AUDIT_CATEGORIES = [
 
 export async function layoutAudit(
   page,
-  { minTarget = 24, contrastRatio = 4.5, maxItems = 50, categories = null, include = null, exclude = null } = {},
+  { minTarget = 24, contrastRatio = 4.5, maxItems = 50, categories = null, include = null, exclude = null, frozen = false } = {},
 ) {
-  return page.evaluate(collectLayoutIssues, { minTarget, contrastRatio, maxItems, categories, include, exclude });
+  return page.evaluate(collectLayoutIssues, { minTarget, contrastRatio, maxItems, categories, include, exclude, frozen });
 }
 
 /** Дамп вычисленных стилей — «почему этот блок не там, где я жду». */

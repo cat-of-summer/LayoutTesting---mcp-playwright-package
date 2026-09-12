@@ -4,7 +4,7 @@ import { CONFIG } from '../config.js';
 import { contextOptions, hostResolverRules, normalizeProfile, profileKey } from './profile.js';
 import { applyProfileToPage, applyThrottle, stabilize } from './stabilize.js';
 import { reapplyInjections } from './inject.js';
-import { responseFacts } from './response.js';
+import { blockedHostHint, navigationErrorHint, responseFacts, sameDocument } from './response.js';
 
 const ENGINES = { chromium, firefox, webkit };
 
@@ -533,6 +533,23 @@ export async function gotoAndSettle(
   };
 
   session.navByTool = true;
+  /*
+   * Повторный переход на открытый адрес — это «перепроверь после правки». Из HTTP-кэша браузер
+   * отдаёт при этом старые стили, computed_styles не находит только что добавленный класс, и
+   * ошибку ищут в CSS, где её нет. Поэтому такой переход идёт мимо кэша. Только chromium: у
+   * остальных движков выключателя кэша нет, и об этом говорится в ответе.
+   */
+  const repeat = sameDocument(session.page.url(), url);
+  let cdp = null;
+  if (repeat && session.profile.browser === 'chromium') {
+    try {
+      cdp = await session.page.context().newCDPSession(session.page);
+      await cdp.send('Network.enable');
+      await cdp.send('Network.setCacheDisabled', { cacheDisabled: true });
+    } catch {
+      cdp = null;
+    }
+  }
   try {
     response = await session.page.goto(url, { waitUntil, timeout });
   } catch (err) {
@@ -541,21 +558,29 @@ export async function gotoAndSettle(
     if (!/Timeout .* exceeded/i.test(err.message)) {
       // Иначе признак «идёт свой переход» остался бы поднятым на всю жизнь сессии.
       session.navByTool = false;
+      const hint = navigationErrorHint(err.message, url);
+      if (hint) throw new Error(`${err.message}\n\n${hint}`);
       throw err;
     }
     timedOut = true;
     await session.page.waitForLoadState('domcontentloaded', { timeout: 5000 }).catch(() => {});
+  } finally {
+    if (cdp) {
+      await cdp.send('Network.setCacheDisabled', { cacheDisabled: false }).catch(() => {});
+      await cdp.detach().catch(() => {});
+    }
   }
 
   let images = null;
   let stubbed = null;
+  /* Разовое значение перебивает условие сессии: иногда живая анимация нужна на одном
+     переходе, а переоткрывать сессию ради этого незачем. */
+  const killMotion = (animations || session.profile.animations) !== 'allow';
+  /* Запоминаем, как открыта текущая страница: layout_audit по этому признаку предупреждает, что
+     движение на ней не проверялось. */
+  session.motionFrozen = stabilizePage && killMotion;
   if (stabilizePage) {
-    ({ images, stubbed } = await stabilize(session.page, {
-      pseudoLoc: session.profile.pseudoLoc,
-      /* Разовое значение перебивает условие сессии: иногда живая анимация нужна на одном
-         переходе, а переоткрывать сессию ради этого незачем. */
-      killMotion: (animations || session.profile.animations) !== 'allow',
-    }));
+    ({ images, stubbed } = await stabilize(session.page, { pseudoLoc: session.profile.pseudoLoc, killMotion }));
   }
 
   // Патчи агента возвращаем последними: они должны перебивать и стили страницы,
@@ -572,6 +597,10 @@ export async function gotoAndSettle(
     url: sanitizeUrl(session.page.url()),
     title: await session.page.title().catch(() => ''),
   };
+  if (repeat) {
+    if (cdp) result.reloaded = true;
+    else result.cacheNote = 'Адрес тот же, что был открыт, а кэш этого движка стенд сбросить не может: стили и скрипты могли прийти старыми. Если ждёте свежую правку — добавьте к адресу ?v=<число>.';
+  }
   if (timedOut) {
     result.navigationTimedOut = true;
     result.note = `Событие "${waitUntil}" не наступило за ${timeout} мс — проверки идут по тому, что отрисовано.`;
@@ -598,6 +627,11 @@ export async function gotoAndSettle(
 
   if (status === 401) {
     result.hint = 'Страница за HTTP-аутентификацией. Передайте auth: "пользователь:пароль" при открытии сессии — в URL логин зашивать не надо.';
+  }
+  if (status === 403 && response) {
+    const body = await response.text().catch(() => '');
+    const hint = blockedHostHint(status, body.slice(0, 2000), url);
+    if (hint) result.hint = hint;
   }
   return result;
 }

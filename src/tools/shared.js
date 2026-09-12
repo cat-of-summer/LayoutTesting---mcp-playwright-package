@@ -87,6 +87,10 @@ export function capped(items, { limit = 50, offset = 0 } = {}) {
   const page = items.slice(offset, offset + limit);
   const shown = offset + page.length;
   if (offset === 0 && shown === total) return { items: page, total };
+  /* Пустая страница за концом списка иначе неотличима от пустого результата. */
+  if (offset >= total && total > 0) {
+    return { items: page, total, offset, limit, truncated: false, note: `offset ${offset} за концом списка: записей всего ${total}. Начните с offset: 0.` };
+  }
   return {
     items: page,
     total,

@@ -546,6 +546,8 @@ export function inferStructure(snapshot, rootId, { depth = 10 } = {}) {
     body,
     headings: Object.fromEntries([...ctx.headingLevels].map(([size, level]) => [`${size}px`, `h${level}`])),
     lines,
+    /* Строки дерева режут текст до 60 знаков: сколько таких, ответ говорит прямо. */
+    clippedTexts: ctx.slots.texts.filter((slot) => slot.chars > 60).length,
     notes: ctx.notes,
     slots: ctx.slots,
     tree,
