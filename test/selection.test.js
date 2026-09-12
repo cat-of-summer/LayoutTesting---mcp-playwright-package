@@ -127,13 +127,26 @@ test('рамка называет хотя бы один поднятый инс
   }
 });
 
-test('help перечисляет только поднятое', options, async () => {
+test('help показывает состав подключения, а не только инструменты с оговорками', options, async () => {
   const seo = await connect('seo');
   const answer = await seo.client.callTool({ name: 'help', arguments: {} });
-  const listed = JSON.parse(answer.content[0].text).tools;
-  for (const name of listed) {
-    assert.ok(seo.tools.has(name), `help предлагает ${name}, которого на /mcp/seo нет`);
+  const { tools } = JSON.parse(answer.content[0].text);
+
+  assert.deepEqual(
+    [...tools.all].sort(),
+    [...seo.tools].sort(),
+    'tools.all должен совпадать с tools/list этого адреса',
+  );
+  for (const name of tools.detailed) {
+    assert.ok(tools.all.includes(name), `help предлагает оговорки ${name}, которого на /mcp/seo нет`);
   }
+});
+
+test('help полного набора перечисляет все 56', options, async () => {
+  const all = await connect('all');
+  const answer = await all.client.callTool({ name: 'help', arguments: {} });
+  const { tools } = JSON.parse(answer.content[0].text);
+  assert.deepEqual([...tools.all].sort(), [...all.tools].sort());
 });
 
 test('help про неподнятый инструмент отвечает оговорками и говорит, где он есть', options, async () => {

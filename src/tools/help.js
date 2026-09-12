@@ -394,8 +394,8 @@ export function register(server, { activeTools = () => null } = {}) {
     {
       title: t({ ru: 'Подробности о стенде', en: 'Stand reference' }),
       description: t({
-        ru: 'Подробности, которых в описаниях инструментов нет намеренно: как адресовать цели из контейнера, чем отличаются url и internalUrl, как задавать редкие условия просмотра, какие действуют потолки на объём ответов, сколько живёт сессия, в каком порядке разбирать типовую задачу. Без аргументов перечисляет темы. tool: имя — оговорки конкретного инструмента.',
-        en: "Details deliberately left out of tool descriptions: how to address targets from inside the container, how url differs from internalUrl, how to set rare viewing conditions, what response size caps apply, how long a session lives, in what order to work through a typical task. With no arguments it lists the topics. tool: name gives the caveats of one tool.",
+        ru: 'Подробности, которых в описаниях инструментов нет намеренно: как адресовать цели из контейнера, чем отличаются url и internalUrl, как задавать редкие условия просмотра, какие действуют потолки на объём ответов, сколько живёт сессия, в каком порядке разбирать типовую задачу. Без аргументов перечисляет темы и состав этого подключения. tool: имя — оговорки конкретного инструмента.',
+        en: "Details deliberately left out of tool descriptions: how to address targets from inside the container, how url differs from internalUrl, how to set rare viewing conditions, what response size caps apply, how long a session lives, in what order to work through a typical task. With no arguments it lists the topics and what this connection exposes. tool: name gives the caveats of one tool.",
       }),
       inputSchema: {
         topic: z.enum(Object.keys(TOPICS)).optional().describe(d('Тема. Без аргументов — список тем')),
@@ -437,12 +437,28 @@ export function register(server, { activeTools = () => null } = {}) {
         return text(`${entry.title}\n\n${entry.body()}`);
       }
 
+      /*
+       * Два списка, а не один.
+       *
+       * Раньше отдавался только перечень инструментов с оговорками, и на сокращённом адресе он
+       * читался как состав подключения: «/mcp/seo+crawl — это crawl и seo_report», хотя там же
+       * лежат seo_page, crawl_pages, crawl_query и site_files. Короткий список на месте состава
+       * вводит в заблуждение сильнее, чем отсутствие списка.
+       *
+       * Поэтому all — что вообще поднято на этом адресе, detailed — у кого есть что дописать
+       * сверх описания. Пустой detailed — нормальный ответ: он значит, что существенное уже
+       * сказано в описаниях, а не что help сломался.
+       */
+      const active = activeTools();
       return json({
         topics: Object.entries(TOPICS).map(([name, entry]) => ({ topic: name, about: entry.title })),
-        tools: Object.keys(DETAILS).filter(isActive),
+        tools: {
+          all: active ? [...active].sort() : null,
+          detailed: Object.keys(DETAILS).filter(isActive),
+        },
         note: t({
-          ru: 'topic — общее устройство стенда, tool — оговорки конкретного инструмента.',
-          en: 'topic covers how the stand works, tool covers one tool caveats.',
+          ru: 'topic — общее устройство стенда. tools.all — что поднято на этом подключении, tools.detailed — у кого есть оговорки сверх описания: их отдаёт help с tool: имя.',
+          en: 'topic covers how the stand works. tools.all is what this connection exposes, tools.detailed is which of them have caveats beyond their description: help with tool: name returns those.',
         }),
       });
     },

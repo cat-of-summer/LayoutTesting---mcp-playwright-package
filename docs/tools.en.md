@@ -3,7 +3,7 @@
 Generated from the server itself: `node bin/gen-tools-doc.mjs`. Do not edit by hand —
 edit the descriptions in `src/tools/` and regenerate.
 
-Tools in total: **56**. Manifest size: **61967** characters.
+Tools in total: **56**. Manifest size: **62000** characters.
 
 ## `a11y_axe`
 
@@ -496,7 +496,7 @@ What becomes a CSS variable: palette, typography, spacing and radius scales, sha
 
 **Stand reference** — _read-only_
 
-Details deliberately left out of tool descriptions: how to address targets from inside the container, how url differs from internalUrl, how to set rare viewing conditions, what response size caps apply, how long a session lives, in what order to work through a typical task. With no arguments it lists the topics. tool: name gives the caveats of one tool.
+Details deliberately left out of tool descriptions: how to address targets from inside the container, how url differs from internalUrl, how to set rare viewing conditions, what response size caps apply, how long a session lives, in what order to work through a typical task. With no arguments it lists the topics and what this connection exposes. tool: name gives the caveats of one tool.
 
 | Parameters | | |
 |---|---|---|
