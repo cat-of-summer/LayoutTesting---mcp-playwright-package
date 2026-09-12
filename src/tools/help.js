@@ -375,7 +375,20 @@ Object.assign(DETAILS, {
     }),
 });
 
-export function register(server) {
+/**
+ * @param {object} ctx
+ * @param {() => Set<string>|null} ctx.activeTools — состав поднятого; null снимает фильтр.
+ *   Ленивый: на момент регистрации help часть инструментов ещё не зарегистрирована.
+ */
+export function register(server, { activeTools = () => null } = {}) {
+  /* На сокращённом адресе help не должен рекламировать то, чего здесь нет: список инструментов
+     он выдаёт до выбора, и имя из него агент попробует вызвать. Оговорки при этом остаются
+     доступными по имени — знать, чем инструмент отличается, полезно и до того, как его подняли. */
+  const isActive = (name) => {
+    const active = activeTools();
+    return !active || active.has(name);
+  };
+
   server.registerTool(
     'help',
     {
@@ -403,6 +416,19 @@ export function register(server) {
             }),
           });
         }
+        if (!isActive(tool)) {
+          /* Отвечаем оговорками и сразу говорим, что вызвать инструмент здесь не выйдет: иначе
+             агент прочитает подробности и упрётся в «нет такого инструмента» уже в вызове. */
+          return json({
+            tool,
+            active: false,
+            detail: detail(),
+            note: t({
+              ru: `Инструмент у стенда есть, но на этом подключении не поднят. Полный набор — подключение к /mcp; какие группы активны здесь, показывает stand_info.`,
+              en: `The stand has this tool, but it is not exposed on this connection. The full set is at /mcp; stand_info shows which groups are active here.`,
+            }),
+          });
+        }
         return text(detail());
       }
 
@@ -413,7 +439,7 @@ export function register(server) {
 
       return json({
         topics: Object.entries(TOPICS).map(([name, entry]) => ({ topic: name, about: entry.title })),
-        tools: Object.keys(DETAILS),
+        tools: Object.keys(DETAILS).filter(isActive),
         note: t({
           ru: 'topic — общее устройство стенда, tool — оговорки конкретного инструмента.',
           en: 'topic covers how the stand works, tool covers one tool caveats.',

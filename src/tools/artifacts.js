@@ -20,11 +20,12 @@ import { inlineImage } from '../checks/visual.js';
 import { resolveInArtifacts, resolveInRoot } from '../paths.js';
 import { upgradeSteps } from '../update.js';
 import { langInfo, t } from '../i18n.js';
+import { resolveSelection, vocabulary } from './groups.js';
 
 export function register(server, ctx = {}) {
   /* Сведения об обновлении считает createServer один раз при старте: спрашивать GitHub
      на каждый вызов stand_info незачем. */
-  const { update, toolSet = 'all', toolSets = [] } = ctx;
+  const { update, selection = resolveSelection('all') } = ctx;
 
   server.registerTool(
     'artifacts_list',
@@ -186,8 +187,44 @@ export function register(server, ctx = {}) {
       }),
       inputSchema: {},
     },
-    async () => json(await buildStandInfo({ update, toolSet, toolSets })),
+    async () => json(await buildStandInfo({ update, selection })),
   );
+}
+
+/**
+ * Что поднято на этом подключении и как получить остальное.
+ *
+ * Развёрнутый состав, а не ярлык: если подключились по псевдониму (/mcp/design), знать надо
+ * именно группы — по ярлыку не видно, есть ли здесь crawl. added отделено от requested затем,
+ * чтобы было понятно, откуда взялась группа, которую никто не просил: visual и session
+ * добираются к figma не по доброте, а потому что figma_compare без них не работает.
+ */
+function toolsInfo(selection) {
+  const vocab = vocabulary();
+  if (!selection.groups) {
+    return {
+      endpoint: '/mcp',
+      groups: [...vocab.groups, ...vocab.always],
+      available: vocab,
+      note: t({
+        ru: 'Поднят полный набор инструментов.',
+        en: 'The full set of tools is up.',
+      }),
+    };
+  }
+
+  const groups = [...selection.groups].sort();
+  return {
+    endpoint: `/mcp/${selection.key}`,
+    groups,
+    requested: selection.requested,
+    added: selection.added,
+    available: vocab,
+    note: t({
+      ru: `Поднята часть групп: набор выбран адресом подключения. Остальные есть у этого же стенда — /mcp отдаёт всё, /mcp/<группы через +> нужное. Перезапускать стенд не надо, достаточно второго подключения.${selection.added.length ? ` Группы ${selection.added.join(', ')} добраны к названному: без них названное не работает.` : ''}`,
+      en: `A subset of groups is up: the set comes from the connection address. The rest live on this same stand — /mcp exposes everything, /mcp/<groups joined by +> exposes what you name. No restart is needed, just a second connection.${selection.added.length ? ` The groups ${selection.added.join(', ')} were pulled in alongside what was named: without them it does not work.` : ''}`,
+    }),
+  };
 }
 
 /**
@@ -197,7 +234,7 @@ export function register(server, ctx = {}) {
  * lt://stand/info. Если бы каждая собирала payload сама, они разъехались бы на первой же
  * правке, и агент получал бы разные ответы на один вопрос в зависимости от того, как спросил.
  */
-export async function buildStandInfo({ update, toolSet = 'all', toolSets = [] } = {}) {
+export async function buildStandInfo({ update, selection = resolveSelection('all') } = {}) {
   /*
    * Таймаут обязателен. stand_info — то, куда идут, когда непонятно, что со стендом, и
    * ожидание недоступного валидатора превращало этот вызов в десятисекундную паузу ровно
@@ -243,16 +280,11 @@ export async function buildStandInfo({ update, toolSet = 'all', toolSets = [] } 
     /* Имена профилей живут здесь, а не в описаниях инструментов: список меняется, а
        описания при каждом изменении пришлось бы править и переводить заново. */
     profiles: listProfiles(),
-    /* Какой набор инструментов поднят. Модель, не нашедшая crawl или seo_page, должна
-       узнать причину здесь, а не решить, что стенд неисправен. */
-    tools: {
-      set: toolSet,
-      available: toolSets,
-      note:
-        toolSet === 'all'
-          ? 'Поднят полный набор инструментов.'
-          : `Поднят набор ${toolSet}: часть групп отключена переменной LT_TOOLS. Полный набор — LT_TOOLS=all и перезапуск стенда.`,
-    },
+    /* Какие группы подняты на этом подключении. Модель, не нашедшая crawl или seo_page, должна
+       узнать причину здесь, а не решить, что стенд неисправен. Совет при этом действенный:
+       набор выбирается адресом подключения, и за остальным не нужно перезапускать стенд —
+       достаточно второго подключения к тому же самому. */
+    tools: toolsInfo(selection),
     sessions: listSessions(),
   };
 }

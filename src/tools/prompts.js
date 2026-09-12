@@ -12,11 +12,22 @@
  */
 import { z } from 'zod';
 import { t } from '../i18n.js';
+import { resolveSelection } from './groups.js';
 
 const say = (text) => ({ messages: [{ role: 'user', content: { type: 'text', text } }] });
 
-export function register(server) {
-  server.registerPrompt(
+/**
+ * Сценарий имеет смысл, только когда подняты инструменты, о которых он рассказывает.
+ * Порядок шагов, половина которого недоступна, сбивает сильнее, чем отсутствие сценария:
+ * человек выбирает его руками и вправе рассчитывать, что выбранное выполнимо.
+ *
+ * @param {object} ctx
+ * @param {{groups: Set<string>|null}} ctx.selection
+ */
+export function register(server, { selection = resolveSelection('all') } = {}) {
+  const on = (...groups) => !selection.groups || groups.some((group) => selection.groups.has(group));
+
+  if (on('layout', 'observe')) server.registerPrompt(
     'layout-broken',
     {
       title: t({ ru: 'Разобрать поехавшую вёрстку', en: 'Investigate broken layout' }),
@@ -67,7 +78,7 @@ Do not retell the tool output in full — name the cause and what exactly produc
       ),
   );
 
-  server.registerPrompt(
+  if (on('visual')) server.registerPrompt(
     'visual-regression',
     {
       title: t({ ru: 'Визуальная регрессия', en: 'Visual regression' }),
@@ -99,7 +110,7 @@ Do not retell the tool output in full — name the cause and what exactly produc
       ),
   );
 
-  server.registerPrompt(
+  if (on('crawl', 'seo')) server.registerPrompt(
     'seo-site',
     {
       title: t({ ru: 'SEO по сайту целиком', en: 'Site-wide SEO' }),
@@ -133,7 +144,7 @@ Do not retell the tool output in full — name the cause and what exactly produc
       ),
   );
 
-  server.registerPrompt(
+  if (on('figma')) server.registerPrompt(
     'figma-layout',
     {
       title: t({ ru: 'Свёрстать по макету Figma', en: 'Build markup from a Figma design' }),

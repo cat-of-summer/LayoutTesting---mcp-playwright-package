@@ -43,8 +43,12 @@ const options = { skip: enabled ? false : 'нужен LT_FULL_TESTS=1 и пол�
  * figma_inspect, figma_export), разбор (figma_structure, figma_components, figma_tokens,
  * figma_breakpoints, figma_comments, figma_behavior), сверка (figma_compare) и прогон вёрстки
  * контентом (layout_stress). Это четверть манифеста, и платит её только тот, кому Figma нужна:
- * группа не входит в наборы core и minimal, для вёрстки по макету собран набор design, а
- * LT_TOOLS=core возвращает прежний размер.
+ * группа поднимается, лишь когда её назвали в адресе подключения (/mcp/figma, /mcp/design), а
+ * /mcp/core возвращает прежний размер.
+ *
+ * Число здесь — цена полного набора, то есть адреса /mcp. Сколько стоит сокращённая выборка,
+ * бюджетом не закреплено намеренно: это производная от состава групп, и её сторожит
+ * selection.test.js, который следит за составом, а не за размером.
  */
 const BUDGET = { total: 60500, perToolSchema: 2450, tools: 56 };
 
