@@ -18,9 +18,30 @@ import path from 'node:path';
 import { DIRS, UPDATE } from './config.js';
 import { t } from './i18n.js';
 
-const CACHE_FILE = path.join(DIRS.root, '.update-check.json');
+/*
+ * Кэш лежит в state/, а не в корне: корень запечён в образ и томом не подхвачен, поэтому
+ * результат терялся при каждом пересоздании контейнера — то есть ровно тогда, когда стенд
+ * обновляют и перезапускают чаще всего. Обещание «не чаще раза в шесть часов, в том числе после
+ * перезапуска» держалось только на словах.
+ *
+ * Соседний .figma-api-check.json остаётся в корне намеренно: его пишет сборка (post_copy в
+ * docker-bundle.yml), и в томе, пустом на старте, запечённому результату взяться неоткуда.
+ */
+const CACHE_FILE = path.join(DIRS.state, '.update-check.json');
 const CACHE_TTL_MS = 6 * 60 * 60 * 1000;
 const TIMEOUT_MS = 4000;
+
+/**
+ * Годится ли строка на роль версии, с которой можно сравнивать.
+ *
+ * Плавающие теги (latest, stable), имена веток и пустота версиями не являются. Раньше они
+ * молча уходили в compareVersions, где нечисловая часть сравнивалась как строка: «0» меньше
+ * «latest», поэтому стенд на теге latest уверенно отвечал «обновлений нет» — всегда, при любой
+ * выпущенной версии. Молчаливое «всё хорошо» здесь хуже честного «не знаю».
+ */
+function comparable(value) {
+  return /^v?\d+(\.\d+)*$/i.test(String(value ?? '').trim());
+}
 
 /** Сравнение версий по числам, а не строкой: '0.10.0' строкой меньше '0.9.0'. */
 export function compareVersions(a, b) {
@@ -44,23 +65,23 @@ export function compareVersions(a, b) {
   return 0;
 }
 
-async function readCache() {
+async function readCache(cacheFile, now) {
   try {
-    const cached = JSON.parse(await fs.readFile(CACHE_FILE, 'utf8'));
-    if (Date.now() - new Date(cached.checkedAt).getTime() < CACHE_TTL_MS) return cached;
+    const cached = JSON.parse(await fs.readFile(cacheFile, 'utf8'));
+    if (now - new Date(cached.checkedAt).getTime() < CACHE_TTL_MS) return cached;
     return null;
   } catch {
     return null;
   }
 }
 
-async function writeCache(data) {
+async function writeCache(cacheFile, data) {
   // Кэш — удобство, а не состояние: не записался, значит в следующий раз спросим ещё раз.
-  await fs.writeFile(CACHE_FILE, JSON.stringify(data, null, 2), 'utf8').catch(() => {});
+  await fs.writeFile(cacheFile, JSON.stringify(data, null, 2), 'utf8').catch(() => {});
 }
 
-async function fetchLatest() {
-  const res = await fetch(UPDATE.api, {
+async function fetchLatest(fetchImpl) {
+  const res = await fetchImpl(UPDATE.api, {
     headers: { Accept: 'application/vnd.github+json', 'User-Agent': 'layout-testing-mcp' },
     signal: AbortSignal.timeout(TIMEOUT_MS),
   });
@@ -108,31 +129,55 @@ export function currentVersion(pkgVersion) {
   };
 }
 
-export async function checkForUpdate(pkgVersion, { force = false } = {}) {
+export async function checkForUpdate(pkgVersion, {
+  force = false,
+  fetchImpl = (...args) => globalThis.fetch(...args),
+  cacheFile = CACHE_FILE,
+  enabled = UPDATE.enabled,
+  now = Date.now(),
+} = {}) {
   const current = currentVersion(pkgVersion);
 
   /* Выключатель нужен стендам без выхода наружу и закрытым контурам: там проверка каждый раз
      упирается в таймаут, и четыре секунды на старте платятся впустую. */
-  if (!UPDATE.enabled) return { current, updateAvailable: null, disabled: true };
+  if (!enabled) return { current, updateAvailable: null, disabled: true };
 
   if (!force) {
-    const cached = await readCache();
+    const cached = await readCache(cacheFile, now);
     if (cached) return { ...cached, current, fromCache: true };
   }
 
   try {
-    const latest = await fetchLatest();
-    const base = current.imageTag || current.version;
-    const behind = compareVersions(latest.tag, base) > 0;
+    const latest = await fetchLatest(fetchImpl);
+    /*
+     * Сравнивать можно только с тегом образа: версия кода в package.json и теги релизов живут
+     * на разных нумерациях, и подставлять её вместо тега значит сравнивать несравнимое. Если
+     * тега нет или он плавающий — ответ «неизвестно» с объяснением, что закрепить.
+     */
+    const base = current.imageTag;
+    const known = comparable(base);
+    const behind = known && compareVersions(latest.tag, base) > 0;
 
     const result = {
       checkedAt: new Date().toISOString(),
       latest: latest.tag,
       publishedAt: latest.publishedAt,
-      updateAvailable: behind,
-      ...(behind ? { upgrade: upgradeSteps(latest.tag) } : {}),
+      updateAvailable: known ? behind : null,
+      ...(known
+        ? {}
+        : {
+            undetermined: base
+              ? `LT_IMAGE_TAG=${base} — это не версия, сравнивать не с чем.`
+              : 'LT_IMAGE_TAG не задан, а версия кода из package.json нумеруется отдельно от тегов релизов.',
+            hint:
+              'Закрепите версию: BUNDLE_IMAGE=' +
+              `${UPDATE.image}:${latest.tag} и LT_IMAGE_TAG=${latest.tag} в .env стенда. ` +
+              'До этого стенд не может сказать, отстал он или нет.',
+          }),
+      /* Порядок обновления отдаём и когда сравнить не вышло: он там и нужен — чтобы закрепить тег. */
+      ...(behind || !known ? { upgrade: upgradeSteps(latest.tag) } : {}),
     };
-    await writeCache(result);
+    await writeCache(cacheFile, result);
     return { ...result, current, fromCache: false };
   } catch (err) {
     /* Недоступность GitHub — не повод для тревоги в отчёте: стенды часто стоят без выхода
