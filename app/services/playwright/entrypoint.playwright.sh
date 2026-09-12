@@ -68,6 +68,11 @@ case "$MODE" in
     exec sleep infinity
     ;;
   *)
+    # Не ушёл ли Figma API вперёд закреплённой версии. Только предупреждает: старт не задерживает
+    # дольше таймаута запроса и не прерывает.
+    if [ -f bin/figma-api-check.mjs ]; then
+      node bin/figma-api-check.mjs || true
+    fi
     echo "[playwright] MCP-сервер на 0.0.0.0:${MCP_PORT:-8931}"
     exec npm run mcp:http
     ;;

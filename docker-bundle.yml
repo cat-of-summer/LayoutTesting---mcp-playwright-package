@@ -73,6 +73,8 @@ recipes:
 
     post_copy:
       - "cd /var/www/html && PUPPETEER_SKIP_DOWNLOAD=1 PUPPETEER_SKIP_CHROMIUM_DOWNLOAD=1 npm ci --omit=dev"
+      # Предупреждение в логе сборки, если Figma API ушёл вперёд закреплённой версии. Сборку не валит.
+      - "cd /var/www/html && node bin/figma-api-check.mjs --force || true"
       - "mkdir -p /var/www/html/artifacts /var/www/html/baselines"
       - "ln -sf $(find /ms-playwright -type f -name chrome | head -1) /usr/local/bin/chrome-for-tools"
       - "chmod +x /var/www/html/bin/lt.mjs && ln -sf /var/www/html/bin/lt.mjs /usr/local/bin/lt"
@@ -165,6 +167,7 @@ volumes:
   baselines: /var/www/html/baselines
   sites: /var/www/html/sites
   state: /var/www/html/state
+  figma: /var/www/html/figma
 
 services:
   traefik: {mode: off}
