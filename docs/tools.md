@@ -27,7 +27,7 @@
 | Параметры | | |
 |---|---|---|
 | `url` | string | обязателен |
-| `standard` | `WCAG2A` | `WCAG2AA` | `WCAG2AAA` |  |
+| `standard` | `WCAG2A` \| `WCAG2AA` \| `WCAG2AAA` |  |
 
 ## `artifacts_clean`
 
@@ -64,11 +64,11 @@
 | `hide` | array | Убрать с кадра: cookie-баннеры, чаты, всплывашки |
 | `fullPage` | boolean |  |
 | `updateBaseline` | boolean |  |
-| `waitUntil` | `load` | `domcontentloaded` | `networkidle` | `commit` | Чего ждать при переходе. Для тяжёлых боевых сайтов — domcontentloaded |
+| `waitUntil` | `load` \| `domcontentloaded` \| `networkidle` \| `commit` | Чего ждать при переходе. Для тяжёлых боевых сайтов — domcontentloaded |
 | `timeout` | number | Таймаут навигации, мс |
-| `browser` | `chromium` | `firefox` | `webkit` | Движок браузера |
+| `browser` | `chromium` \| `firefox` \| `webkit` | Движок браузера |
 | `viewport` | string | Размер: WxH или имя (mobile, mobile-sm, tablet, laptop, desktop, wide) |
-| `colorScheme` | `light` | `dark` | `no-preference` |  |
+| `colorScheme` | `light` \| `dark` \| `no-preference` |  |
 | `profile` | string | Имя сохранённого профиля условий: остальные условия берутся из него. Список — в stand_info |
 
 ## `browser_act`
@@ -80,9 +80,9 @@
 | Параметры | | |
 |---|---|---|
 | `sessionId` | string | обязателен |
-| `action` | `click` | `fill` | `press` | `hover` | `scroll` | `wait` | `select` | `upload` | `dialog` | обязателен |
+| `action` | `click` \| `fill` \| `press` \| `hover` \| `scroll` \| `wait` \| `select` \| `upload` \| `dialog` | обязателен |
 | `selector` | string | Не нужен для scroll, для dialog и для press с кликом по координатам |
-| `value` | string | Текст для fill, клавиша для press, значение для select, accept | dismiss | текст ответа для dialog |
+| `value` | string | Текст для fill, клавиша для press, значение для select, accept \| dismiss \| текст ответа для dialog |
 | `files` | array | Для upload: пути к файлам относительно рабочего каталога стенда |
 | `x` | number | Смещение прокрутки по горизонтали; для click без селектора — координата |
 | `y` | number | Смещение прокрутки по вертикали; для click без селектора — координата |
@@ -120,8 +120,8 @@
 |---|---|---|
 | `sessionId` | string | обязателен |
 | `url` | string | обязателен |
-| `waitUntil` | `load` | `domcontentloaded` | `networkidle` | `commit` |  |
-| `animations` | `freeze` | `allow` | Разово, на этот переход: allow не глушит движение на странице |
+| `waitUntil` | `load` \| `domcontentloaded` \| `networkidle` \| `commit` |  |
+| `animations` | `freeze` \| `allow` | Разово, на этот переход: allow не глушит движение на странице |
 | `save` | boolean | Сохранить страницу в локальное зеркало сразу после перехода — дальше её можно разбирать, не трогая чужой сервер |
 
 ## `browser_open`
@@ -133,12 +133,12 @@
 | Параметры | | |
 |---|---|---|
 | `url` | string |  |
-| `browser` | `chromium` | `firefox` | `webkit` | Движок браузера |
+| `browser` | `chromium` \| `firefox` \| `webkit` | Движок браузера |
 | `viewport` | string | Размер: WxH или имя (mobile, mobile-sm, tablet, laptop, desktop, wide) |
-| `colorScheme` | `light` | `dark` | `no-preference` |  |
-| `forcedColors` | `none` | `active` | Режим высокой контрастности Windows |
-| `reducedMotion` | `reduce` | `no-preference` |  |
-| `animations` | `freeze` | `allow` | allow не глушит движение: переходы и анимации остаются живыми |
+| `colorScheme` | `light` \| `dark` \| `no-preference` |  |
+| `forcedColors` | `none` \| `active` | Режим высокой контрастности Windows |
+| `reducedMotion` | `reduce` \| `no-preference` |  |
+| `animations` | `freeze` \| `allow` | allow не глушит движение: переходы и анимации остаются живыми |
 | `rtl` | boolean | Развернуть страницу справа налево |
 | `zoom` | number | Масштаб страницы в процентах: 200 сжимает viewport вдвое |
 | `textZoom` | number | Масштаб только шрифта в процентах (WCAG 1.4.4) |
@@ -148,12 +148,12 @@
 | `timezoneId` | string |  |
 | `userAgent` | string | Своя строка User-Agent: часть сайтов отдаёт headless-браузеру 403 |
 | `freezeTime` | boolean | Заморозить Date и Math.random для стабильных снимков |
-| `throttle` | object | Троттлинг (только chromium): network 3g|slow-3g|4g, cpu — множитель замедления |
+| `throttle` | object | Троттлинг (только chromium): network 3g\|slow-3g\|4g, cpu — множитель замедления |
 | `auth` | string | HTTP basic auth в виде "пользователь:пароль". Логин в самом URL не нужен — он потом лезет во все ответы |
 | `extraHTTPHeaders` | object | Заголовки ко всем запросам: Accept-Language, X-Forwarded-Proto и прочее |
 | `hostMap` | object | Подмена разрешения имён: {"www.site.local": "172.20.0.5"} — для стендов за vhost. Только chromium |
 | `storageState` | string | Имя сохранённого состояния из browser_storage: сессия откроется уже залогиненной |
-| `serviceWorkers` | `allow` | `block` | block — не давать Service Worker подменять ответы своим кэшем |
+| `serviceWorkers` | `allow` \| `block` | block — не давать Service Worker подменять ответы своим кэшем |
 
 ## `browser_profile`
 
@@ -163,7 +163,7 @@
 
 | Параметры | | |
 |---|---|---|
-| `action` | `save` | `list` | `remove` | По умолчанию list |
+| `action` | `save` \| `list` \| `remove` | По умолчанию list |
 | `sessionId` | string | Сессия, с которой снимаются условия — нужен для save |
 | `name` | string | Имя профиля — нужно для save и remove |
 | `persist` | boolean | Записать профиль на диск, чтобы он пережил перезапуск стенда. По умолчанию профиль живёт в памяти процесса |
@@ -177,9 +177,9 @@
 | Параметры | | |
 |---|---|---|
 | `sessionId` | string | обязателен |
-| `action` | `add` | `list` | `clear` | `requests` | По умолчанию add. requests — что записали правила с record |
+| `action` | `add` \| `list` \| `clear` \| `requests` | По умолчанию add. requests — что записали правила с record |
 | `pattern` | string | Glob (**/analytics/**) или регулярное выражение в виде /…/flags |
-| `handler` | `block` | `fulfill` | `file` | `redirect` | `rewrite` | `passthrough` | block — оборвать, fulfill — отдать body, file — отдать файл стенда, redirect — увести все совпадения на один url, rewrite — заменить кусок адреса, сохранив путь |
+| `handler` | `block` \| `fulfill` \| `file` \| `redirect` \| `rewrite` \| `passthrough` | block — оборвать, fulfill — отдать body, file — отдать файл стенда, redirect — увести все совпадения на один url, rewrite — заменить кусок адреса, сохранив путь |
 | `body` | string |  |
 | `contentType` | string |  |
 | `status` | number |  |
@@ -208,8 +208,8 @@ _без параметров_
 | Параметры | | |
 |---|---|---|
 | `sessionId` | string | Не нужен только для action: list |
-| `action` | `get` | `set` | `clear` | `export` | `import` | `list` | По умолчанию get |
-| `scope` | `cookies` | `local` | `session` | `all` | По умолчанию all |
+| `action` | `get` \| `set` \| `clear` \| `export` \| `import` \| `list` | По умолчанию get |
+| `scope` | `cookies` \| `local` \| `session` \| `all` | По умолчанию all |
 | `name` | string | Ключ для set в local и session; имя файла для export и import |
 | `value` | string | Значение для set. Для cookies — JSON: объект или массив куки |
 
@@ -222,7 +222,7 @@ _без параметров_
 | Параметры | | |
 |---|---|---|
 | `sessionId` | string | обязателен |
-| `action` | `add` | `remove` | `clear` | `list` | По умолчанию add |
+| `action` | `add` \| `remove` \| `clear` \| `list` | По умолчанию add |
 | `css` | string | Текст CSS |
 | `js` | string | Скрипт, выполняется при добавлении и после каждой навигации |
 | `href` | string | Подключить таблицу стилей по URL |
@@ -272,7 +272,7 @@ _без параметров_
 | `sessionId` | string | обязателен |
 | `selector` | string | обязателен |
 | `props` | array |  |
-| `pseudo` | `::before` | `::after` | `::marker` | `::placeholder` | `::selection` | `::first-line` | `::first-letter` | Смотреть псевдоэлемент, а не сам элемент |
+| `pseudo` | `::before` \| `::after` \| `::marker` \| `::placeholder` \| `::selection` \| `::first-line` \| `::first-letter` | Смотреть псевдоэлемент, а не сам элемент |
 | `all` | boolean | Все совпадения селектора, а не только первое |
 | `maxItems` | number |  |
 
@@ -284,13 +284,13 @@ _без параметров_
 
 | Параметры | | |
 |---|---|---|
-| `action` | `start` | `status` | `stop` | `resume` | `list` | `delete` | По умолчанию start |
+| `action` | `start` \| `status` \| `stop` \| `resume` \| `list` \| `delete` | По умолчанию start |
 | `url` | string | Откуда начинать. Нужен для start |
 | `siteId` | string | Имя обхода. По умолчанию из хоста |
 | `maxPages` | number | По умолчанию 500 |
 | `maxDepth` | number | Глубина от стартовой страницы. По умолчанию 5 |
 | `delayMs` | number | Пауза между запросами. По умолчанию 500 |
-| `render` | `auto` | `never` | `always` | auto (по умолчанию) поднимает браузер только для страниц, пустых без JS |
+| `render` | `auto` \| `never` \| `always` | auto (по умолчанию) поднимает браузер только для страниц, пустых без JS |
 | `sameOrigin` | boolean | true (по умолчанию) — только тот же хост; false пускает на поддомены |
 | `include` | string | Регулярное выражение: брать только совпавшие адреса |
 | `exclude` | string | Регулярное выражение: пропускать совпавшие адреса |
@@ -300,7 +300,7 @@ _без параметров_
 | `auth` | string | HTTP basic auth «пользователь:пароль» |
 | `extraHTTPHeaders` | object |  |
 | `assets` | boolean | Тянуть ли ресурсы для зеркала. По умолчанию да |
-| `scripts` | `strip` | `keep` |  |
+| `scripts` | `strip` \| `keep` |  |
 
 ## `crawl_pages`
 
@@ -313,7 +313,7 @@ _без параметров_
 | `siteId` | string | обязателен |
 | `filter` | object |  |
 | `text` | string | Искать подстроку в видимом тексте сохранённых страниц |
-| `groupBy` | `title` | `description` | `h1` | `canonical` | Сгруппировать и показать только группы больше одной страницы — то есть дубли |
+| `groupBy` | `title` \| `description` \| `h1` \| `canonical` | Сгруппировать и показать только группы больше одной страницы — то есть дубли |
 | `fields` | array | Какие поля вернуть. Без них возвращаются все |
 | `limit` | number | По умолчанию 50 |
 | `offset` | number |  |
@@ -343,7 +343,7 @@ _без параметров_
 |---|---|---|
 | `sessionId` | string | обязателен |
 | `selector` | string | обязателен |
-| `pseudo` | `::before` | `::after` | `::marker` | `::placeholder` | Разбирать псевдоэлемент, а не сам элемент |
+| `pseudo` | `::before` \| `::after` \| `::marker` \| `::placeholder` | Разбирать псевдоэлемент, а не сам элемент |
 | `maxItems` | number |  |
 
 ## `figma_behavior`
@@ -395,7 +395,7 @@ _без параметров_
 | `sessionId` | string | Сессия с открытой страницей: сравнение идёт по ней |
 | `url` | string | Адрес страницы: стенд откроет её сам шириной кадра макета |
 | `selector` | string | Блок на странице, которому соответствует кадр макета |
-| `mode` | `both` | `semantic` | `pixel` | both (по умолчанию) — и смысловое, и попиксельное; semantic — только смысловое; pixel — только попиксельное |
+| `mode` | `both` \| `semantic` \| `pixel` | both (по умолчанию) — и смысловое, и попиксельное; semantic — только смысловое; pixel — только попиксельное |
 | `tolerance` | number | Допуск смещения в пикселях. По умолчанию 2 |
 | `threshold` | number | Допустимое расхождение в процентах пикселей |
 | `limit` | number | Сколько строк или записей показать |
@@ -422,7 +422,7 @@ _без параметров_
 | Параметры | | |
 |---|---|---|
 | `figma` | array | Ссылки figma.com или записи ключ:id. Узлы одного файла уходят одним запросом. обязателен |
-| `kind` | `render` | `svg` | `image` | render (по умолчанию) — PNG узла; svg — векторы и иконки; image — растровые заливки, кадрированные как в макете |
+| `kind` | `render` \| `svg` \| `image` | render (по умолчанию) — PNG узла; svg — векторы и иконки; image — растровые заливки, кадрированные как в макете |
 | `scale` | number | Масштаб 0.5–4. Для render по умолчанию подбирается под читаемую ширину около 1000px, для image — 1 и 2 |
 | `clip` | object | Для render: вырезать прямоугольник в координатах узла |
 | `inline` | boolean | Вложить картинку в ответ. По умолчанию только ссылки |
@@ -436,7 +436,7 @@ _без параметров_
 | Параметры | | |
 |---|---|---|
 | `figma` | string | Узел: ссылка figma.com или запись ключ:id. обязателен |
-| `mode` | `outline` | `css` | outline (по умолчанию) — дерево слоёв с раскладкой и текстами; css — стили узлов |
+| `mode` | `outline` \| `css` | outline (по умолчанию) — дерево слоёв с раскладкой и текстами; css — стили узлов |
 | `depth` | number | Глубина обхода. По умолчанию 6 для outline и 2 для css |
 | `hidden` | boolean | Показывать скрытые слои |
 | `limit` | number | По умолчанию 200 строк outline или 60 узлов css |
@@ -450,7 +450,7 @@ _без параметров_
 
 | Параметры | | |
 |---|---|---|
-| `action` | `check` | `login` | `logout` | `token` | check (по умолчанию) — проверить; login — войти в редактор заново или дозавершить вход кодом; logout — забыть сохранённый вход; token — выпустить токен REST через настройки аккаунта |
+| `action` | `check` \| `login` \| `logout` \| `token` | check (по умолчанию) — проверить; login — войти в редактор заново или дозавершить вход кодом; logout — забыть сохранённый вход; token — выпустить токен REST через настройки аккаунта |
 | `otp` | string | Код двухфакторной аутентификации, если Figma его запросила |
 | `refresh` | boolean | Заново спросить Figma, а не взять проверку из кэша на 10 минут |
 
@@ -477,7 +477,7 @@ _без параметров_
 |---|---|---|
 | `figma` | array | Ссылки figma.com или записи ключ:id. Узлы одного файла уходят одним запросом. обязателен |
 | `refresh` | boolean | Сверить версию файла с Figma, даже если снимок свежий |
-| `channel` | `auto` | `rest` | `editor` | auto (по умолчанию) — редактор, если в него есть вход, иначе REST; rest и editor — только этот канал |
+| `channel` | `auto` \| `rest` \| `editor` | auto (по умолчанию) — редактор, если в него есть вход, иначе REST; rest и editor — только этот канал |
 | `css` | boolean | Добавить CSS, который считает сама Figma. Только канал редактора, около 13 мс на узел |
 
 ## `figma_tokens`
@@ -500,7 +500,7 @@ _без параметров_
 
 | Параметры | | |
 |---|---|---|
-| `topic` | `addressing` | `artifacts` | `profiles` | `limits` | `sessions` | `workflows` | `figma` | Тема. Без аргументов — список тем |
+| `topic` | `addressing` \| `artifacts` \| `profiles` \| `limits` \| `sessions` \| `workflows` \| `figma` | Тема. Без аргументов — список тем |
 | `tool` | string | Имя инструмента: оговорки и нюансы именно его |
 
 ## `layout_audit`
@@ -545,7 +545,7 @@ _без параметров_
 |---|---|---|
 | `url` | string | обязателен |
 | `categories` | array |  |
-| `preset` | `mobile` | `desktop` |  |
+| `preset` | `mobile` \| `desktop` |  |
 
 ## `lint_css`
 
@@ -569,7 +569,7 @@ Stylelint по CSS: файлам рабочего каталога стенда 
 |---|---|---|
 | `sessionId` | string | обязателен |
 | `selector` | string | обязателен |
-| `pseudo` | `::before` | `::after` | `::marker` | `::placeholder` | `::selection` | `::first-line` | `::first-letter` |  |
+| `pseudo` | `::before` \| `::after` \| `::marker` \| `::placeholder` \| `::selection` \| `::first-line` \| `::first-letter` |  |
 | `properties` | array | Интересующие свойства, например ["z-index","position"]. Без них показываются только конфликты |
 | `maxRules` | number |  |
 
@@ -606,7 +606,7 @@ Stylelint по CSS: файлам рабочего каталога стенда 
 | Параметры | | |
 |---|---|---|
 | `sessionId` | string | обязателен |
-| `kind` | `all` | `console` | `errors` | `network` | `dialogs` |  |
+| `kind` | `all` \| `console` \| `errors` \| `network` \| `dialogs` |  |
 | `onlyProblems` | boolean |  |
 | `sinceNavigation` | boolean | Только записи после последнего перехода. По умолчанию true |
 | `limit` | number | Сколько записей каждого вида показать; берутся последние. По умолчанию 100 |
@@ -623,11 +623,11 @@ Stylelint по CSS: файлам рабочего каталога стенда 
 | `url` | string | Открыть свою одноразовую сессию по адресу и сохранить её |
 | `siteId` | string | Имя каталога в архиве. По умолчанию берётся из хоста |
 | `assets` | boolean | Тянуть ли CSS, картинки и шрифты. По умолчанию да |
-| `scripts` | `strip` | `keep` | strip (по умолчанию) вырезает скрипты: на копии аналитика стучит в сеть, а роутер SPA подменяет страницу. JSON-LD остаётся в любом случае |
+| `scripts` | `strip` \| `keep` | strip (по умолчанию) вырезает скрипты: на копии аналитика стучит в сеть, а роутер SPA подменяет страницу. JSON-LD остаётся в любом случае |
 | `raw` | boolean | Сохранять ли сырой ответ сервера отдельным файлом. По умолчанию да |
-| `browser` | `chromium` | `firefox` | `webkit` | Движок браузера |
+| `browser` | `chromium` \| `firefox` \| `webkit` | Движок браузера |
 | `viewport` | string | Размер: WxH или имя (mobile, mobile-sm, tablet, laptop, desktop, wide) |
-| `colorScheme` | `light` | `dark` | `no-preference` |  |
+| `colorScheme` | `light` \| `dark` \| `no-preference` |  |
 | `profile` | string | Имя сохранённого профиля условий: остальные условия берутся из него. Список — в stand_info |
 
 ## `page_snapshot`
@@ -651,7 +651,7 @@ Stylelint по CSS: файлам рабочего каталога стенда 
 | Параметры | | |
 |---|---|---|
 | `file` | string | Путь относительно каталога артефактов. обязателен |
-| `encoding` | `auto` | `utf8` | `base64` | auto (по умолчанию) определяет по расширению |
+| `encoding` | `auto` \| `utf8` \| `base64` | auto (по умолчанию) определяет по расширению |
 | `offset` | number | С какого символа читать текст, если файл не поместился целиком |
 
 ## `read_project_file`
@@ -681,7 +681,7 @@ Stylelint по CSS: файлам рабочего каталога стенда 
 | `mask` | array | Селекторы нестабильных зон — закрашиваются |
 | `hide` | array | Убрать с кадра: cookie-баннеры, чаты, всплывашки. Ставит visibility: hidden, layout не едет |
 | `isolate` | array | Оставить в кадре только эти элементы, остальных соседей убрать из потока (display: none). Так снимают пару соседних блоков без остальных — например, чтобы показать наложение |
-| `format` | `png` | `jpeg` | `webp` | По умолчанию png |
+| `format` | `png` \| `jpeg` \| `webp` | По умолчанию png |
 | `quality` | number | Качество jpeg и webp, 1–100 (по умолчанию 80) |
 | `maxWidth` | number | Уменьшить до этой ширины — для вставки в документы |
 | `inline` | boolean | Вложить уменьшенную картинку в ответ |
@@ -700,9 +700,9 @@ Stylelint по CSS: файлам рабочего каталога стенда 
 | `html` | string | Разобрать переданную разметку без браузера |
 | `file` | string | Разобрать сохранённый файл: путь относительно рабочего каталога стенда |
 | `pageUrl` | string | Адрес, относительно которого разрешать ссылки в html или file. Без него относительные адреса и саморефренс canonical не посчитать |
-| `browser` | `chromium` | `firefox` | `webkit` | Движок браузера |
+| `browser` | `chromium` \| `firefox` \| `webkit` | Движок браузера |
 | `viewport` | string | Размер: WxH или имя (mobile, mobile-sm, tablet, laptop, desktop, wide) |
-| `colorScheme` | `light` | `dark` | `no-preference` |  |
+| `colorScheme` | `light` \| `dark` \| `no-preference` |  |
 | `profile` | string | Имя сохранённого профиля условий: остальные условия берутся из него. Список — в stand_info |
 
 ## `seo_report`
@@ -750,9 +750,9 @@ _без параметров_
 | `include` | string | Регулярное выражение по id и заголовку истории |
 | `limit` | number |  |
 | `visual` | boolean | Сравнивать каждую историю с эталоном |
-| `browser` | `chromium` | `firefox` | `webkit` | Движок браузера |
+| `browser` | `chromium` \| `firefox` \| `webkit` | Движок браузера |
 | `viewport` | string | Размер: WxH или имя (mobile, mobile-sm, tablet, laptop, desktop, wide) |
-| `colorScheme` | `light` | `dark` | `no-preference` |  |
+| `colorScheme` | `light` \| `dark` \| `no-preference` |  |
 | `profile` | string | Имя сохранённого профиля условий: остальные условия берутся из него. Список — в stand_info |
 
 ## `validate_html`
@@ -775,7 +775,7 @@ _без параметров_
 
 | Параметры | | |
 |---|---|---|
-| `action` | `list` | `delete` | `prune` | По умолчанию list |
+| `action` | `list` \| `delete` \| `prune` | По умолчанию list |
 | `name` | string | Какой эталон удалить — для delete |
 | `olderThanDays` | number | Для prune: старше скольких дней удалять. По умолчанию 90 |
 | `apply` | boolean | delete и prune по умолчанию только показывают, что будет удалено. apply: true выполняет |
@@ -812,8 +812,8 @@ _без параметров_
 | `intro` | string | Абзац-введение под заголовком |
 | `profiles` | array | Ширины: имена пресетов или WxH. По умолчанию ["desktop","mobile"] |
 | `auth` | string | HTTP basic auth в виде "пользователь:пароль" |
-| `browser` | `chromium` | `firefox` | `webkit` |  |
-| `format` | `png` | `jpeg` | `webp` | Формат вшитых картинок, по умолчанию webp |
+| `browser` | `chromium` \| `firefox` \| `webkit` |  |
+| `format` | `png` \| `jpeg` \| `webp` | Формат вшитых картинок, по умолчанию webp |
 | `quality` | number |  |
 | `maxWidth` | number | Ширина вшитых картинок, по умолчанию 1000 |
 
@@ -827,9 +827,9 @@ CLS, LCP, FCP, TTFB для указанного URL с перечисление�
 |---|---|---|
 | `url` | string | обязателен |
 | `settleMs` | number |  |
-| `browser` | `chromium` | `firefox` | `webkit` | Движок браузера |
+| `browser` | `chromium` \| `firefox` \| `webkit` | Движок браузера |
 | `viewport` | string | Размер: WxH или имя (mobile, mobile-sm, tablet, laptop, desktop, wide) |
-| `colorScheme` | `light` | `dark` | `no-preference` |  |
+| `colorScheme` | `light` \| `dark` \| `no-preference` |  |
 | `profile` | string | Имя сохранённого профиля условий: остальные условия берутся из него. Список — в stand_info |
 
 ---

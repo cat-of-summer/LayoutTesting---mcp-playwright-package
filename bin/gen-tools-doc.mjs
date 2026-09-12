@@ -83,11 +83,17 @@ for (const tool of [...tools].sort((a, b) => a.name.localeCompare(b.name))) {
     continue;
   }
   lines.push(`| ${words.params} | | |`, '|---|---|---|');
+  /*
+   * Вертикальная черта внутри ячейки рвёт таблицу: перечисление из четырёх значений превращает
+   * строку в пять лишних столбцов. В JS «\|» — это просто «|», поэтому экранировать нужно
+   * настоящим обратным слешем, и не только у перечислений: черта попадается и в описаниях.
+   */
+  const cell = (value) => String(value ?? '').replace(/\|/g, '\\|');
   for (const name of names) {
     const spec = props[name];
-    const type = spec.enum ? spec.enum.map((v) => `\`${v}\``).join(' \| ') : spec.type || '';
+    const type = spec.enum ? spec.enum.map((v) => `\`${cell(v)}\``).join(' \\| ') : spec.type || '';
     const note = [spec.description, required.has(name) ? words.required : ''].filter(Boolean).join('. ');
-    lines.push(`| \`${name}\` | ${type} | ${note} |`);
+    lines.push(`| \`${name}\` | ${type} | ${cell(note)} |`);
   }
   lines.push('');
 }

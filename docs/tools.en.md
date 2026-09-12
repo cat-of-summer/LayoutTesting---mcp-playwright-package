@@ -27,7 +27,7 @@ A second accessibility rule set (HTML CodeSniffer), by URL. The axe and pa11y se
 | Parameters | | |
 |---|---|---|
 | `url` | string | required |
-| `standard` | `WCAG2A` | `WCAG2AA` | `WCAG2AAA` |  |
+| `standard` | `WCAG2A` \| `WCAG2AA` \| `WCAG2AAA` |  |
 
 ## `artifacts_clean`
 
@@ -64,11 +64,11 @@ A composite check of one page: opens the URL under the given viewing conditions 
 | `hide` | array | Remove from frame: cookie banners, chat widgets, popups |
 | `fullPage` | boolean |  |
 | `updateBaseline` | boolean |  |
-| `waitUntil` | `load` | `domcontentloaded` | `networkidle` | `commit` | What to wait for on navigation. For heavy production sites use domcontentloaded |
+| `waitUntil` | `load` \| `domcontentloaded` \| `networkidle` \| `commit` | What to wait for on navigation. For heavy production sites use domcontentloaded |
 | `timeout` | number | Navigation timeout, ms |
-| `browser` | `chromium` | `firefox` | `webkit` | Browser engine |
+| `browser` | `chromium` \| `firefox` \| `webkit` | Browser engine |
 | `viewport` | string | Size: WxH or a preset name (mobile, mobile-sm, tablet, laptop, desktop, wide) |
-| `colorScheme` | `light` | `dark` | `no-preference` |  |
+| `colorScheme` | `light` \| `dark` \| `no-preference` |  |
 | `profile` | string | Name of a saved condition profile: the remaining conditions are taken from it. See stand_info for the list |
 
 ## `browser_act`
@@ -80,9 +80,9 @@ Click, type, press a key, hover, scroll, select an option, wait for a selector, 
 | Parameters | | |
 |---|---|---|
 | `sessionId` | string | required |
-| `action` | `click` | `fill` | `press` | `hover` | `scroll` | `wait` | `select` | `upload` | `dialog` | required |
+| `action` | `click` \| `fill` \| `press` \| `hover` \| `scroll` \| `wait` \| `select` \| `upload` \| `dialog` | required |
 | `selector` | string | Not required for scroll, for dialog, and for press or a click by coordinates |
-| `value` | string | Text for fill, key for press, option value for select, accept | dismiss | reply text for dialog |
+| `value` | string | Text for fill, key for press, option value for select, accept \| dismiss \| reply text for dialog |
 | `files` | array | For upload: file paths relative to the stand working directory |
 | `x` | number | Horizontal scroll amount; for a click without a selector, the x coordinate |
 | `y` | number | Vertical scroll amount; for a click without a selector, the y coordinate |
@@ -120,8 +120,8 @@ Navigates in an already open session. The page is stabilized before checks run: 
 |---|---|---|
 | `sessionId` | string | required |
 | `url` | string | required |
-| `waitUntil` | `load` | `domcontentloaded` | `networkidle` | `commit` |  |
-| `animations` | `freeze` | `allow` | One-off, for this navigation only: allow leaves the page motion alone |
+| `waitUntil` | `load` \| `domcontentloaded` \| `networkidle` \| `commit` |  |
+| `animations` | `freeze` \| `allow` | One-off, for this navigation only: allow leaves the page motion alone |
 | `save` | boolean | Save the page into the local mirror right after navigating — after that it can be examined without touching the remote server |
 
 ## `browser_open`
@@ -133,12 +133,12 @@ Creates a browser session with the given viewing conditions and, if a url is pas
 | Parameters | | |
 |---|---|---|
 | `url` | string |  |
-| `browser` | `chromium` | `firefox` | `webkit` | Browser engine |
+| `browser` | `chromium` \| `firefox` \| `webkit` | Browser engine |
 | `viewport` | string | Size: WxH or a preset name (mobile, mobile-sm, tablet, laptop, desktop, wide) |
-| `colorScheme` | `light` | `dark` | `no-preference` |  |
-| `forcedColors` | `none` | `active` | Windows high contrast mode |
-| `reducedMotion` | `reduce` | `no-preference` |  |
-| `animations` | `freeze` | `allow` | allow leaves the motion alone: transitions and animations keep running |
+| `colorScheme` | `light` \| `dark` \| `no-preference` |  |
+| `forcedColors` | `none` \| `active` | Windows high contrast mode |
+| `reducedMotion` | `reduce` \| `no-preference` |  |
+| `animations` | `freeze` \| `allow` | allow leaves the motion alone: transitions and animations keep running |
 | `rtl` | boolean | Flip the page to right-to-left |
 | `zoom` | number | Page zoom in percent: 200 halves the viewport |
 | `textZoom` | number | Text-only zoom in percent (WCAG 1.4.4) |
@@ -148,12 +148,12 @@ Creates a browser session with the given viewing conditions and, if a url is pas
 | `timezoneId` | string |  |
 | `userAgent` | string | A User-Agent string of your own: some sites answer a headless browser with 403 |
 | `freezeTime` | boolean | Freeze Date and Math.random for stable screenshots |
-| `throttle` | object | Throttling (chromium only): network 3g|slow-3g|4g, cpu is a slowdown multiplier |
+| `throttle` | object | Throttling (chromium only): network 3g\|slow-3g\|4g, cpu is a slowdown multiplier |
 | `auth` | string | HTTP basic auth as "user:password". Do not put credentials in the URL itself — they leak into every response afterwards |
 | `extraHTTPHeaders` | object | Headers added to every request: Accept-Language, X-Forwarded-Proto and so on |
 | `hostMap` | object | Name resolution override: {"www.site.local": "172.20.0.5"} — for environments behind a vhost. Chromium only |
 | `storageState` | string | Name of a state saved with browser_storage: the session opens already logged in |
-| `serviceWorkers` | `allow` | `block` | block — stop the Service Worker from serving its own cache instead of the server |
+| `serviceWorkers` | `allow` \| `block` | block — stop the Service Worker from serving its own cache instead of the server |
 
 ## `browser_profile`
 
@@ -163,7 +163,7 @@ Pins the conditions of an open session under a name, so they can be given as one
 
 | Parameters | | |
 |---|---|---|
-| `action` | `save` | `list` | `remove` | Default list |
+| `action` | `save` \| `list` \| `remove` | Default list |
 | `sessionId` | string | The session whose conditions are captured — required for save |
 | `name` | string | Profile name — required for save and remove |
 | `persist` | boolean | Write the profile to disk so it survives a stand restart. By default a profile lives in process memory only |
@@ -177,9 +177,9 @@ Rules over the page network requests: cut analytics and chat widgets, replace a 
 | Parameters | | |
 |---|---|---|
 | `sessionId` | string | required |
-| `action` | `add` | `list` | `clear` | `requests` | Default add. requests returns what the rules with record captured |
+| `action` | `add` \| `list` \| `clear` \| `requests` | Default add. requests returns what the rules with record captured |
 | `pattern` | string | A glob (**/analytics/**) or a regular expression written as /…/flags |
-| `handler` | `block` | `fulfill` | `file` | `redirect` | `rewrite` | `passthrough` | block — abort, fulfill — return a body, file — serve a file from the stand, redirect — send every match to one url, rewrite — replace part of the address while keeping the path |
+| `handler` | `block` \| `fulfill` \| `file` \| `redirect` \| `rewrite` \| `passthrough` | block — abort, fulfill — return a body, file — serve a file from the stand, redirect — send every match to one url, rewrite — replace part of the address while keeping the path |
 | `body` | string |  |
 | `contentType` | string |  |
 | `status` | number |  |
@@ -208,8 +208,8 @@ Reads and injects cookies, localStorage and sessionStorage; export and import ca
 | Parameters | | |
 |---|---|---|
 | `sessionId` | string | Not required only for action: list |
-| `action` | `get` | `set` | `clear` | `export` | `import` | `list` | Default get |
-| `scope` | `cookies` | `local` | `session` | `all` | Default all |
+| `action` | `get` \| `set` \| `clear` \| `export` \| `import` \| `list` | Default get |
+| `scope` | `cookies` \| `local` \| `session` \| `all` | Default all |
 | `name` | string | Key for set in local and session; file name for export and import |
 | `value` | string | Value for set. For cookies — JSON: a cookie object or an array of them |
 
@@ -222,7 +222,7 @@ Injects your own CSS or JS on top of the open page and reapplies it after every 
 | Parameters | | |
 |---|---|---|
 | `sessionId` | string | required |
-| `action` | `add` | `remove` | `clear` | `list` | Default add |
+| `action` | `add` \| `remove` \| `clear` \| `list` | Default add |
 | `css` | string | CSS text |
 | `js` | string | A script, executed on add and after every navigation |
 | `href` | string | Attach a stylesheet by URL |
@@ -272,7 +272,7 @@ Geometry and final CSS properties of an element — to understand why a block is
 | `sessionId` | string | required |
 | `selector` | string | required |
 | `props` | array |  |
-| `pseudo` | `::before` | `::after` | `::marker` | `::placeholder` | `::selection` | `::first-line` | `::first-letter` | Look at the pseudo-element instead of the element itself |
+| `pseudo` | `::before` \| `::after` \| `::marker` \| `::placeholder` \| `::selection` \| `::first-line` \| `::first-letter` | Look at the pseudo-element instead of the element itself |
 | `all` | boolean | All matches of the selector, not just the first one |
 | `maxItems` | number |  |
 
@@ -284,13 +284,13 @@ Crawls a site along its internal links and stores the pages in a local archive. 
 
 | Parameters | | |
 |---|---|---|
-| `action` | `start` | `status` | `stop` | `resume` | `list` | `delete` | Default start |
+| `action` | `start` \| `status` \| `stop` \| `resume` \| `list` \| `delete` | Default start |
 | `url` | string | Where to start. Required for start |
 | `siteId` | string | Crawl name. Taken from the host by default |
 | `maxPages` | number | Default 500 |
 | `maxDepth` | number | Depth from the starting page. Default 5 |
 | `delayMs` | number | Pause between requests. Default 500 |
-| `render` | `auto` | `never` | `always` | auto (default) starts a browser only for pages that look empty without JS |
+| `render` | `auto` \| `never` \| `always` | auto (default) starts a browser only for pages that look empty without JS |
 | `sameOrigin` | boolean | true (default) — same host only; false also allows subdomains |
 | `include` | string | Regular expression: take only matching addresses |
 | `exclude` | string | Regular expression: skip matching addresses |
@@ -300,7 +300,7 @@ Crawls a site along its internal links and stores the pages in a local archive. 
 | `auth` | string | HTTP basic auth as "user:password" |
 | `extraHTTPHeaders` | object |  |
 | `assets` | boolean | Whether to fetch resources for the mirror. Default yes |
-| `scripts` | `strip` | `keep` |  |
+| `scripts` | `strip` \| `keep` |  |
 
 ## `crawl_pages`
 
@@ -313,7 +313,7 @@ Selects over stored pages: filter by status code, depth, indexability, missing f
 | `siteId` | string | required |
 | `filter` | object |  |
 | `text` | string | Search for a substring in the visible text of stored pages |
-| `groupBy` | `title` | `description` | `h1` | `canonical` | Group and show only groups larger than one page — that is, duplicates |
+| `groupBy` | `title` \| `description` \| `h1` \| `canonical` | Group and show only groups larger than one page — that is, duplicates |
 | `fields` | array | Which fields to return. All of them by default |
 | `limit` | number | Default 50 |
 | `offset` | number |  |
@@ -343,7 +343,7 @@ Why an element is invisible and who lies on top of it. Warns separately about a 
 |---|---|---|
 | `sessionId` | string | required |
 | `selector` | string | required |
-| `pseudo` | `::before` | `::after` | `::marker` | `::placeholder` | Inspect the pseudo-element instead of the element itself |
+| `pseudo` | `::before` \| `::after` \| `::marker` \| `::placeholder` | Inspect the pseudo-element instead of the element itself |
 | `maxItems` | number |  |
 
 ## `figma_behavior`
@@ -395,7 +395,7 @@ Compares a page against a design frame: texts are matched by content, and each o
 | `sessionId` | string | A session with the page open: the comparison runs against it |
 | `url` | string | A page address: the stand opens it itself at the width of the design frame |
 | `selector` | string | The block on the page the design frame corresponds to |
-| `mode` | `both` | `semantic` | `pixel` | both (default) — semantic and pixel; semantic — semantic only; pixel — pixel only |
+| `mode` | `both` \| `semantic` \| `pixel` | both (default) — semantic and pixel; semantic — semantic only; pixel — pixel only |
 | `tolerance` | number | Offset tolerance in pixels. Default 2 |
 | `threshold` | number | Allowed difference as a percentage of pixels |
 | `limit` | number | How many lines or entries to show |
@@ -422,7 +422,7 @@ Files from the design into artifacts with permanent links: render — a PNG of a
 | Parameters | | |
 |---|---|---|
 | `figma` | array | figma.com links or key:id entries. Nodes of one file go out in a single request. required |
-| `kind` | `render` | `svg` | `image` | render (default) — a PNG of the node; svg — vectors and icons; image — raster fills cropped as in the design |
+| `kind` | `render` \| `svg` \| `image` | render (default) — a PNG of the node; svg — vectors and icons; image — raster fills cropped as in the design |
 | `scale` | number | Scale 0.5–4. For render it defaults to a readable width of about 1000px, for image to 1 and 2 |
 | `clip` | object | For render: cut out a rectangle in node coordinates |
 | `inline` | boolean | Embed the image in the response. Links only by default |
@@ -436,7 +436,7 @@ A design node from the snapshot: outline — the layer tree with sizes, layout a
 | Parameters | | |
 |---|---|---|
 | `figma` | string | A node: a figma.com link or a key:id entry. required |
-| `mode` | `outline` | `css` | outline (default) — the layer tree with layout and texts; css — node styles |
+| `mode` | `outline` \| `css` | outline (default) — the layer tree with layout and texts; css — node styles |
 | `depth` | number | Traversal depth. Default 6 for outline and 2 for css |
 | `hidden` | boolean | Include hidden layers |
 | `limit` | number | Default 200 outline lines or 60 css nodes |
@@ -450,7 +450,7 @@ Figma access: whether the REST token works and how much of the limit is left, wh
 
 | Parameters | | |
 |---|---|---|
-| `action` | `check` | `login` | `logout` | `token` | check (default) — inspect; login — log into the editor again or finish a login with a code; logout — forget the saved login; token — issue a REST token through the account settings |
+| `action` | `check` \| `login` \| `logout` \| `token` | check (default) — inspect; login — log into the editor again or finish a login with a code; logout — forget the saved login; token — issue a REST token through the account settings |
 | `otp` | string | A two-factor authentication code, if Figma asked for one |
 | `refresh` | boolean | Ask Figma again instead of using the check cached for 10 minutes |
 
@@ -477,7 +477,7 @@ Pulls design nodes into a local snapshot with one request per file: desktop, mob
 |---|---|---|
 | `figma` | array | figma.com links or key:id entries. Nodes of one file go out in a single request. required |
 | `refresh` | boolean | Check the file version with Figma even if the snapshot is fresh |
-| `channel` | `auto` | `rest` | `editor` | auto (default) — the editor if the stand can log into it, otherwise REST; rest and editor — that channel only |
+| `channel` | `auto` \| `rest` \| `editor` | auto (default) — the editor if the stand can log into it, otherwise REST; rest and editor — that channel only |
 | `css` | boolean | Add the CSS computed by Figma itself. Editor channel only, about 13 ms per node |
 
 ## `figma_tokens`
@@ -500,7 +500,7 @@ Details deliberately left out of tool descriptions: how to address targets from 
 
 | Parameters | | |
 |---|---|---|
-| `topic` | `addressing` | `artifacts` | `profiles` | `limits` | `sessions` | `workflows` | `figma` | Topic. With no arguments, lists the topics |
+| `topic` | `addressing` \| `artifacts` \| `profiles` \| `limits` \| `sessions` \| `workflows` \| `figma` | Topic. With no arguments, lists the topics |
 | `tool` | string | Tool name: the caveats and details specific to it |
 
 ## `layout_audit`
@@ -545,7 +545,7 @@ A full Lighthouse run. Returns category scores (performance, accessibility, best
 |---|---|---|
 | `url` | string | required |
 | `categories` | array |  |
-| `preset` | `mobile` | `desktop` |  |
+| `preset` | `mobile` \| `desktop` |  |
 
 ## `lint_css`
 
@@ -569,7 +569,7 @@ Which CSS rule won and where it is declared: selector, specificity, file and lin
 |---|---|---|
 | `sessionId` | string | required |
 | `selector` | string | required |
-| `pseudo` | `::before` | `::after` | `::marker` | `::placeholder` | `::selection` | `::first-line` | `::first-letter` |  |
+| `pseudo` | `::before` \| `::after` \| `::marker` \| `::placeholder` \| `::selection` \| `::first-line` \| `::first-letter` |  |
 | `properties` | array | Properties of interest, e.g. ["z-index","position"]. Without them only conflicts are shown |
 | `maxRules` | number |  |
 
@@ -606,7 +606,7 @@ Console output, unhandled JS errors, failed network requests and the dialogs the
 | Parameters | | |
 |---|---|---|
 | `sessionId` | string | required |
-| `kind` | `all` | `console` | `errors` | `network` | `dialogs` |  |
+| `kind` | `all` \| `console` \| `errors` \| `network` \| `dialogs` |  |
 | `onlyProblems` | boolean |  |
 | `sinceNavigation` | boolean | Only entries after the last navigation. Default true |
 | `limit` | number | How many entries of each kind to return; the most recent ones. Default 100 |
@@ -623,11 +623,11 @@ Puts the page into a local mirror: the rendered DOM with links rewritten to loca
 | `url` | string | Open a throwaway session at this address and save it |
 | `siteId` | string | Directory name in the archive. Taken from the host by default |
 | `assets` | boolean | Whether to fetch CSS, images and fonts. Default yes |
-| `scripts` | `strip` | `keep` | strip (default) removes scripts: on a local copy analytics would call home and an SPA router would replace the page. JSON-LD is kept either way |
+| `scripts` | `strip` \| `keep` | strip (default) removes scripts: on a local copy analytics would call home and an SPA router would replace the page. JSON-LD is kept either way |
 | `raw` | boolean | Whether to keep the raw server response as a separate file. Default yes |
-| `browser` | `chromium` | `firefox` | `webkit` | Browser engine |
+| `browser` | `chromium` \| `firefox` \| `webkit` | Browser engine |
 | `viewport` | string | Size: WxH or a preset name (mobile, mobile-sm, tablet, laptop, desktop, wide) |
-| `colorScheme` | `light` | `dark` | `no-preference` |  |
+| `colorScheme` | `light` \| `dark` \| `no-preference` |  |
 | `profile` | string | Name of a saved condition profile: the remaining conditions are taken from it. See stand_info for the list |
 
 ## `page_snapshot`
@@ -651,7 +651,7 @@ Reads a file from the artifacts directory. Text and JSON come back as they are; 
 | Parameters | | |
 |---|---|---|
 | `file` | string | Path relative to the artifacts directory. required |
-| `encoding` | `auto` | `utf8` | `base64` | auto (default) decides by file extension |
+| `encoding` | `auto` \| `utf8` \| `base64` | auto (default) decides by file extension |
 | `offset` | number | Character offset to read the text from, when the file did not fit in one response |
 
 ## `read_project_file`
@@ -681,7 +681,7 @@ A screenshot of the page or of one element. By default the whole page is capture
 | `mask` | array | Selectors of unstable areas — they get painted over |
 | `hide` | array | Remove from frame: cookie banners, chat widgets, popups. Uses visibility: hidden, so layout does not shift |
 | `isolate` | array | Keep only these elements in frame and take the remaining siblings out of flow (display: none). This is how a pair of adjacent blocks is captured without the rest — to show an overlap, for instance |
-| `format` | `png` | `jpeg` | `webp` | Default png |
+| `format` | `png` \| `jpeg` \| `webp` | Default png |
 | `quality` | number | Quality for jpeg and webp, 1–100 (default 80) |
 | `maxWidth` | number | Downscale to this width — for embedding into documents |
 | `inline` | boolean | Attach a downscaled image to the answer |
@@ -700,9 +700,9 @@ Title, description, canonical, hreflang, robots directives, Open Graph, Twitter 
 | `html` | string | Parse the markup passed inline, without a browser |
 | `file` | string | Parse a saved file: a path relative to the stand working directory |
 | `pageUrl` | string | The address to resolve links against for html or file input. Without it relative URLs and canonical self-reference cannot be computed |
-| `browser` | `chromium` | `firefox` | `webkit` | Browser engine |
+| `browser` | `chromium` \| `firefox` \| `webkit` | Browser engine |
 | `viewport` | string | Size: WxH or a preset name (mobile, mobile-sm, tablet, laptop, desktop, wide) |
-| `colorScheme` | `light` | `dark` | `no-preference` |  |
+| `colorScheme` | `light` \| `dark` \| `no-preference` |  |
 | `profile` | string | Name of a saved condition profile: the remaining conditions are taken from it. See stand_info for the list |
 
 ## `seo_report`
@@ -750,9 +750,9 @@ Walks every Storybook story, taking a screenshot of each and running layout heur
 | `include` | string | A regular expression over story id and title |
 | `limit` | number |  |
 | `visual` | boolean | Compare every story against a baseline |
-| `browser` | `chromium` | `firefox` | `webkit` | Browser engine |
+| `browser` | `chromium` \| `firefox` \| `webkit` | Browser engine |
 | `viewport` | string | Size: WxH or a preset name (mobile, mobile-sm, tablet, laptop, desktop, wide) |
-| `colorScheme` | `light` | `dark` | `no-preference` |  |
+| `colorScheme` | `light` \| `dark` \| `no-preference` |  |
 | `profile` | string | Name of a saved condition profile: the remaining conditions are taken from it. See stand_info for the list |
 
 ## `validate_html`
@@ -775,7 +775,7 @@ Stored visual regression baselines: which pages and viewing conditions already h
 
 | Parameters | | |
 |---|---|---|
-| `action` | `list` | `delete` | `prune` | Default list |
+| `action` | `list` \| `delete` \| `prune` | Default list |
 | `name` | string | Which baseline to delete — for delete |
 | `olderThanDays` | number | For prune: delete baselines older than this many days. Default 90 |
 | `apply` | boolean | delete and prune only show what would be removed; apply: true actually removes it |
@@ -812,8 +812,8 @@ Builds one self-contained HTML: the listed page blocks captured at several width
 | `intro` | string | An intro paragraph under the title |
 | `profiles` | array | Widths: preset names or WxH. Default ["desktop","mobile"] |
 | `auth` | string | HTTP basic auth as "user:password" |
-| `browser` | `chromium` | `firefox` | `webkit` |  |
-| `format` | `png` | `jpeg` | `webp` | Format of the embedded images, default webp |
+| `browser` | `chromium` \| `firefox` \| `webkit` |  |
+| `format` | `png` \| `jpeg` \| `webp` | Format of the embedded images, default webp |
 | `quality` | number |  |
 | `maxWidth` | number | Width of the embedded images, default 1000 |
 
@@ -827,9 +827,9 @@ CLS, LCP, FCP and TTFB for a URL, with the elements that shifted the layout list
 |---|---|---|
 | `url` | string | required |
 | `settleMs` | number |  |
-| `browser` | `chromium` | `firefox` | `webkit` | Browser engine |
+| `browser` | `chromium` \| `firefox` \| `webkit` | Browser engine |
 | `viewport` | string | Size: WxH or a preset name (mobile, mobile-sm, tablet, laptop, desktop, wide) |
-| `colorScheme` | `light` | `dark` | `no-preference` |  |
+| `colorScheme` | `light` \| `dark` \| `no-preference` |  |
 | `profile` | string | Name of a saved condition profile: the remaining conditions are taken from it. See stand_info for the list |
 
 ---
