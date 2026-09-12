@@ -7,6 +7,7 @@ import { createServer } from './server.js';
 import { resolveSelection, vocabulary } from './tools/groups.js';
 import { closeAll } from './browser/pool.js';
 import { ensureDirs } from './artifacts.js';
+import { handleUpload } from './media/upload.js';
 
 const arg = (name, fallback) => {
   const hit = process.argv.find((a) => a.startsWith(`--${name}=`));
@@ -69,8 +70,18 @@ async function startHttp() {
      * всё, /mcp/seo+crawl — названное. Процесс при этом один, поэтому браузеры, артефакты и
      * эталоны у всех адресов общие: сессия, открытая на одном, видна с другого.
      */
+    /* Загрузка картинки для image_convert идёт мимо протокола: гнать мегабайты через параметр
+       инструмента значит платить за них контекстом модели. */
+    if (url.pathname === '/upload') {
+      await handleUpload(req, res, url).catch((err) => {
+        process.stderr.write(`[upload] ошибка: ${err.stack || err.message}\n`);
+        if (!res.headersSent) plain(500, `${err.message}\n`);
+      });
+      return;
+    }
+
     if (url.pathname !== '/mcp' && !url.pathname.startsWith('/mcp/')) {
-      plain(404, 'Есть только /mcp, /mcp/<группы> и /health\n');
+      plain(404, 'Есть только /mcp, /mcp/<группы>, /upload и /health\n');
       return;
     }
 

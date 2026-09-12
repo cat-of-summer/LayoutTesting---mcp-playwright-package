@@ -30,6 +30,7 @@ import { register as registerSeo } from './tools/seo.js';
 import { register as registerStatic } from './tools/static.js';
 import { register as registerComposite } from './tools/composite.js';
 import { register as registerCrawl } from './tools/crawl.js';
+import { register as registerMedia } from './tools/media.js';
 import { register as registerArtifacts } from './tools/artifacts.js';
 import { register as registerHelp } from './tools/help.js';
 import { register as registerResources } from './tools/resources.js';
@@ -110,6 +111,7 @@ export async function createServer({ selection = resolveSelection('all') } = {})
   if (on('static')) registerStatic(server);
   if (on('composite')) registerComposite(server);
   if (on('crawl')) registerCrawl(server);
+  if (on('media')) registerMedia(server);
   // Состояние стенда знает про обновление — оно посчитано выше и передаётся сюда, а не
   // перезапрашивается на каждый вызов stand_info. Группа не отключается никогда: без
   // stand_info агенту нечем выяснить, почему остального нет.

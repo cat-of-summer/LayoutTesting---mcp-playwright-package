@@ -156,6 +156,15 @@ const HINTS = [
     en: `- "will it survive a long title", "what if there is more content" — layout_stress;`,
   },
   {
+    groups: ['media'],
+    ru: `- «оптимизируй картинки», «сделай webp и srcset», «ужми фото» — image_convert; «поставь заглушку»,
+  «нужна картинка 600×400» — image_placeholder. Стенд не видит файлов проекта: свой файл отдают
+  загрузкой curl -F file=@путь на /upload, результат забирают по url через curl -o;`,
+    en: `- "optimize the images", "make webp and srcset", "compress the photo" — image_convert; "put in a
+  placeholder", "need a 600×400 image" — image_placeholder. The stand cannot see project files: hand
+  a local file over with curl -F file=@path to /upload, fetch results by url with curl -o;`,
+  },
+  {
     groups: ['observe'],
     ru: `- «сохрани страницу», «работай по копии, не дёргай сайт» — page_save;`,
     en: `- "save the page", "work off a local copy, stop hitting the site" — page_save;`,

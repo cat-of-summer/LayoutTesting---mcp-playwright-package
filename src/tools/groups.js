@@ -23,6 +23,7 @@ export const GROUPS = [
   'static',
   'composite',
   'crawl',
+  'media',
 ];
 
 /**
@@ -42,7 +43,8 @@ export const FLOOR = ['artifacts', 'help'];
  * потому что figma_compare сверяет макет с живой страницей и складывает снимки.
  *
  * crawl, perf и composite не перечислены намеренно: они работают по адресу и сессию открывают
- * сами. seo и static принимают sessionId необязательным и без него тоже работают.
+ * сами. seo и static принимают sessionId необязательным и без него тоже работают. media браузера
+ * не касается вовсе.
  */
 export const DEPS = {
   layout: ['session'],
@@ -57,7 +59,7 @@ export const DEPS = {
  * группы, и stand_info всегда показывает развёрнутый состав, а не ярлык.
  */
 export const ALIASES = {
-  core: 'session+observe+layout+visual+a11y+static+composite',
+  core: 'session+observe+layout+visual+a11y+static+composite+media',
   minimal: 'session+observe+layout+composite',
   design: 'core+figma',
 };

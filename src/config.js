@@ -72,4 +72,9 @@ export const CONFIG = {
   maxTextBytes: Number(process.env.LT_MAX_TEXT_BYTES || 128 * 1024),
   maxInlineBytes: Number(process.env.LT_MAX_INLINE_BYTES || 1024 * 1024),
   maxLogEntries: Number(process.env.LT_MAX_LOG_ENTRIES || 100),
+  /*
+   * Потолок исходника для image_convert — и загрузки через /upload, и скачивания по URL.
+   * Без него адрес видеоролика вместо картинки читался бы в память целиком.
+   */
+  maxUploadBytes: Number(process.env.LT_MAX_UPLOAD_BYTES || 50 * 1024 * 1024),
 };

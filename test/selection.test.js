@@ -142,7 +142,7 @@ test('help показывает состав подключения, а не т�
   }
 });
 
-test('help полного набора перечисляет все 56', options, async () => {
+test('help полного набора перечисляет все 58',options, async () => {
   const all = await connect('all');
   const answer = await all.client.callTool({ name: 'help', arguments: {} });
   const { tools } = JSON.parse(answer.content[0].text);

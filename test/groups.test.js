@@ -48,6 +48,11 @@ test('псевдоним разворачивается в группы, в то
   assert.ok(!design.groups.has('crawl'), 'обход сайта в design не входит');
 });
 
+test('картинки входят в core и поднимаются одни, без браузерных групп', () => {
+  assert.ok(resolveSelection('core').groups.has('media'), 'оптимизация картинок нужна при любой вёрстке');
+  assert.deepEqual(sorted(resolveSelection('media')), ['artifacts', 'help', 'media']);
+});
+
 test('порядок слагаемых не создаёт разных наборов', () => {
   const a = resolveSelection('seo+crawl');
   const b = resolveSelection('crawl+seo');
