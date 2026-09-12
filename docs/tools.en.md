@@ -3,7 +3,7 @@
 Generated from the server itself: `node bin/gen-tools-doc.mjs`. Do not edit by hand —
 edit the descriptions in `src/tools/` and regenerate.
 
-Tools in total: **44**. Manifest size: **49418** characters.
+Tools in total: **56**. Manifest size: **61967** characters.
 
 ## `a11y_axe`
 
@@ -346,6 +346,152 @@ Why an element is invisible and who lies on top of it. Warns separately about a 
 | `pseudo` | `::before` | `::after` | `::marker` | `::placeholder` | Inspect the pseudo-element instead of the element itself |
 | `maxItems` | number |  |
 
+## `figma_behavior`
+
+**Behavior from the prototype** — _read-only_
+
+What is wired to what: which button opens which modal, what switches a component variant, where scrolling to an anchor happens, what stays pinned while scrolling. Links are grouped by target — six identical chevrons are one handler. Transitions come back as a ready transition line.
+
+| Parameters | | |
+|---|---|---|
+| `figma` | array | figma.com links or key:id entries. Nodes of one file go out in a single request. required |
+| `limit` | number | How many lines or entries to show |
+| `offset` | number | Where to continue: the value from the note hint |
+
+## `figma_breakpoints`
+
+**One screen across widths** — _read-only_
+
+Matches frames of one screen at different widths by content rather than position: what is the same element, what changed (sizes, spacing, layout direction), what disappeared, what replaced it and where the reading order diverges. Linearly changing values come back as a ready clamp().
+
+| Parameters | | |
+|---|---|---|
+| `figma` | array | Frames of one screen at different widths: desktop, tablet, mobile. required |
+| `limit` | number | How many lines or entries to show |
+
+## `figma_comments`
+
+**Design comments** — _read-only_
+
+Figma comments with replies and Dev Mode annotations anchored to elements, so "fix the spacing" says what it is about. Half the requirements live here rather than in the design itself. REST channel only: the Plugin API has no access to comments.
+
+| Parameters | | |
+|---|---|---|
+| `figma` | array | figma.com links or key:id entries. Nodes of one file go out in a single request. required |
+| `resolved` | boolean | Include resolved threads too. Open ones only by default |
+| `refresh` | boolean | Ask Figma again instead of taking the list from the 5-minute cache |
+| `limit` | number | How many lines or entries to show |
+| `offset` | number | Where to continue: the value from the note hint |
+
+## `figma_compare`
+
+**Does the build match the design**
+
+Compares a page against a design frame: texts are matched by content, and each one shows its offset, size and typography differences — with a selector and a node id. The pixel diff comes as a second layer, a difference map. Separately lists what the page lacks and what the design lacks.
+
+| Parameters | | |
+|---|---|---|
+| `figma` | string | A node: a figma.com link or a key:id entry. required |
+| `sessionId` | string | A session with the page open: the comparison runs against it |
+| `url` | string | A page address: the stand opens it itself at the width of the design frame |
+| `selector` | string | The block on the page the design frame corresponds to |
+| `mode` | `both` | `semantic` | `pixel` | both (default) — semantic and pixel; semantic — semantic only; pixel — pixel only |
+| `tolerance` | number | Offset tolerance in pixels. Default 2 |
+| `threshold` | number | Allowed difference as a percentage of pixels |
+| `limit` | number | How many lines or entries to show |
+
+## `figma_components`
+
+**Design components** — _read-only_
+
+Groups UI elements across frames so classes do not multiply: instances of one component and blocks with the same content collapse into one with modifiers. Separately shows drift — differences of a pixel or half a tone worth normalizing — and matches with existing project classes.
+
+| Parameters | | |
+|---|---|---|
+| `figma` | array | figma.com links or key:id entries. Nodes of one file go out in a single request. required |
+| `project` | object | A project to compare against: a page url — the stand collects its CSS itself — or CSS or SCSS text |
+| `limit` | number | How many lines or entries to show |
+| `offset` | number | Where to continue: the value from the note hint |
+
+## `figma_export`
+
+**Export from the design**
+
+Files from the design into artifacts with permanent links: render — a PNG of a node, tall frames cut into readable parts; svg — icons with currentColor; image — raster fills cropped as in the design.
+
+| Parameters | | |
+|---|---|---|
+| `figma` | array | figma.com links or key:id entries. Nodes of one file go out in a single request. required |
+| `kind` | `render` | `svg` | `image` | render (default) — a PNG of the node; svg — vectors and icons; image — raster fills cropped as in the design |
+| `scale` | number | Scale 0.5–4. For render it defaults to a readable width of about 1000px, for image to 1 and 2 |
+| `clip` | object | For render: cut out a rectangle in node coordinates |
+| `inline` | boolean | Embed the image in the response. Links only by default |
+
+## `figma_inspect`
+
+**Design node** — _read-only_
+
+A design node from the snapshot: outline — the layer tree with sizes, layout and texts, identical siblings collapsed; css — compact node styles. Replaces get_metadata and get_design_context without a call limit.
+
+| Parameters | | |
+|---|---|---|
+| `figma` | string | A node: a figma.com link or a key:id entry. required |
+| `mode` | `outline` | `css` | outline (default) — the layer tree with layout and texts; css — node styles |
+| `depth` | number | Traversal depth. Default 6 for outline and 2 for css |
+| `hidden` | boolean | Include hidden layers |
+| `limit` | number | Default 200 outline lines or 60 css nodes |
+| `offset` | number | Where to continue: the value from the note hint |
+
+## `figma_status`
+
+**Figma access** — _read-only_
+
+Figma access: whether the REST token works and how much of the limit is left, whether the stand is logged into the editor, whether the API version fell behind. Never reveals secrets. The first step when figma_* fail; action: login logs into the editor again or finishes a login with a code.
+
+| Parameters | | |
+|---|---|---|
+| `action` | `check` | `login` | `logout` | `token` | check (default) — inspect; login — log into the editor again or finish a login with a code; logout — forget the saved login; token — issue a REST token through the account settings |
+| `otp` | string | A two-factor authentication code, if Figma asked for one |
+| `refresh` | boolean | Ask Figma again instead of using the check cached for 10 minutes |
+
+## `figma_structure`
+
+**Markup structure** — _read-only_
+
+What the frame becomes in markup: a tree of tags and classes built from geometry rather than from layers. Backgrounds, decorations and overlays are pulled out, shuffled layers are reparented, repeats collapse into a list. Content slots for layout_stress come with it.
+
+| Parameters | | |
+|---|---|---|
+| `figma` | string | A node: a figma.com link or a key:id entry. required |
+| `depth` | number | Tree depth. Default 10 |
+| `limit` | number | How many lines or entries to show |
+| `offset` | number | Where to continue: the value from the note hint |
+
+## `figma_sync`
+
+**Pull the design**
+
+Pulls design nodes into a local snapshot with one request per file: desktop, mobile, modals — all at once. Later analysis reads the snapshot without calling Figma. Returns a per-frame summary, the channel used and how many requests were spent.
+
+| Parameters | | |
+|---|---|---|
+| `figma` | array | figma.com links or key:id entries. Nodes of one file go out in a single request. required |
+| `refresh` | boolean | Check the file version with Figma even if the snapshot is fresh |
+| `channel` | `auto` | `rest` | `editor` | auto (default) — the editor if the stand can log into it, otherwise REST; rest and editor — that channel only |
+| `css` | boolean | Add the CSS computed by Figma itself. Editor channel only, about 13 ms per node |
+
+## `figma_tokens`
+
+**Design tokens** — _read-only_
+
+What becomes a CSS variable: palette, typography, spacing and radius scales, shadows, durations. Shows how often a value is hardcoded while a Figma variable exists, merges colors the eye cannot tell apart, derives component variables from variants and clamp() for values that change with width.
+
+| Parameters | | |
+|---|---|---|
+| `figma` | array | figma.com links or key:id entries. Nodes of one file go out in a single request. required |
+| `project` | object | A project to compare against: a page url — the stand collects its CSS itself — or CSS or SCSS text |
+| `minUses` | number | A value becomes a token from this many uses. Default 2 |
+
 ## `help`
 
 **Stand reference** — _read-only_
@@ -354,7 +500,7 @@ Details deliberately left out of tool descriptions: how to address targets from 
 
 | Parameters | | |
 |---|---|---|
-| `topic` | `addressing` | `artifacts` | `profiles` | `limits` | `sessions` | `workflows` | Topic. With no arguments, lists the topics |
+| `topic` | `addressing` | `artifacts` | `profiles` | `limits` | `sessions` | `workflows` | `figma` | Topic. With no arguments, lists the topics |
 | `tool` | string | Tool name: the caveats and details specific to it |
 
 ## `layout_audit`
@@ -372,6 +518,22 @@ Finds horizontal scroll, elements past the viewport, overlapping content, clippe
 | `categories` | array | Details for these categories only. Counters for all of them are always returned |
 | `include` | array | Inspect only these blocks — the header and the footer otherwise pad the counters with their own findings |
 | `exclude` | array | Skip these blocks |
+
+## `layout_stress`
+
+**Content stress test**
+
+Replaces the content of a live page and watches what breaks: longer and empty text, a word with no break opportunities, a list of twelve items and of one, a vertical and a broken image, a range of widths. Reports only what the replacement caused and puts the page back as it was.
+
+| Parameters | | |
+|---|---|---|
+| `sessionId` | string | required |
+| `scenarios` | array | Which scenarios to run. All by default: text, lists, images, widths |
+| `selectors` | array | What to replace. Without them the stand picks on its own: texts, lists and images of the page |
+| `factor` | number | How many times longer to make the text. Default 3 |
+| `items` | number | How many items to grow a list to. Default 12 |
+| `widths` | array | Widths to run through. From 320 to 1440 by default |
+| `maxItems` | number | How many findings to show per scenario. Default 20 |
 
 ## `lighthouse`
 
@@ -677,6 +839,7 @@ CLS, LCP, FCP and TTFB for a URL, with the elements that shifted the layout list
 - **`layout-broken`** — The order of investigation: from the whole page to one element, from cheap steps to expensive ones.
 - **`visual-regression`** — Compare a page against its baseline, having first removed everything that changes on its own.
 - **`seo-site`** — Crawl a site and collect what is invisible on a single page.
+- **`figma-layout`** — How to work from a design: one snapshot, analysis over it, markup, then checks by comparison and by content.
 
 ---
 
@@ -688,4 +851,4 @@ CLS, LCP, FCP and TTFB for a URL, with the elements that shifted the layout list
 
 ---
 
-_Generated: 2026-09-11_
+_Generated: 2026-09-12_

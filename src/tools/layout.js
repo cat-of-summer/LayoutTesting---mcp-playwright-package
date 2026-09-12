@@ -9,6 +9,7 @@ import { z } from 'zod';
 import { d } from '../i18n-params.js';
 import { getSession } from '../browser/pool.js';
 import { layoutAudit, computedStyles, AUDIT_CATEGORIES } from '../checks/layout.js';
+import { runStress, STRESS_SCENARIOS } from '../checks/stress.js';
 import { matchedRules } from '../checks/cssom.js';
 import { elementLayers } from '../checks/layers.js';
 import { json, text } from './shared.js';
@@ -121,5 +122,42 @@ export function register(server) {
     },
     async ({ sessionId, selector, pseudo, maxItems }) =>
       json(await elementLayers(getSession(sessionId).page, { selector, pseudo, maxItems })),
+  );
+
+  server.registerTool(
+    'layout_stress',
+    {
+      title: t({ ru: 'Прогон контентом', en: 'Content stress test' }),
+      description: t({
+        ru: 'Подменяет содержимое живой страницы и смотрит, что сломается: текст длиннее и пустой, слово без переносов, список из двенадцати элементов и из одного, вертикальная и битая картинка, набор ширин. Показывает только то, что появилось от подмены, и возвращает страницу в исходное состояние.',
+        en: 'Replaces the content of a live page and watches what breaks: longer and empty text, a word with no break opportunities, a list of twelve items and of one, a vertical and a broken image, a range of widths. Reports only what the replacement caused and puts the page back as it was.',
+      }),
+      inputSchema: {
+        sessionId: z.string(),
+        scenarios: z
+          .array(z.enum(STRESS_SCENARIOS))
+          .optional()
+          .describe(d('Какие сценарии гонять. По умолчанию все: text, lists, images, widths')),
+        selectors: z
+          .array(z.string())
+          .optional()
+          .describe(d('Что подменять. Без них стенд выбирает сам: тексты, списки и картинки страницы')),
+        factor: z.number().optional().describe(d('Во сколько раз удлинять текст. По умолчанию 3')),
+        items: z.number().optional().describe(d('До скольких элементов раздувать список. По умолчанию 12')),
+        widths: z.array(z.number()).optional().describe(d('Ширины для прогона. По умолчанию от 320 до 1440')),
+        maxItems: z.number().optional().describe(d('Сколько находок показывать на сценарий. По умолчанию 20')),
+      },
+    },
+    async ({ sessionId, scenarios, selectors, factor, items, widths, maxItems }) =>
+      json(
+        await runStress(getSession(sessionId).page, {
+          ...(scenarios ? { scenarios } : {}),
+          ...(selectors ? { selectors } : {}),
+          ...(factor ? { factor } : {}),
+          ...(items ? { items } : {}),
+          ...(widths ? { widths } : {}),
+          ...(maxItems ? { maxItems } : {}),
+        }),
+      ),
   );
 }

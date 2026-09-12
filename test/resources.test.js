@@ -94,7 +94,7 @@ test('промпты на месте и разворачиваются с арг
   const { prompts } = await client.listPrompts();
   assert.deepEqual(
     prompts.map((p) => p.name).sort(),
-    ['layout-broken', 'seo-site', 'visual-regression'],
+    ['figma-layout', 'layout-broken', 'seo-site', 'visual-regression'],
   );
 
   const got = await client.getPrompt({

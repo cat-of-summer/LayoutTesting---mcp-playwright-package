@@ -12,3 +12,7 @@ sites/*
 state/*
 !state/.gitkeep
 .update-check.json
+
+# Снимки макетов Figma: воспроизводимы по ссылке, в истории им делать нечего.
+figma/*
+.figma-api-check.json

@@ -25,6 +25,11 @@ export const DIRS = {
   sites: path.join(ROOT, 'sites'),
   /** storageState сессий. Наружу не отдаётся: см. DENIED_DIRS в paths.js. */
   state: path.join(ROOT, 'state'),
+  /**
+   * Снимки макетов Figma. Отдельно от artifacts, потому что автоочистка прогонов не должна
+   * выбрасывать то, за что заплачено лимитом REST API. Секретов здесь нет — они в state/figma/.
+   */
+  figma: path.join(ROOT, 'figma'),
 };
 
 export const BROWSERS = ['chromium', 'firefox', 'webkit'];
@@ -51,6 +56,27 @@ export const UPDATE = {
   image: process.env.LT_UPDATE_IMAGE || 'ghcr.io/cat-of-summer/layouttesting---mcp-playwright-package',
   /** Пустое значение выключает проверку целиком — для стендов без выхода наружу. */
   enabled: process.env.LT_UPDATE_CHECK !== '0',
+};
+
+/**
+ * Настройки каналов Figma, кроме секретов.
+ *
+ * Токен, почта и пароль сюда не попадают намеренно: объект конфигурации легко целиком уехать
+ * в stand_info или в лог, а секрет обязан читаться ровно в одном месте — src/figma/auth.js.
+ */
+export const FIGMA = {
+  apiBase: (process.env.FIGMA_API_BASE || 'https://api.figma.com').replace(/\/+$/, ''),
+  /** auto — канал редактора включается, когда есть чем войти; off — только REST. */
+  editor: (process.env.FIGMA_EDITOR || 'auto').toLowerCase(),
+  editorIdleMs: Number(process.env.FIGMA_EDITOR_IDLE_MS || 10 * 60 * 1000),
+  /** Имя сохранённого состояния browser_storage, если вход уже сделан руками. */
+  storageState: process.env.FIGMA_STORAGE_STATE || '',
+  autoIssueToken: process.env.FIGMA_TOKEN_AUTOISSUE !== '0',
+  /**
+   * Сколько ждать освобождения минутного окна, прежде чем отказать. Дольше двадцати секунд
+   * агенту ждать хуже, чем получить отказ с Retry-After и заняться другим.
+   */
+  maxWaitMs: Number(process.env.FIGMA_MAX_WAIT_MS || 20000),
 };
 
 UPDATE.releases = `https://github.com/${UPDATE.repo}/releases`;

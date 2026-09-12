@@ -38,6 +38,14 @@ const RU = `Стенд тестирования вёрстки: живой бр�
 - «заполни форму», «загрузи файл», «страница показала alert», «что именно ушло на сервер» —
   browser_act (click, fill, upload, dialog) и browser_route с record: он записывает состав
   запроса, а не только факт попадания;
+- «сверстай по макету», «вот ссылка на Figma», «сделай как в макете» — figma_status, затем
+  figma_sync со всеми кадрами задачи разом, дальше разбор по снимку: figma_structure (план
+  разметки), figma_breakpoints (что меняется с шириной), figma_components (сколько на самом деле
+  блоков), figma_tokens (что становится переменной), figma_comments и figma_behavior (требования
+  и связи), figma_export (иконки и картинки). Готовый порядок целиком — промпт figma-layout;
+- «совпадает ли с макетом», «сравни вёрстку с Figma» — figma_compare: тексты сопоставляются по
+  содержимому, и видно, что именно съехало, а не только процент различий;
+- «выдержит ли длинный текст», «что будет, если контента больше» — layout_stress;
 - «сохрани страницу», «работай по копии, не дёргай сайт» — page_save;
 - нужен доступ за логином — browser_storage: сохранить состояние и подставлять его по имени.
 
@@ -82,6 +90,15 @@ Where to start, by what the user asks:
 - "fill the form", "upload a file", "the page shows an alert", "what did the form actually
   send" — browser_act (click, fill, upload, dialog) and browser_route with record, which
   captures the request body rather than just the fact that a rule matched;
+- "build this from the design", "here is a Figma link", "make it like the mockup" — figma_status,
+  then figma_sync with every frame of the task at once, then analysis over the snapshot:
+  figma_structure (the markup plan), figma_breakpoints (what changes with width), figma_components
+  (how many blocks there really are), figma_tokens (what becomes a variable), figma_comments and
+  figma_behavior (requirements and links), figma_export (icons and images). The whole order is in
+  the figma-layout prompt;
+- "does it match the design", "compare the build with Figma" — figma_compare: texts are matched by
+  content, so it shows what actually moved rather than a percentage;
+- "will it survive a long title", "what if there is more content" — layout_stress;
 - "save the page", "work off a local copy, stop hitting the site" — page_save;
 - something is behind a login — browser_storage: save the state, then pass it by name.
 

@@ -11,6 +11,8 @@
     "mcp:http": "node src/index.js --transport=http",
     "mcp:stdio": "node src/index.js --transport=stdio",
     "lt": "node bin/lt.mjs",
+    "figma:api-check": "node bin/figma-api-check.mjs",
+    "pretest": "node bin/figma-api-check.mjs",
     "test": "node --test \"test/*.test.js\"",
     "test:browser": "LT_BROWSER_TESTS=1 node --test \"test/*.test.js\"",
     "docs": "node bin/gen-tools-doc.mjs && LT_LANG=en node bin/gen-tools-doc.mjs"
@@ -34,5 +36,9 @@
     "stylelint": "^17.14.1",
     "stylelint-config-standard": "^40.0.0",
     "zod": "^3.25.76"
+  },
+  "devDependencies": {
+    "@figma/plugin-typings": "1.138.0",
+    "@figma/rest-api-spec": "0.42.0"
   }
 }

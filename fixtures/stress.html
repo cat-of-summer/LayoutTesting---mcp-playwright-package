@@ -1,0 +1,41 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Прогон контентом</title>
+<style>
+  body { margin: 0; padding: 20px; font: 16px/1.4 system-ui, sans-serif; }
+  /* Карточка фиксированной высоты: держит ровно тот текст, что был в макете. */
+  .card { width: 320px; height: 120px; overflow: hidden; border: 1px solid #ccc; padding: 12px; box-sizing: border-box; }
+  .card__title { margin: 0 0 8px; font-size: 20px; }
+  .card__text { margin: 0; }
+  /* Список фиксированной высоты: лишние элементы просто исчезают. */
+  .list { width: 320px; height: 132px; margin: 20px 0; padding: 0 0 0 20px; overflow: hidden; border: 1px solid #ccc; }
+  .list li { height: 40px; }
+  .gallery { width: 320px; }
+  .gallery img { display: block; width: 100%; }
+  /* Строка без переносов: ломается на узких ширинах. */
+  .row { display: flex; gap: 24px; width: 600px; margin-top: 20px; }
+  .row span { white-space: nowrap; }
+</style>
+</head>
+<body>
+  <article class="card">
+    <h2 class="card__title">Врач-терапевт</h2>
+    <p class="card__text">Короткое описание вакансии.</p>
+  </article>
+
+  <ul class="list">
+    <li>Хирург</li>
+    <li>Терапевт</li>
+    <li>Педиатр</li>
+  </ul>
+
+  <div class="gallery">
+    <img src="data:image/svg+xml;utf8,%3Csvg%20xmlns%3D%27http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%27%20viewBox%3D%270%200%20320%20120%27%3E%3Crect%20width%3D%27320%27%20height%3D%27120%27%20fill%3D%27%23ddd%27%2F%3E%3C%2Fsvg%3E" alt="Фото">
+  </div>
+
+  <div class="row"><span>Первый пункт меню</span><span>Второй пункт меню</span><span>Третий пункт меню</span></div>
+</body>
+</html>

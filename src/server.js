@@ -16,11 +16,13 @@ import { installProtocolPatches } from './protocol.js';
 import { pkg } from './tools/shared.js';
 import { INSTRUCTIONS } from './tools/instructions.js';
 import { checkForUpdate, updateNotice } from './update.js';
+import { checkFigmaApi, figmaApiNotice } from './figma/api-check.js';
 
 import { register as registerSession } from './tools/session.js';
 import { register as registerObserve } from './tools/observe.js';
 import { register as registerLayout } from './tools/layout.js';
 import { register as registerVisual } from './tools/visual.js';
+import { register as registerFigma } from './tools/figma.js';
 import { register as registerA11y } from './tools/a11y.js';
 import { register as registerPerf } from './tools/perf.js';
 import { register as registerSeo } from './tools/seo.js';
@@ -59,6 +61,9 @@ const TOOL_SETS = {
   all: null,
   core: ['session', 'observe', 'layout', 'visual', 'a11y', 'static', 'composite', 'artifacts'],
   minimal: ['session', 'observe', 'layout', 'composite', 'artifacts'],
+  /* Вёрстка по макету: core плюс Figma. В core Figma не входит — стенду, который держат ради
+     проверки готовых сайтов, её манифест ни к чему. */
+  design: ['session', 'observe', 'layout', 'visual', 'a11y', 'static', 'composite', 'artifacts', 'figma'],
 };
 
 function selectedGroups() {
@@ -74,6 +79,7 @@ function selectedGroups() {
 }
 
 let updatePromise = null;
+let figmaApiPromise = null;
 
 export async function createServer() {
   await ensureDirs();
@@ -88,24 +94,28 @@ export async function createServer() {
    * запуск надолго тоже: секунды ожидания недоступного GitHub стоят дешевле, чем стенд,
    * который не поднялся из-за проверки версии.
    */
+  const set = selectedGroups();
+  const on = (group) => !set.groups || set.groups.has(group);
+
+  /* Версия Figma API проверяется так же и по той же причине: отставание должно быть видно
+     агенту сразу, а не после отказа Figma. Обе проверки идут параллельно — ни одна не ждёт другую. */
   updatePromise ??= checkForUpdate(pkg.version).catch(() => null);
-  const update = await updatePromise;
-  const notice = updateNotice(update);
+  if (on('figma')) figmaApiPromise ??= checkFigmaApi().catch(() => null);
+  const [update, figmaApi] = await Promise.all([updatePromise, on('figma') ? figmaApiPromise : null]);
+  const notices = [updateNotice(update), figmaApiNotice(figmaApi)].filter(Boolean);
 
   /* instructions клиент показывает модели при подключении. Без них агент видит четыре десятка
      описаний без всякой рамки и не понимает, для каких задач сюда идти. */
   const server = new McpServer(
     { name: 'layout-testing', version: pkg.version },
-    { instructions: notice ? `${INSTRUCTIONS}\n\n${notice}` : INSTRUCTIONS },
+    { instructions: [INSTRUCTIONS, ...notices].join('\n\n') },
   );
-
-  const set = selectedGroups();
-  const on = (group) => !set.groups || set.groups.has(group);
 
   if (on('session')) registerSession(server);
   if (on('observe')) registerObserve(server);
   if (on('layout')) registerLayout(server);
   if (on('visual')) registerVisual(server);
+  if (on('figma')) registerFigma(server);
   if (on('a11y')) registerA11y(server);
   if (on('perf')) registerPerf(server);
   if (on('seo')) registerSeo(server);

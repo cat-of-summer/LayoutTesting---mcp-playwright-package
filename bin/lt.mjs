@@ -106,6 +106,8 @@ const HELP = `Стенд тестирования вёрстки — CLI
   lt matrix     --url URL [оси]           прогон по матрице условий
   lt lighthouse --url URL                 отчёт Lighthouse
   lt storybook  --url URL                 обход всех историй Storybook
+  lt figma      --figma ССЫЛКА[,…]        снять макет Figma в локальный снимок
+  lt stress     --url URL                 прогон вёрстки контентом и по ширинам
   lt baselines                            список эталонов
   lt runs                                 список прогонов
   lt clean      [--keep N]                удалить старые прогоны
@@ -285,6 +287,50 @@ async function main() {
       }
       console.log('  отчёт:', publicUrl(result.report));
       process.exitCode = result.withProblems ? 1 : 0;
+      break;
+    }
+
+    case 'figma': {
+      const refs = list(flags.figma) || list(flags.url);
+      if (!refs?.length) {
+        console.error('Нужна ссылка на кадр: --figma "https://figma.com/design/…?node-id=1-2"');
+        process.exit(2);
+      }
+      const { syncFigma } = await import('../src/figma/snapshot.js');
+      const { editorChannel } = await import('../src/figma/editor.js');
+      const result = await syncFigma(refs, { editor: editorChannel, refresh: bool(flags.refresh) });
+      for (const file of result.files) {
+        console.log(`${file.name || file.fileKey} (версия ${file.version}, канал ${file.channel || 'кэш'})`);
+        for (const frame of file.frames || []) {
+          console.log(`  ${frame.ref}  ${frame.name} — ${frame.size}, ${frame.breakpoint || '?'}, узлов ${frame.counts.nodes}`);
+        }
+        if (file.notFound?.length) console.log(`  не найдены: ${file.notFound.join(', ')}`);
+      }
+      console.log(`запросов: tier1 ${result.requests.tier1}, tier2 ${result.requests.tier2}, tier3 ${result.requests.tier3}`);
+      break;
+    }
+
+    case 'stress': {
+      const url = requireUrl(flags);
+      const { runStress } = await import('../src/checks/stress.js');
+      const session = await createSession(profileFrom(flags));
+      try {
+        await gotoAndSettle(session, url);
+        const report = await runStress(session.page, {
+          ...(list(flags.scenarios) ? { scenarios: list(flags.scenarios) } : {}),
+          ...(list(flags.selectors) ? { selectors: list(flags.selectors) } : {}),
+        });
+        console.log(`исходно находок: ${report.baseline.total}`);
+        for (const item of report.scenarios) {
+          console.log(`  ${item.scenario.padEnd(32)} подменено ${String(item.applied).padStart(3)} → появилось ${item.found}`);
+        }
+        if (report.widths?.firstBreak) {
+          console.log(`ломается на ширине ${report.widths.firstBreak.width}px: ${report.widths.firstBreak.issues.map((i) => i.category).join(', ')}`);
+        }
+        if (report.scenarios.some((item) => item.found)) process.exitCode = 1;
+      } finally {
+        await closeSession(session.id);
+      }
       break;
     }
 

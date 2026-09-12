@@ -239,6 +239,64 @@ const EN = {
     'The whole page rather than the visible area. Default true',
   'Снять прямоугольник страницы в CSS-пикселях — когда подходящего элемента для selector нет':
     'Capture a rectangle of the page in CSS pixels — when there is no element a selector could target',
+
+  // figma
+  'Ссылки figma.com или записи ключ:id. Узлы одного файла уходят одним запросом':
+    'figma.com links or key:id entries. Nodes of one file go out in a single request',
+  'Заново спросить Figma, а не взять проверку из кэша на 10 минут':
+    'Ask Figma again instead of using the check cached for 10 minutes',
+  'Сверить версию файла с Figma, даже если снимок свежий': 'Check the file version with Figma even if the snapshot is fresh',
+  'Узел: ссылка figma.com или запись ключ:id': 'A node: a figma.com link or a key:id entry',
+  'outline (по умолчанию) — дерево слоёв с раскладкой и текстами; css — стили узлов':
+    'outline (default) — the layer tree with layout and texts; css — node styles',
+  'Глубина обхода. По умолчанию 6 для outline и 2 для css': 'Traversal depth. Default 6 for outline and 2 for css',
+  'Показывать скрытые слои': 'Include hidden layers',
+  'По умолчанию 200 строк outline или 60 узлов css': 'Default 200 outline lines or 60 css nodes',
+  'С какой записи продолжить: значение из подсказки note': 'Where to continue: the value from the note hint',
+  'render (по умолчанию) — PNG узла; svg — векторы и иконки; image — растровые заливки, кадрированные как в макете':
+    'render (default) — a PNG of the node; svg — vectors and icons; image — raster fills cropped as in the design',
+  'Масштаб 0.5–4. Для render по умолчанию подбирается под читаемую ширину около 1000px, для image — 1 и 2':
+    'Scale 0.5–4. For render it defaults to a readable width of about 1000px, for image to 1 and 2',
+  'Для render: вырезать прямоугольник в координатах узла': 'For render: cut out a rectangle in node coordinates',
+  'Вложить картинку в ответ. По умолчанию только ссылки': 'Embed the image in the response. Links only by default',
+  'check (по умолчанию) — проверить; login — войти в редактор заново или дозавершить вход кодом; logout — забыть сохранённый вход; token — выпустить токен REST через настройки аккаунта':
+    'check (default) — inspect; login — log into the editor again or finish a login with a code; logout — forget the saved login; token — issue a REST token through the account settings',
+  'Код двухфакторной аутентификации, если Figma его запросила': 'A two-factor authentication code, if Figma asked for one',
+  'auto (по умолчанию) — редактор, если в него есть вход, иначе REST; rest и editor — только этот канал':
+    'auto (default) — the editor if the stand can log into it, otherwise REST; rest and editor — that channel only',
+  'Добавить CSS, который считает сама Figma. Только канал редактора, около 13 мс на узел':
+    'Add the CSS computed by Figma itself. Editor channel only, about 13 ms per node',
+  'Проект для сверки: url страницы — стенд сам заберёт её CSS, либо текст CSS или SCSS':
+    'A project to compare against: a page url — the stand collects its CSS itself — or CSS or SCSS text',
+  'Глубина дерева. По умолчанию 10': 'Tree depth. Default 10',
+  'Сколько строк или записей показать': 'How many lines or entries to show',
+  'Значение становится токеном с этого числа использований. По умолчанию 2':
+    'A value becomes a token from this many uses. Default 2',
+  'Кадры одного экрана разной ширины: десктоп, планшет, мобильная':
+    'Frames of one screen at different widths: desktop, tablet, mobile',
+  'Показывать и закрытые треды. По умолчанию только открытые':
+    'Include resolved threads too. Open ones only by default',
+  'Спросить Figma заново, а не взять список из кэша на 5 минут':
+    'Ask Figma again instead of taking the list from the 5-minute cache',
+
+  // layout_stress
+  'Какие сценарии гонять. По умолчанию все: text, lists, images, widths':
+    'Which scenarios to run. All by default: text, lists, images, widths',
+  'Что подменять. Без них стенд выбирает сам: тексты, списки и картинки страницы':
+    'What to replace. Without them the stand picks on its own: texts, lists and images of the page',
+  'Во сколько раз удлинять текст. По умолчанию 3': 'How many times longer to make the text. Default 3',
+  'До скольких элементов раздувать список. По умолчанию 12': 'How many items to grow a list to. Default 12',
+  'Ширины для прогона. По умолчанию от 320 до 1440': 'Widths to run through. From 320 to 1440 by default',
+  'Сколько находок показывать на сценарий. По умолчанию 20': 'How many findings to show per scenario. Default 20',
+
+  // figma_compare
+  'Сессия с открытой страницей: сравнение идёт по ней': 'A session with the page open: the comparison runs against it',
+  'Адрес страницы: стенд откроет её сам шириной кадра макета':
+    'A page address: the stand opens it itself at the width of the design frame',
+  'Блок на странице, которому соответствует кадр макета': 'The block on the page the design frame corresponds to',
+  'both (по умолчанию) — и смысловое, и попиксельное; semantic — только смысловое; pixel — только попиксельное':
+    'both (default) — semantic and pixel; semantic — semantic only; pixel — pixel only',
+  'Допуск смещения в пикселях. По умолчанию 2': 'Offset tolerance in pixels. Default 2',
 };
 
 /**

@@ -38,8 +38,15 @@ const options = { skip: enabled ? false : 'нужен LT_FULL_TESTS=1 и пол�
  *
  * perToolSchema поднят вместе с ним: browser_open — единственное место, где объявлен полный
  * набор условий просмотра, и каждое новое условие ложится туда.
+ *
+ * 60 158 на 2026-09-12: группа figma целиком — доступ и снятие макета (figma_status, figma_sync,
+ * figma_inspect, figma_export), разбор (figma_structure, figma_components, figma_tokens,
+ * figma_breakpoints, figma_comments, figma_behavior), сверка (figma_compare) и прогон вёрстки
+ * контентом (layout_stress). Это четверть манифеста, и платит её только тот, кому Figma нужна:
+ * группа не входит в наборы core и minimal, для вёрстки по макету собран набор design, а
+ * LT_TOOLS=core возвращает прежний размер.
  */
-const BUDGET = { total: 48500, perToolSchema: 2450, tools: 44 };
+const BUDGET = { total: 60500, perToolSchema: 2450, tools: 56 };
 
 /*
  * Инструменты, где схема кратно тяжелее описания, и это не дефект.

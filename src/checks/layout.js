@@ -200,6 +200,7 @@ function collectLayoutIssues(options) {
   const vh = document.documentElement.clientHeight;
   const issues = {
     documentOverflow: null,
+    boxOverflow: [],
     overflowingElements: [],
     overlaps: [],
     clippedText: [],
@@ -545,6 +546,53 @@ function collectLayoutIssues(options) {
     }
   }
 
+  /*
+   * Содержимое вылезло за свой блок.
+   *
+   * Это не то же самое, что вылет за viewport: карточка остаётся на месте, а из неё торчит
+   * заголовок в три строки — или не торчит, потому что обрезан. Такое находится только при
+   * сравнении ребёнка с коробкой родителя, и именно этим ломается вёрстка при длинном контенте.
+   * Абсолютные и фиксированные дети не в счёт: их вынесли за край нарочно.
+   */
+  for (const { el, style, rect } of visible) {
+    if (issues.boxOverflow.length >= maxItems) break;
+    const clips = /hidden|clip|auto|scroll/.test(style.overflow + style.overflowX + style.overflowY);
+    const painted =
+      clips ||
+      style.backgroundImage !== 'none' ||
+      !/^rgba\(0, 0, 0, 0\)$|^transparent$/.test(style.backgroundColor) ||
+      parseFloat(style.borderTopWidth) > 0 ||
+      parseFloat(style.borderBottomWidth) > 0 ||
+      parseFloat(style.borderLeftWidth) > 0 ||
+      parseFloat(style.borderRightWidth) > 0;
+    if (!painted || rect.width < 16 || rect.height < 16) continue;
+
+    for (const child of el.children) {
+      const childStyle = getComputedStyle(child);
+      if (childStyle.position === 'absolute' || childStyle.position === 'fixed') continue;
+      const childRect = child.getBoundingClientRect();
+      if (!isVisible(child, childStyle, childRect)) continue;
+      const out = {
+        top: Math.round(rect.top - childRect.top),
+        right: Math.round(childRect.right - rect.right),
+        bottom: Math.round(childRect.bottom - rect.bottom),
+        left: Math.round(rect.left - childRect.left),
+      };
+      const worst = Math.max(out.top, out.right, out.bottom, out.left);
+      if (worst <= 1) continue;
+      issues.boxOverflow.push({
+        selector: cssPath(el),
+        child: cssPath(child),
+        text: label(child),
+        box: box(rect),
+        overflowPx: Object.fromEntries(Object.entries(out).filter(([, value]) => value > 1)),
+        /* Обрезано или торчит — чинится по-разному: первое прячет контент, второе ломает соседей. */
+        clipped: clips,
+      });
+      if (issues.boxOverflow.length >= maxItems) break;
+    }
+  }
+
   const counts = Object.fromEntries(
     Object.entries(issues).map(([k, v]) => [k, Array.isArray(v) ? v.length : v ? 1 : 0]),
   );
@@ -572,6 +620,7 @@ function collectLayoutIssues(options) {
 
 export const AUDIT_CATEGORIES = [
   'documentOverflow',
+  'boxOverflow',
   'overflowingElements',
   'overlaps',
   'clippedText',

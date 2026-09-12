@@ -132,4 +132,59 @@ Do not retell the tool output in full — name the cause and what exactly produc
         }),
       ),
   );
+
+  server.registerPrompt(
+    'figma-layout',
+    {
+      title: t({ ru: 'Свёрстать по макету Figma', en: 'Build markup from a Figma design' }),
+      description: t({
+        ru: 'Порядок работы по макету: один снимок, разбор по снимку, вёрстка, проверка сравнением и контентом.',
+        en: 'How to work from a design: one snapshot, analysis over it, markup, then checks by comparison and by content.',
+      }),
+      argsSchema: {
+        figma: z.string().describe(t({ ru: 'Ссылки на кадры через запятую: десктоп, мобильная, модалки', en: 'Frame links separated by commas: desktop, mobile, modals' })),
+        projectUrl: z
+          .string()
+          .optional()
+          .describe(t({ ru: 'Адрес страницы проекта для сверки токенов и классов', en: 'Project page address to compare tokens and classes against' })),
+        pageUrl: z
+          .string()
+          .optional()
+          .describe(t({ ru: 'Адрес страницы, которую верстаем', en: 'Address of the page being built' })),
+      },
+    },
+    ({ figma, projectUrl, pageUrl }) =>
+      say(
+        t({
+          ru: `Свёрстай страницу по макету: ${figma}.
+
+Правило одно: макет снимается один раз, дальше разбор идёт по снимку. Лимит REST — десять запросов в минуту, у места View/Collab двадцать в месяц.
+
+1. figma_status — проверь доступ и остаток лимита. needs_human означает капчу, письмо или код: спроси код у человека, остальное он проходит сам.
+2. figma_sync со ВСЕМИ кадрами задачи одним вызовом. Дальше figma_* читают снимок.
+3. figma_structure по каждому экрану. Это план разметки: теги, классы, раскладка. Читай notes — там сказано, где слои в макете перепутаны и что стало фоном, декором и наложением.
+4. figma_breakpoints по кадрам одного экрана: что меняется с шириной, что исчезает, чем заменено, где расходится порядок чтения. clamp() для линейных значений уже посчитан.
+5. figma_components${projectUrl ? ` с project: { url: "${projectUrl}" }` : ''} — сколько на самом деле блоков и какие у них модификаторы. drift — это расхождения в макете, а не варианты: сведи их к одному значению. Совпадения с классами проекта значат, что верстать заново не надо.
+6. figma_tokens${projectUrl ? ` с тем же project` : ''} — палитра, типографика, шкалы. unbound показывает, сколько раз значение вбито литералом при живой переменной Figma. Компонентные переменные — в разделе component.
+7. figma_comments и figma_behavior — требования и связи: что открывает модалку, что переключает состояние, что закреплено при прокрутке. Неподтверждённое (unconfirmed) уточни у человека, а не додумывай.
+8. figma_export — иконки (svg, currentColor) и растровые заливки, кадрированные как в макете. Сначала проверь, нет ли их уже в проекте.
+9. Верстай: порядок DOM = порядок чтения самой узкой вёрстки, перестановки — CSS, декор — псевдоэлементами, значения — токенами.
+10. Проверь: figma_compare${pageUrl ? ` с url: "${pageUrl}"` : ''} по каждому брейкпоинту, затем layout_stress — длинный и пустой текст, список из двенадцати, битая картинка, набор ширин. Расхождение ≤1px и различия рендеринга шрифтов дефектом не считаются.`,
+          en: `Build the page from the design: ${figma}.
+
+One rule: the design is pulled once, and all analysis runs over that snapshot. The REST limit is ten requests a minute, and twenty a month on a View/Collab seat.
+
+1. figma_status — check access and the remaining budget. needs_human means a captcha, an email or a code: ask the human for the code, the rest they go through themselves.
+2. figma_sync with ALL frames of the task in one call. After that figma_* read the snapshot.
+3. figma_structure for each screen. It is the markup plan: tags, classes, layout. Read notes — they say where the layers are shuffled and what became a background, a decoration or an overlay.
+4. figma_breakpoints across frames of one screen: what changes with width, what disappears, what replaced it, where the reading order diverges. clamp() for linear values is already computed.
+5. figma_components${projectUrl ? ` with project: { url: "${projectUrl}" }` : ''} — how many blocks there really are and what modifiers they have. drift is a discrepancy in the design, not a variant: normalize it. Matches with project classes mean there is nothing to build again.
+6. figma_tokens${projectUrl ? ' with the same project' : ''} — palette, typography, scales. unbound shows how often a value is hardcoded while a Figma variable exists. Component variables are in the component section.
+7. figma_comments and figma_behavior — requirements and links: what opens a modal, what switches a state, what stays pinned while scrolling. Anything marked unconfirmed goes to the human, not to guesswork.
+8. figma_export — icons (svg, currentColor) and raster fills cropped as in the design. First check whether the project already has them.
+9. Build: DOM order = reading order of the narrowest layout, reordering in CSS, decorations as pseudo-elements, values as tokens.
+10. Check: figma_compare${pageUrl ? ` with url: "${pageUrl}"` : ''} at every breakpoint, then layout_stress — long and empty text, a list of twelve, a broken image, a range of widths. A difference of 1px or font rendering is not a defect.`,
+        }),
+      ),
+  );
 }

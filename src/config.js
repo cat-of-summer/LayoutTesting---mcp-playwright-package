@@ -8,7 +8,7 @@
  */
 import { chromium } from 'playwright';
 
-export { ROOT, DIRS, BROWSERS, VIEWPORTS, UPDATE } from './constants.js';
+export { ROOT, DIRS, BROWSERS, VIEWPORTS, UPDATE, FIGMA } from './constants.js';
 
 function safeExecutablePath() {
   try {

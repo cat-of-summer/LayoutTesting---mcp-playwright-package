@@ -36,6 +36,7 @@ const GROUPS = [
   'composite',
   'artifacts',
   'crawl',
+  'figma',
   'help',
 ];
 const FILES = GROUPS.map((g) => `tools/${g}.js`);

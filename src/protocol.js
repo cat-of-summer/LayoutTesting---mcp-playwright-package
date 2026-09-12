@@ -132,6 +132,17 @@ const READ_ONLY = [
   'stand_info',
   'browser_sessions',
   'visual_baselines',
+  /* figma_inspect может докачать недостающий узел в кэш снимков — это кэш, как у браузера, а не
+     след для человека. figma_sync и figma_export сюда не входят: первый затем и зовут, чтобы
+     записать снимок, второй кладёт файлы в артефакты. */
+  'figma_status',
+  'figma_inspect',
+  'figma_structure',
+  'figma_components',
+  'figma_tokens',
+  'figma_breakpoints',
+  'figma_comments',
+  'figma_behavior',
 ];
 
 /** Удаляют то, что не восстановить: прогоны с диска, живую сессию вместе с её контекстом. */
