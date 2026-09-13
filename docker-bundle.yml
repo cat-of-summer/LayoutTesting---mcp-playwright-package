@@ -159,9 +159,6 @@ env:
   # Язык описаний инструментов MCP: их читает модель, а не человек.
   LT_LANG: value:ru
 
-  # Тег собранного образа — по нему проверка обновлений понимает, что тянуть через docker pull.
-  LT_IMAGE_TAG: value:latest
-
 volumes:
   artifacts: /var/www/html/artifacts
   baselines: /var/www/html/baselines
