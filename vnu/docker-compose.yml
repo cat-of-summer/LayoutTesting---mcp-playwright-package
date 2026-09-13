@@ -28,6 +28,7 @@ services:
       - "traefik.http.services.vnu${INSTANCE}.loadbalancer.server.port=8888"
       - "traefik.http.routers.vnu-redirect${INSTANCE}.rule=Host(`${TRAEFIK_DOMAIN}`)"
       - "traefik.http.routers.vnu-redirect${INSTANCE}.entrypoints=web"
+      - "traefik.http.routers.vnu-redirect${INSTANCE}.service=vnu${INSTANCE}"
       - "traefik.http.routers.vnu-redirect${INSTANCE}.priority=10"
       - "traefik.http.routers.vnu-redirect${INSTANCE}.middlewares=redir-vnu${INSTANCE}@docker"
       - "traefik.http.middlewares.redir-vnu${INSTANCE}.redirectscheme.scheme=https"

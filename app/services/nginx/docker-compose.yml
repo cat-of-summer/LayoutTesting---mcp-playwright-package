@@ -24,6 +24,7 @@ services:
       - "traefik.http.services.nginx${INSTANCE}.loadbalancer.server.port=80"
       - "traefik.http.routers.nginx-redirect${INSTANCE}.rule=Host(`${TRAEFIK_DOMAIN:-localhost}`)"
       - "traefik.http.routers.nginx-redirect${INSTANCE}.entrypoints=web"
+      - "traefik.http.routers.nginx-redirect${INSTANCE}.service=nginx${INSTANCE}"
       - "traefik.http.routers.nginx-redirect${INSTANCE}.priority=10"
       - "traefik.http.routers.nginx-redirect${INSTANCE}.middlewares=redir-nginx${INSTANCE}@docker"
       - "traefik.http.middlewares.redir-nginx${INSTANCE}.redirectscheme.scheme=https"
