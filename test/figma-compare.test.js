@@ -31,7 +31,7 @@ const text = (id, chars, at) => ({
 const design = designItems(
   snapshotOf(
     [
-      { id: '1:1', type: 'FRAME', name: 'Кадр', box: box(0, 0, 1440, 1200), children: ['1:2', '1:3', '1:4', '1:5', '1:6', '1:7', '1:8'] },
+      { id: '1:1', type: 'FRAME', name: 'Кадр', box: box(0, 0, 1440, 1200), children: ['1:2', '1:3', '1:4', '1:5', '1:6', '1:7', '1:8', '1:9'] },
       text('1:2', 'Ссылка на отчёт', box(120, 200, 300, 24)),
       { id: '1:3', type: 'LINE', name: 'Line 7', box: box(120, 231, 367, 0), strokes: [solid(217, 217, 217)], stroke: { weight: 2 } },
       text('1:4', 'Наш вклад', box(40, 600, 300, 24)),
@@ -48,6 +48,8 @@ const design = designItems(
       },
       text('1:7', 'Обложка', box(620, 580, 200, 24)),
       { id: '1:8', type: 'RECTANGLE', name: 'Только в макете', box: box(1000, 1000, 100, 100), fills: [solid(255, 0, 0)] },
+      /* Тот же декор на странице есть, но уехал дальше, чем правит поправка по соседнему тексту. */
+      { id: '1:9', type: 'RECTANGLE', name: 'Декор внизу', box: box(1100, 1100, 60, 60), fills: [solid(1, 2, 3)] },
     ],
     '1:1',
   ),
@@ -71,6 +73,7 @@ const page = {
     pageBox('.contrib__bar', box(20, 530, 10, 200), { background: 'rgb(0, 151, 216)' }),
     pageText('Обложка', box(620, 530, 200, 24)),
     pageBox('.doc__cover', box(600, 510, 300, 400), { background: 'rgb(255, 255, 255)', radius: ['8px', '8px', '8px', '8px'] }),
+    pageBox('.footer__decor', box(1100, 1250, 60, 60), { background: 'rgb(1, 2, 3)' }),
   ],
 };
 
@@ -101,10 +104,28 @@ test('обводка из макета, которой нет на страни�
   assert.equal(cover.diffs.background, undefined);
 });
 
-test('несопоставленный узел не молчит', () => {
+/*
+ * «Не нашёлся здесь» и «не нашёлся нигде» — разные ответы, и лежать они должны врозь.
+ *
+ * Обе записи раньше попадали в одну кучу под общей оговоркой «возможно, псевдоэлемент»: по ней
+ * нельзя решить, идти чинить вёрстку или не идти. Здесь 1:9 на странице есть, а 1:8 не свёрстан
+ * вовсе.
+ *
+ * off — остаток сверх уже применённой поправки, а не расстояние от макетных координат. Соседний
+ * текст говорит «здесь всё выше на 50px», сверка ищет узел на 1050 и находит на 1250: сдвиг
+ * блока объяснён, а вот эти 200px — нет, и чинить надо их.
+ */
+test('несопоставленный узел: смещённый отделён от пропавшего', () => {
   const result = comparePaint(design, page);
-  assert.ok(result.unmatched.some((entry) => entry.node === '1:8'));
-  assert.equal(result.boxes, 4);
+
+  assert.deepEqual(result.notFound.map((entry) => entry.node), ['1:8'], JSON.stringify(result.notFound));
+
+  assert.equal(result.shifted.length, 1, JSON.stringify(result.shifted));
+  assert.equal(result.shifted[0].node, '1:9');
+  assert.equal(result.shifted[0].selector, '.footer__decor', 'у смещённого есть адрес на странице');
+  assert.deepEqual(result.shifted[0].off, { x: 0, y: 200 });
+
+  assert.equal(result.boxes, 5);
   assert.equal(result.matched, 3);
 });
 

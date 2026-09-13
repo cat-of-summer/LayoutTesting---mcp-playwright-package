@@ -52,14 +52,34 @@ test('перечисляются прогоны и эталоны, а не фа�
   for (const run of runs) assert.match(run.uri, /\/$/, `${run.uri} должен быть каталогом`);
 });
 
-test('шаблоны покрывают все три хранилища', options, async () => {
+test('шаблоны покрывают все хранилища и регламент', options, async () => {
   const { resourceTemplates } = await client.listResourceTemplates();
   const patterns = resourceTemplates.map((r) => r.uriTemplate);
   assert.deepEqual(patterns.sort(), [
     'lt://artifacts/{+path}',
     'lt://baselines/{name}',
+    'lt://guide/{name}',
     'lt://sites/{+path}',
   ]);
+});
+
+/*
+ * Регламент — единственный ресурс, который стенд не произвёл, а привёз с собой. Проверяется, что
+ * он читается целиком и что несуществующий раздел отвечает перечнем, а не пустотой.
+ */
+test('регламент читается ресурсом и одинаков с тем, что отдаёт help', options, async () => {
+  const { resources } = await client.listResources();
+  const sections = resources.filter((r) => r.uri.startsWith('lt://guide/'));
+  assert.ok(sections.length >= 16, `разделов ${sections.length}`);
+  assert.ok(sections.some((r) => r.uri === 'lt://guide/rules'));
+  for (const section of sections) assert.ok(section.description, `${section.uri} без аннотации`);
+
+  const viaResource = await client.readResource({ uri: 'lt://guide/rules' });
+  const viaTool = await client.callTool({ name: 'help', arguments: { guide: 'rules' } });
+  assert.equal(viaResource.contents[0].mimeType, 'text/markdown');
+  assert.equal(viaResource.contents[0].text, viaTool.content[0].text, 'две витрины одного текста');
+
+  await assert.rejects(() => client.readResource({ uri: 'lt://guide/нет-такого' }));
 });
 
 test('сводка о стенде одинакова через ресурс и через инструмент', options, async () => {

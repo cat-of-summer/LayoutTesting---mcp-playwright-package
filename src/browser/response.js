@@ -44,6 +44,25 @@ export function navigationErrorHint(message, url) {
   return null;
 }
 
+/**
+ * Стоит ли вкладка на странице-ошибке браузера, а не на документе.
+ *
+ * Перезапуск dev-сервера уводит вкладку на chrome-error://chromewebdata/, и после этого каждый
+ * инструмент честно отвечает «элемент не найден»: по пустой странице это правда, но на вопрос
+ * агента ответ не тот, и поиск уходит в вёрстку, где искать нечего.
+ *
+ * about:blank сюда намеренно не входит, хотя после падения вкладка попадает и туда: это же —
+ * обычное начальное состояние только что открытой сессии. Признак, срабатывающий на каждом
+ * первом переходе, перестают читать, и вместе с ним перестают читать настоящий случай.
+ *
+ * Оговорка по движкам: адрес страницы-ошибки подставляет chromium. firefox и webkit оставляют в
+ * page.url() запрошенный адрес, и отличить их состояние отсюда нельзя — там о неудаче говорит
+ * сама ошибка перехода и page_logs.
+ */
+export function isErrorPage(url) {
+  return String(url || '').startsWith('chrome-error://');
+}
+
 /** 403 от dev-сервера, отвергшего имя хоста: у Vite это «Blocked request», у webpack — «Invalid Host header». */
 export function blockedHostHint(status, body, url) {
   if (status !== 403 || !/Blocked request|is not allowed|allowedHosts|Invalid Host header/i.test(String(body || ''))) return null;

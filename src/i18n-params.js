@@ -245,11 +245,23 @@ const EN = {
     'figma.com links or key:id entries. Nodes of one file go out in a single request',
   'Заново спросить Figma, а не взять проверку из кэша на 10 минут':
     'Ask Figma again instead of using the check cached for 10 minutes',
+  'Раздел регламента вёрстки по макету': 'A section of the design-to-markup handbook',
+  'Что прокликать. Без них стенд выбирает сам: ARIA-состояния, переходы и обработчики':
+    'What to click through. Without them the stand picks targets itself: ARIA states, transitions and handlers',
+  'Какие действия пробовать. По умолчанию click': 'Which actions to try. Default click',
+  'Сколько элементов обойти. По умолчанию 30': 'How many elements to walk. Default 30',
+  'Сколько ждать, пока движение уляжется, мс. По умолчанию 1200':
+    'How long to wait for the motion to settle, ms. Default 1200',
+  'Показать и то, чего валидатор не знает: современный CSS и новые атрибуты платформы':
+    'Show what the validator does not know about as well: modern CSS and new platform attributes',
   'Сверить версию файла с Figma, даже если снимок свежий': 'Check the file version with Figma even if the snapshot is fresh',
   'Узел: ссылка figma.com или запись ключ:id': 'A node: a figma.com link or a key:id entry',
   'outline (по умолчанию) — дерево слоёв с раскладкой, краской и текстами; css — стили узлов; text — тексты целиком':
     'outline (default) — the layer tree with layout, paint and texts; css — node styles; text — full texts',
   'Глубина обхода. По умолчанию 6 для outline и 2 для css': 'Traversal depth. Default 6 for outline and 2 for css',
+  'Что вернуть. По умолчанию все четыре': 'What to return. All four by default',
+  'Глубина дерева outline. По умолчанию 6; стили всегда на два уровня':
+    'Depth of the outline tree. Default 6; styles always go two levels deep',
   'Показывать скрытые слои': 'Include hidden layers',
   'По умолчанию 200 строк outline, 60 узлов css или 100 текстов': 'Default 200 outline lines, 60 css nodes or 100 texts',
   'С какой записи продолжить: значение из подсказки note': 'Where to continue: the value from the note hint',

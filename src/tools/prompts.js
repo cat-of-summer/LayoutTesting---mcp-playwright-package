@@ -169,50 +169,36 @@ Do not retell the tool output in full — name the cause and what exactly produc
         t({
           ru: `Свёрстай страницу по макету: ${figma}.
 
-Правило одно: макет снимается один раз, дальше разбор идёт по снимку. Лимит REST — десять запросов в минуту, у места View/Collab двадцать в месяц.
+Порядок работы целиком лежит в регламенте и читается по фазам: help с guide: имя раздела. Не пересказывай его себе по памяти — фаз двенадцать, и пропущенная обычно всплывает переделкой блока.
 
-1. figma_status — проверь доступ и остаток лимита. needs_human означает капчу, письмо или код: спроси код у человека, остальное он проходит сам.
-2. figma_sync со ВСЕМИ кадрами задачи одним вызовом. Дальше figma_* читают снимок.
-3. figma_structure по каждому экрану. Это план разметки: теги, классы, раскладка. Читай notes — там сказано, где слои в макете перепутаны и что стало фоном, декором и наложением.
-4. figma_breakpoints по кадрам одного экрана: что меняется с шириной, что исчезает, чем заменено, где расходится порядок чтения. clamp() для линейных значений уже посчитан.
-5. figma_components${projectUrl ? ` с project: { url: "${projectUrl}" }` : ''} — сколько на самом деле блоков и какие у них модификаторы. drift — это расхождения в макете, а не варианты: сведи их к одному значению. Совпадения с классами проекта значат, что верстать заново не надо.
-6. figma_tokens${projectUrl ? ` с тем же project` : ''} — палитра, типографика, шкалы. unbound показывает, сколько раз значение вбито литералом при живой переменной Figma. Компонентные переменные — в разделе component.
-7. figma_comments и figma_behavior — требования и связи: что открывает модалку, что переключает состояние, что закреплено при прокрутке. Неподтверждённое (unconfirmed) уточни у человека, а не додумывай.
-8. figma_export — иконки (svg, currentColor) и растровые заливки, кадрированные как в макете. Сначала проверь, нет ли их уже в проекте.
-9. Верстай блок за блоком, и перед каждым блоком — figma_inspect по его узлу:
-   - значения берутся из узла: цвет текста, заливка, обводка и её толщина, радиус, эффекты стоят в outline в фигурных скобках. figma_tokens — справочник имён для этих значений, а не их источник: «цвет по смыслу» и «толщина из шкалы» — это догадка;
-   - у LINE высота рамки всегда 0 — толщина линии только в stroke;
-   - тексты для контента — mode: text: остальные режимы режут строки многоточием (об этом говорит textsClipped);
-   - структура — из дерева макета, а не с картинки: что лежит в макете в одной группе или строке, то и в вёрстке в одном контейнере. Если ритм приходится добивать отступами-константами, неверна структура, а не отступы;
-   - notes в css-ответе (opacity картинки, маска) и effects в figma_tokens — это то, что в background не выражается: воспроизведи отдельным слоем;
-   - расхождение между рендером макета и страницей — повод посмотреть узел, а не объяснение «артефакт масштаба».
-   Порядок DOM = порядок чтения самой узкой вёрстки, перестановки — CSS, декор — псевдоэлементами.
-10. Проверь: figma_compare${pageUrl ? ` с url: "${pageUrl}"` : ''} по каждому брейкпоинту. Разбери и semantic (тексты), и paint (фон, рамки, толщина линий, радиусы, размеры декора). Если found больше показанного — note скажет, как дочитать; до этого сверка не закончена.
-11. Прокликай всё интерактивное в сессии с animations: "allow" — по умолчанию движение заморожено, и снимок работающего слайдера не отличить от сломанного: аккордеон (открыть, закрыть, переключить), слайдер (обе стрелки, крайние положения), hover, модалки, интро при перезагрузке. browser_act, между действиями — screenshot или computed_styles.
-12. layout_stress — длинный и пустой текст, список из двенадцати, битая картинка, набор ширин. Расхождение ≤1px и различия рендеринга шрифтов дефектом не считаются.`,
+1. help(guide: "index") — карта фаз и что закрывает каждую.
+2. help(guide: "setup") — до первой строки кода: стенд в контейнере не видит localhost хоста, dev-сервер поднимается на 0.0.0.0 и открывается как http://host.docker.internal:<порт>. Проверь это первым делом: выяснять в середине работы дороже впятеро.
+3. figma_status, затем figma_sync со ВСЕМИ кадрами задачи одним вызовом. Дальше разбор идёт по снимку и в Figma не ходит: лимит REST — десять запросов в минуту, у места View/Collab двадцать в месяц.
+4. Дальше по фазам: frames, inventory, system${projectUrl ? ` (figma_components и figma_tokens с project: { url: "${projectUrl}" })` : ''}, assets, fonts, content, questions, motion, shell, block, page, project.
+
+Три вещи, которые надо знать до первого вызова, — остальное в регламенте:
+
+- значения берутся из узла, а не из рендера и не из figma_tokens: figma_spec и figma_inspect с mode: outline показывают краску в фигурных скобках;
+- структура берётся из дерева макета, а не с картинки;
+- неподвижный снимок ничего не говорит про интерактив: его проходит interaction_audit в сессии с animations: "allow".
+
+Проверка блока — help(guide: "block")${pageUrl ? `; figma_compare по адресу ${pageUrl}` : ''}. Десять правил одной страницей — help(guide: "rules"). Выбор инструмента под симптом — help(guide: "symptoms").`,
           en: `Build the page from the design: ${figma}.
 
-One rule: the design is pulled once, and all analysis runs over that snapshot. The REST limit is ten requests a minute, and twenty a month on a View/Collab seat.
+The whole order of work lives in the handbook and is read by phase: help with guide: section name. Do not retell it to yourself from memory — there are twelve phases, and a skipped one usually surfaces as a rebuilt block.
 
-1. figma_status — check access and the remaining budget. needs_human means a captcha, an email or a code: ask the human for the code, the rest they go through themselves.
-2. figma_sync with ALL frames of the task in one call. After that figma_* read the snapshot.
-3. figma_structure for each screen. It is the markup plan: tags, classes, layout. Read notes — they say where the layers are shuffled and what became a background, a decoration or an overlay.
-4. figma_breakpoints across frames of one screen: what changes with width, what disappears, what replaced it, where the reading order diverges. clamp() for linear values is already computed.
-5. figma_components${projectUrl ? ` with project: { url: "${projectUrl}" }` : ''} — how many blocks there really are and what modifiers they have. drift is a discrepancy in the design, not a variant: normalize it. Matches with project classes mean there is nothing to build again.
-6. figma_tokens${projectUrl ? ' with the same project' : ''} — palette, typography, scales. unbound shows how often a value is hardcoded while a Figma variable exists. Component variables are in the component section.
-7. figma_comments and figma_behavior — requirements and links: what opens a modal, what switches a state, what stays pinned while scrolling. Anything marked unconfirmed goes to the human, not to guesswork.
-8. figma_export — icons (svg, currentColor) and raster fills cropped as in the design. First check whether the project already has them.
-9. Build block by block, and before each block run figma_inspect on its node:
-   - values come from the node: text color, fill, stroke and its weight, radius and effects are in the outline inside curly braces. figma_tokens is a dictionary of names for those values, not their source: "a color that makes sense" and "a weight from the scale" are guesses;
-   - a LINE always has a zero-height box — the line weight lives only in stroke;
-   - content texts come from mode: text: the other modes cut strings with an ellipsis (textsClipped says so);
-   - structure comes from the design tree, not from the picture: what sits in one group or row in the design sits in one container in the markup. If the rhythm has to be patched with constant margins, the structure is wrong, not the margins;
-   - notes in the css answer (image opacity, masks) and effects in figma_tokens are what background cannot express: reproduce them as a separate layer;
-   - a difference between the design render and the page is a reason to inspect the node, not to explain it away as a scaling artifact.
-   DOM order = reading order of the narrowest layout, reordering in CSS, decorations as pseudo-elements.
-10. Check: figma_compare${pageUrl ? ` with url: "${pageUrl}"` : ''} at every breakpoint. Go through both semantic (texts) and paint (backgrounds, borders, line weights, radii, decoration sizes). If found exceeds what is shown, note says how to read the rest; until then the check is not finished.
-11. Click through everything interactive in a session with animations: "allow" — motion is frozen by default, and a screenshot of a working slider looks exactly like a broken one: accordions (open, close, switch), sliders (both arrows, both ends), hover, modals, the intro on reload. Use browser_act, with a screenshot or computed_styles between actions.
-12. layout_stress — long and empty text, a list of twelve, a broken image, a range of widths. A difference of 1px or font rendering is not a defect.`,
+1. help(guide: "index") — the map of phases and what closes each.
+2. help(guide: "setup") — before the first line of code: the stand runs in a container and cannot see the host localhost; the dev server must listen on 0.0.0.0 and is reached as http://host.docker.internal:<port>. Check this first: finding it out mid-work costs five times as much.
+3. figma_status, then figma_sync with EVERY frame of the task in one call. After that the analysis reads the snapshot and never calls Figma: the REST limit is ten requests a minute, and twenty a month on a View/Collab seat.
+4. Then by phase: frames, inventory, system${projectUrl ? ` (figma_components and figma_tokens with project: { url: "${projectUrl}" })` : ''}, assets, fonts, content, questions, motion, shell, block, page, project.
+
+Three things to know before the first call — the rest is in the handbook:
+
+- values come from the node, not from the render and not from figma_tokens: figma_spec and figma_inspect with mode: outline show the paint inside curly braces;
+- structure comes from the design tree, not from the picture;
+- a still screenshot says nothing about interaction: interaction_audit walks it in a session with animations: "allow".
+
+Checking a block is help(guide: "block")${pageUrl ? `; run figma_compare against ${pageUrl}` : ''}. The ten rules on one page are help(guide: "rules"). Choosing a tool for a symptom is help(guide: "symptoms").`,
         }),
       ),
   );

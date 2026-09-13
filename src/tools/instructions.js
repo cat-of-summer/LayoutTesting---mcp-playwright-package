@@ -131,17 +131,20 @@ const HINTS = [
   },
   {
     groups: ['figma'],
-    ru: `- «сверстай по макету», «вот ссылка на Figma», «сделай как в макете» — figma_status, затем
-  figma_sync со всеми кадрами задачи разом, дальше разбор по снимку: figma_structure (план
-  разметки), figma_breakpoints (что меняется с шириной), figma_components (сколько на самом деле
-  блоков), figma_tokens (что становится переменной), figma_comments и figma_behavior (требования
-  и связи), figma_export (иконки и картинки). Готовый порядок целиком — промпт figma-layout;`,
-    en: `- "build this from the design", "here is a Figma link", "make it like the mockup" — figma_status,
-  then figma_sync with every frame of the task at once, then analysis over the snapshot:
-  figma_structure (the markup plan), figma_breakpoints (what changes with width), figma_components
-  (how many blocks there really are), figma_tokens (what becomes a variable), figma_comments and
-  figma_behavior (requirements and links), figma_export (icons and images). The whole order is in
-  the figma-layout prompt;`,
+    ru: `- «сверстай по макету», «вот ссылка на Figma», «сделай как в макете» — начните с
+  help(guide: "index"): порядок работы разложен по двенадцати фазам, и пропущенная фаза обычно
+  всплывает переделкой блока. Коротко: figma_status, затем figma_sync со всеми кадрами задачи
+  разом, дальше разбор по снимку — figma_structure (план разметки), figma_breakpoints (что
+  меняется с шириной), figma_components (сколько на самом деле блоков), figma_tokens (что
+  становится переменной), figma_comments и figma_behavior (требования и связи); по каждому блоку
+  figma_spec (дерево, краска, тексты и что скачивать), затем figma_export;`,
+    en: `- "build this from the design", "here is a Figma link", "make it like the mockup" — start with
+  help(guide: "index"): the order of work is laid out in twelve phases, and a skipped phase usually
+  surfaces as a rebuilt block. In short: figma_status, then figma_sync with every frame of the task
+  at once, then analysis over the snapshot — figma_structure (the markup plan), figma_breakpoints
+  (what changes with width), figma_components (how many blocks there really are), figma_tokens
+  (what becomes a variable), figma_comments and figma_behavior (requirements and links); per block
+  figma_spec (tree, paint, texts and what to export), then figma_export;`,
   },
   {
     groups: ['figma'],
@@ -152,8 +155,11 @@ const HINTS = [
   },
   {
     groups: ['layout'],
-    ru: `- «выдержит ли длинный текст», «что будет, если контента больше» — layout_stress;`,
-    en: `- "will it survive a long title", "what if there is more content" — layout_stress;`,
+    ru: `- «выдержит ли длинный текст», «что будет, если контента больше» — layout_stress; «работает ли
+  слайдер, аккордеон, кнопка», «честная ли анимация» — interaction_audit в сессии с animations: "allow";`,
+    en: `- "will it survive a long title", "what if there is more content" — layout_stress; "does the slider,
+  the accordion, the button actually work", "is the animation honest" — interaction_audit in a session
+  with animations: "allow";`,
   },
   {
     groups: ['media'],
@@ -189,8 +195,8 @@ an order of magnitude less than a screenshot. Take a screenshot when the questio
 const TAIL = {
   ru: `Описания инструментов намеренно короткие: в них симптом и отличие от соседа. Оговорки про
 поддержку движками, нюансы параметров, действующие потолки на объём ответов и порядок разбора
-типовой задачи лежат в help — help без аргументов перечисляет темы, help с tool: имя даёт
-оговорки конкретного инструмента.
+типовой задачи лежат в help — help без аргументов перечисляет темы и разделы, help с tool: имя
+даёт оговорки конкретного инструмента, help с guide: имя — раздел регламента вёрстки по макету.
 
 Куда обращаться. Стенд живёт в контейнере, и localhost внутри него указывает на сам стенд, а не
 на машину пользователя. Локальный проект — по имени его контейнера в общей docker-сети
@@ -201,8 +207,9 @@ const TAIL = {
 же файла изнутри контейнера: снаружи и изнутри они разные.`,
   en: `Tool descriptions are deliberately short: they carry the symptom and the difference from a
 neighbouring tool. Engine support caveats, parameter details, the response size caps in force and
-the order of working through a typical task live in help — help with no arguments lists the
-topics, help with tool: name gives the caveats of one tool.
+the order of working through a typical task live in help — help with no arguments lists the topics
+and the sections, help with tool: name gives the caveats of one tool, help with guide: name returns
+a section of the design-to-markup handbook.
 
 Addressing targets. The stand runs inside a container, so localhost there points at the stand
 itself, not at the user's machine. A local project is reachable by its container name on the

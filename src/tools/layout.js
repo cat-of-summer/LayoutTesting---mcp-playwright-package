@@ -10,6 +10,7 @@ import { d } from '../i18n-params.js';
 import { getSession } from '../browser/pool.js';
 import { layoutAudit, computedStyles, AUDIT_CATEGORIES } from '../checks/layout.js';
 import { runStress, STRESS_SCENARIOS } from '../checks/stress.js';
+import { runInteractions, INTERACTION_ACTIONS } from '../checks/interaction.js';
 import { matchedRules } from '../checks/cssom.js';
 import { elementLayers } from '../checks/layers.js';
 import { json, text } from './shared.js';
@@ -162,5 +163,63 @@ export function register(server) {
           ...(maxItems ? { maxItems } : {}),
         }),
       ),
+  );
+
+  /*
+   * Проверка интерактива — именно проверка, а не набор ручных кликов.
+   *
+   * browser_act и browser_eval позволяли это и раньше, но агент должен был сам догадаться их
+   * применить и сам придумать, что считать нормой. Придумывалось правдоподобно и неверно: про
+   * слайдер с нулём слайдов было написано связное объяснение, почему он «работает, просто
+   * заблокирован».
+   */
+  server.registerTool(
+    'interaction_audit',
+    {
+      title: t({ ru: 'Прогон интерактива', en: 'Interaction check' }),
+      description: t({
+        ru: 'Нажимает и наводит на всё интерактивное и отвечает, что изменилось в DOM и за сколько. Находит то, чего не видно на снимке: кнопку без обработчика, слайдер, который не листает, переход, который на деле переключается одним кадром. Нужна сессия с animations: "allow" — на замороженной странице мерить нечего.',
+        en: 'Clicks and hovers everything interactive and reports what changed in the DOM and how long it took. Finds what a screenshot cannot show: a button with no handler, a slider that does not slide, a transition that in fact switches in a single frame. Needs a session with animations: "allow" — on a frozen page there is nothing to measure.',
+      }),
+      inputSchema: {
+        sessionId: z.string(),
+        selectors: z
+          .array(z.string())
+          .optional()
+          .describe(d('Что прокликать. Без них стенд выбирает сам: ARIA-состояния, переходы и обработчики')),
+        actions: z.array(z.enum(INTERACTION_ACTIONS)).optional().describe(d('Какие действия пробовать. По умолчанию click')),
+        maxTargets: z.number().optional().describe(d('Сколько элементов обойти. По умолчанию 30')),
+        timeoutMs: z.number().optional().describe(d('Сколько ждать, пока движение уляжется, мс. По умолчанию 1200')),
+        maxItems: z.number().optional().describe(d('Сколько находок показывать на сценарий. По умолчанию 20')),
+      },
+    },
+    async ({ sessionId, selectors, actions, maxTargets, timeoutMs, maxItems }) => {
+      const session = getSession(sessionId);
+      /*
+       * Отказ, а не молчаливый прогон по нулям.
+       *
+       * На замороженной странице переход через сто миллисекунд уже в конечном состоянии, и
+       * замер даст ровную ложь: «всё мгновенно». Ответ с рецептом дешевле такого замера.
+       */
+      if (session.motionFrozen) {
+        throw new Error(
+          'Страница открыта с замороженным движением, и мерить на ней нечего: переходы уже в конечном состоянии. ' +
+            'Переоткройте переход через browser_goto с animations: "allow" (или сессию через browser_open с тем же условием) и повторите.',
+        );
+      }
+      return json({
+        session: { animations: 'allow', listenersVisible: false },
+        ...(await runInteractions(session.page, {
+          ...(selectors ? { selectors } : {}),
+          ...(actions ? { actions } : {}),
+          ...(maxTargets ? { maxTargets } : {}),
+          ...(timeoutMs ? { timeoutMs } : {}),
+          ...(maxItems ? { maxItems } : {}),
+        })),
+        note:
+          'Обработчики, повешенные через addEventListener, из страницы не видны — такие элементы попадают в обход только по ARIA, переходам или onclick. ' +
+          'Время меряется по кадрам, а не по объявленной длительности: то, что не двигается и не гаснет (цвет, тень, фон), даст durationMs: 0 при работающем переходе.',
+      });
+    },
   );
 }

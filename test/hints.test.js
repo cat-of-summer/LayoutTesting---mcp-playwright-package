@@ -57,6 +57,44 @@ test('vnu: сообщения о CSS не смешиваются с ошибка
   assert.equal(splitVnuMessages(raw.slice(2)).css, undefined, 'без CSS-сообщений поля нет');
 });
 
+/*
+ * Отставание валидатора не заканчивается на CSS: словарь атрибутов у него тоже свой, и popover
+ * с fetchpriority дают «ошибки» на верной разметке. Считать их наравне с настоящими — значит
+ * прятать настоящие.
+ */
+test('vnu: известные ограничения валидатора отделены от находок и достаются через strict', () => {
+  const raw = [
+    { type: 'error', message: 'Attribute “popover” not allowed on element “div” at this point.', extract: 'x' },
+    { type: 'error', message: 'Attribute “fetchpriority” not allowed on element “img” at this point.', extract: 'x' },
+    { type: 'error', message: 'Attribute “xlink:href” is obsolete.', extract: 'x' },
+    { type: 'error', message: 'Duplicate ID “main”.', extract: 'x' },
+  ];
+
+  const result = splitVnuMessages(raw);
+  assert.equal(result.total, 1, 'в итоге остаётся только настоящая ошибка');
+  assert.equal(result.messages[0].message, 'Duplicate ID “main”.');
+  assert.equal(result.known.count, 3);
+  assert.deepEqual(result.known.byReason, { popover: 1, priorityHints: 1, svgXlink: 1 });
+
+  const strict = splitVnuMessages(raw, { strict: true });
+  assert.equal(strict.total, 4, 'strict не прячет ничего');
+  assert.equal(strict.known, undefined);
+  assert.equal(strict.css, undefined);
+
+  assert.equal(splitVnuMessages(raw.slice(3)).known, undefined, 'без таких сообщений поля нет');
+});
+
+/* Молчаливое усечение читается как «больше ничего нет» — а это ровно наоборот. */
+test('усечение списка сообщений не молчит', () => {
+  const raw = Array.from({ length: 7 }, (_, i) => ({ type: 'error', message: `Duplicate ID “a${i}”.`, extract: 'x' }));
+  const result = splitVnuMessages(raw, { maxMessages: 3 });
+  assert.equal(result.total, 7);
+  assert.equal(result.messages.length, 3);
+  assert.equal(result.truncated, true);
+  assert.match(result.note, /maxMessages: 7/);
+  assert.equal(splitVnuMessages(raw, { maxMessages: 50 }).truncated, undefined, 'влезло — признака нет');
+});
+
 test('capped: offset за концом списка не выглядит пустым результатом', () => {
   const page = capped([1, 2, 3], { limit: 10, offset: 5 });
   assert.deepEqual(page.items, []);

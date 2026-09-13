@@ -16,6 +16,7 @@ import { compare as odiffCompare } from 'odiff-bin';
 import { artifactRef, newRunId, runDir, slug } from '../artifacts.js';
 import { takeScreenshot } from '../checks/visual.js';
 import { colorCss, round } from './css.js';
+import { t } from '../i18n.js';
 import { clip, contains, deltaE, parseColor, SAME_COLOR, visibleNodes } from './analyze/common.js';
 import { exportRender } from './export.js';
 
@@ -85,13 +86,23 @@ function probePage(rootSelector) {
       const borders = sides.map((side) => parseFloat(style[`border${side}Width`]) || 0);
       const radius = ['TopLeft', 'TopRight', 'BottomRight', 'BottomLeft'].map((corner) => style[`border${corner}Radius`]);
       const transparent = /^rgba\(0, 0, 0, 0\)$|^transparent$/.test(style.backgroundColor);
-      if (!transparent || borders.some(Boolean) || radius.some((value) => parseFloat(value) > 0)) {
+      /*
+       * Фон картинкой или градиентом — тоже краска.
+       *
+       * Без этого блок с background-image и прозрачным background-color в перечень не попадал
+       * вовсе, а в макете тот же узел лежит заливкой и краску имеет. В сверке он оказывался
+       * «не найден по месту» — и вина списывалась на псевдоэлементы, хотя элемент на странице
+       * есть и стоит ровно там, где надо. Целый класс ложных unmatched держался на этой строке.
+       */
+      const hasImage = style.backgroundImage && style.backgroundImage !== 'none';
+      if (!transparent || hasImage || borders.some(Boolean) || radius.some((value) => parseFloat(value) > 0)) {
         items.push({
           kind: 'box',
           selector: cssPath(el),
           box,
           paint: {
             background: transparent ? null : style.backgroundColor,
+            ...(hasImage ? { backgroundImage: true } : {}),
             borders,
             borderColors: sides.map((side) => style[`border${side}Color`]),
             radius,
@@ -310,7 +321,8 @@ export function comparePaint(design, page, { tolerance = 2 } = {}) {
     }
 
     if (!hit) {
-      unmatched.push({ node: item.id, name: clip(item.name || '', 30), size: `${round(item.box.w)}x${round(item.box.h)}` });
+      /* at нужен второму проходу: без предсказанного места некуда мерить смещение. */
+      unmatched.push({ node: item.id, name: clip(item.name || '', 30), size: `${round(item.box.w)}x${round(item.box.h)}`, at, type: item.type });
       continue;
     }
     matched += 1;
@@ -319,8 +331,55 @@ export function comparePaint(design, page, { tolerance = 2 } = {}) {
     }
   }
 
+  /*
+   * Второй проход: «не нашёлся здесь» и «не нашёлся нигде» — разные ответы.
+   *
+   * Первый проход ищет по месту с поправкой на сдвиг соседних текстов, и этого достаточно, пока
+   * рядом есть текст-якорь. Где его нет — а это как раз декор, полосы и подложки, — поправка
+   * выходит нулевой, узел не находится, и запись уезжает в общую кучу вместе с настоящими
+   * пропажами. Разобрать кучу глазами нельзя: причины требуют разных действий.
+   *
+   * Здесь тот же узел ищется по размеру где угодно на странице. Нашёлся — это работа, и видно,
+   * куда именно уехало. Не нашёлся — это отсутствие, и что за ним стоит, сверка по месту сказать
+   * не может: псевдоэлемент, внутренность SVG или правда не свёрстано.
+   */
+  const shifted = [];
+  const notFound = [];
+  for (const entry of unmatched) {
+    const size = { w: entry.at.w, h: entry.at.h };
+    let best = null;
+    for (const box of boxes) {
+      const r = box.box;
+      if (Math.abs(r.w - size.w) > Math.max(tolerance, 4) || Math.abs(r.h - size.h) > Math.max(tolerance, 4)) continue;
+      const dx = r.x - entry.at.x;
+      const dy = r.y - entry.at.y;
+      const dist = Math.hypot(dx, dy);
+      if (!best || dist < best.dist) best = { dist, dx, dy, box };
+    }
+    const { at, type, ...rest } = entry;
+    if (best) shifted.push({ ...rest, selector: best.box.selector, off: { x: round(best.dx), y: round(best.dy) } });
+    else notFound.push({ ...rest, ...(type ? { type } : {}) });
+  }
+
+  /* Общий сдвиг — одна находка, как и у текстов: чинится высота блока выше, а не каждый узел. */
+  const byShift = new Map();
+  for (const entry of shifted) {
+    if (Math.abs(entry.off.y) <= 20) continue;
+    const bucket = Math.round(entry.off.y / 10) * 10;
+    byShift.set(bucket, [...(byShift.get(bucket) || []), entry]);
+  }
+  const blocks = [];
+  for (const [bucket, list] of byShift) {
+    if (list.length < 3) continue;
+    blocks.push({
+      shiftedBlock: `${list.length} узлов с краской смещены по вертикали примерно на ${bucket}px`,
+      hint: 'Обычно это разная высота блока выше, а не ошибка в каждом узле: сначала сверьте её.',
+      sample: list.slice(0, 3).map(({ node, name, selector }) => ({ node, name, selector })),
+    });
+  }
+
   findings.sort((a, b) => Object.keys(b.diffs).length - Object.keys(a.diffs).length);
-  return { boxes: matched + unmatched.length, matched, findings, unmatched };
+  return { boxes: matched + unmatched.length, matched, findings, shifted, blocks, notFound };
 }
 
 const byReadingOrder = (a, b) => a.box.y - b.box.y || a.box.x - b.box.x;
@@ -533,20 +592,54 @@ export async function compareWithDesign({
       found: paint.findings.length,
       findings: paint.findings.slice(0, limit),
       ...(paint.findings.length > limit ? { note: truncatedNote(paint.findings.length, limit) } : {}),
-      ...(paint.unmatched.length
+      /*
+       * Две корзины вместо одной кучи.
+       *
+       * shifted — измеренное: узел на странице есть, видно, куда уехал, и это работа.
+       * notFound — отсутствие, и что за ним стоит, эта сверка сказать не может: она ходит по
+       * элементам, а псевдоэлемента и внутренности SVG среди них нет. Раньше обе причины лежали
+       * вперемешку под одной общей оговоркой, и разделять их приходилось глазами.
+       */
+      ...(paint.shifted.length || paint.notFound.length
         ? {
-            unmatched: paint.unmatched.length,
-            unmatchedSample: paint.unmatched.slice(0, 10),
-            unmatchedNote:
-              'Эти узлы с краской не нашлись на странице по месту. Псевдоэлементы и SVG здесь не видны — их сверяйте computed_styles с pseudo; остальное может просто отсутствовать в вёрстке.',
+            unmatched: {
+              total: paint.shifted.length + paint.notFound.length,
+              ...(paint.shifted.length
+                ? {
+                    shifted: {
+                      count: paint.shifted.length,
+                      ...(paint.blocks.length ? { blocks: paint.blocks } : {}),
+                      items: paint.shifted.slice(0, 5),
+                    },
+                  }
+                : {}),
+              ...(paint.notFound.length
+                ? {
+                    notFound: {
+                      count: paint.notFound.length,
+                      items: paint.notFound.slice(0, 10),
+                      note: t({
+                        ru: 'Этих узлов на странице не нашлось нигде — ни по месту, ни по размеру. Причину сверка не различает: это может быть псевдоэлемент или внутренность SVG (их она не видит вовсе — проверяйте computed_styles с pseudo), а может быть и не свёрстанный блок.',
+                        en: 'These nodes were not found anywhere on the page — neither by position nor by size. This check cannot tell the reason apart: it may be a pseudo-element or the inside of an SVG (which it does not see at all — check those with computed_styles and pseudo), or a block that simply was not built.',
+                      }),
+                    },
+                  }
+                : {}),
+            },
           }
         : {}),
     };
     if (Math.abs((design.size.w ?? 0) - (probed.origin.w ?? 0)) > 2) {
-      out.widthNote = `Ширина кадра ${round(design.size.w)}px, а сравниваемого блока на странице ${round(probed.origin.w)}px: смещения по x читайте с поправкой на это.`;
+      out.widthNote = t({
+        ru: `Ширина кадра ${round(design.size.w)}px, а сравниваемого блока на странице ${round(probed.origin.w)}px: смещения по x читайте с поправкой на это.`,
+        en: `The frame is ${round(design.size.w)}px wide, the compared block on the page ${round(probed.origin.w)}px: read the x offsets with that correction in mind.`,
+      });
     }
     if (Math.abs((design.size.h ?? 0) - (probed.origin.h ?? 0)) > 8) {
-      out.heightNote = `Высота кадра ${round(design.size.h)}px, страницы ${round(probed.origin.h)}px — разница ${round((probed.origin.h ?? 0) - (design.size.h ?? 0))}px. Пока она не сойдётся, всё, что ниже расхождения, будет смещено целиком.`;
+      out.heightNote = t({
+        ru: `Высота кадра ${round(design.size.h)}px, страницы ${round(probed.origin.h)}px — разница ${round((probed.origin.h ?? 0) - (design.size.h ?? 0))}px. Пока она не сойдётся, всё, что ниже расхождения, будет смещено целиком.`,
+        en: `The frame is ${round(design.size.h)}px tall, the page ${round(probed.origin.h)}px — a difference of ${round((probed.origin.h ?? 0) - (design.size.h ?? 0))}px. Until that closes, everything below the discrepancy is shifted as a whole.`,
+      });
     }
   }
 

@@ -554,8 +554,20 @@ function collectLayoutIssues(options) {
    * сравнении ребёнка с коробкой родителя, и именно этим ломается вёрстка при длинном контенте.
    * Абсолютные и фиксированные дети не в счёт: их вынесли за край нарочно.
    */
+  /*
+   * Две корзины, и бюджет у каждой свой.
+   *
+   * Раньше список был один, и потолок maxItems тратился до того, как настоящий вылет отделялся
+   * от намеренного клипа: на странице с бегущей строкой и каруселью пятьдесят ожидаемых записей
+   * набирались первыми по порядку обхода, сбор останавливался, а counts.boxOverflow после
+   * вычитания клипов показывал ноль. То есть отчёт говорил «вылетов нет» ровно там, где они
+   * были, — и заметить это было нечем. Сортировка «клипы в конец» стояла после сбора и помочь
+   * уже не могла.
+   */
+  const overflowReal = [];
+  const overflowClipped = [];
   for (const { el, style, rect } of visible) {
-    if (issues.boxOverflow.length >= maxItems) break;
+    if (overflowReal.length >= maxItems && overflowClipped.length >= maxItems) break;
     const clips = /hidden|clip|auto|scroll/.test(style.overflow + style.overflowX + style.overflowY);
     const painted =
       clips ||
@@ -580,7 +592,9 @@ function collectLayoutIssues(options) {
       };
       const worst = Math.max(out.top, out.right, out.bottom, out.left);
       if (worst <= 1) continue;
-      issues.boxOverflow.push({
+      const bucket = clips ? overflowClipped : overflowReal;
+      if (bucket.length >= maxItems) continue;
+      bucket.push({
         selector: cssPath(el),
         child: cssPath(child),
         text: label(child),
@@ -589,7 +603,6 @@ function collectLayoutIssues(options) {
         /* Обрезано или торчит — чинится по-разному: первое прячет контент, второе ломает соседей. */
         clipped: clips,
       });
-      if (issues.boxOverflow.length >= maxItems) break;
     }
   }
 
@@ -598,8 +611,8 @@ function collectLayoutIssues(options) {
    * но в общий счёт не идут и стоят после настоящих вылетов: иначе они на каждом прогоне
    * забивают отчёт, и настоящая находка тонет среди ожидаемых.
    */
-  const clippedOverflow = issues.boxOverflow.filter((entry) => entry.clipped).length;
-  issues.boxOverflow.sort((a, b) => Number(a.clipped) - Number(b.clipped));
+  issues.boxOverflow = [...overflowReal, ...overflowClipped];
+  const clippedOverflow = overflowClipped.length;
 
   const counts = Object.fromEntries(
     Object.entries(issues).map(([k, v]) => [k, Array.isArray(v) ? v.length : v ? 1 : 0]),
@@ -645,7 +658,7 @@ function collectLayoutIssues(options) {
         rules,
         keyframes,
         interactive: widgets,
-        note: 'Страница проверена неподвижной: переходы и анимации заморожены. Раскрытие, листание, hover и интро этими проверками не видны — откройте сессию с animations: "allow" и пройдите их через browser_act.',
+        note: 'Страница проверена неподвижной: переходы и анимации заморожены. Раскрытие, листание, hover и интро этими проверками не видны — откройте сессию с animations: "allow" и прогоните interaction_audit: он сам нажмёт и наведёт и скажет, что не среагировало и за сколько. Точечно — browser_act.',
       };
     }
   }

@@ -13,15 +13,15 @@ import fs from 'node:fs/promises';
 import { z } from 'zod';
 import { d } from '../i18n-params.js';
 import { t } from '../i18n.js';
-import { DIRS } from '../config.js';
+import { CONFIG, DIRS, FIGMA } from '../config.js';
 import { capped, json, linkBlocks } from './shared.js';
 import { inlineImage } from '../checks/visual.js';
 import { checkFigmaApi } from '../figma/api-check.js';
 import { issueTokenNow, lastTokenIssue, resolveToken } from '../figma/auth.js';
-import { FIGMA } from '../config.js';
 import { editorChannel, editorLogin, editorLogout, editorStatus } from '../figma/editor.js';
 import { exportImages, exportRender, exportSvg } from '../figma/export.js';
 import { cssItems, outlineLines, textItems, usedVariables } from '../figma/inspect.js';
+import { assetInventory } from '../figma/assets.js';
 import { getRestClient } from '../figma/rest.js';
 import { addRequests, ensureNode, ensureNodes, findNode, syncFigma } from '../figma/snapshot.js';
 import { groupRefs, refOf } from '../figma/url.js';
@@ -226,6 +226,100 @@ export function register(server) {
       const stats = {};
       const lines = outlineLines(snapshot, node.id, { depth: depth ?? 6, hidden, stats });
       return json({ ...head, ...capped(lines, { limit: limit ?? 200, offset }), ...clippedNote(stats) });
+    },
+  );
+
+  /*
+   * Спецификация блока одним вызовом.
+   *
+   * Разбор блока стоил четырёх: figma_structure, figma_inspect outline, figma_inspect text и
+   * иногда figma_export. Четыре вызова на блок — это соблазн обойтись двумя, и обходились: чаще
+   * всего пропускали тексты (и верстали по обрезанным многоточием строкам) и краску узла (и
+   * теряли обводку, которая живёт на узле, а не в скачанном файле).
+   *
+   * Словарь разделов взят у figma_inspect, а не выдуман заново: outline, css, text — те же
+   * названия и то же поведение, плюс assets. Второй словарь пришлось бы учить отдельно.
+   *
+   * figma_structure сюда намеренно не входит. Он отдаёт другое дерево — с выведенными тегами,
+   * классами и переподчинёнными слоями, — и вклеивать его сюда значило бы удвоить ответ, не
+   * заменив при этом сам инструмент: план разметки нужен и отдельно.
+   */
+  server.registerTool(
+    'figma_spec',
+    {
+      title: t({ ru: 'Спецификация блока', en: 'Block specification' }),
+      description: t({
+        ru: 'Всё про узел одним вызовом: дерево слоёв с раскладкой и краской, стили, полные тексты и список ассетов с тем, что каждому нужно — svg, картинка или рендер. Заменяет связку figma_inspect в трёх режимах и снимает вопрос «что отсюда скачивать». Запросов в Figma не тратит: считает по снимку.',
+        en: 'Everything about a node in one call: the layer tree with layout and paint, styles, full texts, and the asset list with what each one needs — svg, image or render. Replaces the figma_inspect trio and settles the question of what to export from here. Spends no Figma requests: it reads the snapshot.',
+      }),
+      inputSchema: {
+        figma: z.string().describe(d('Узел: ссылка figma.com или запись ключ:id')),
+        sections: z
+          .array(z.enum(['outline', 'css', 'text', 'assets']))
+          .optional()
+          .describe(d('Что вернуть. По умолчанию все четыре')),
+        depth: z.number().optional().describe(d('Глубина дерева outline. По умолчанию 6; стили всегда на два уровня')),
+        hidden: z.boolean().optional().describe(d('Показывать скрытые слои')),
+        limit: z.number().optional().describe(d('Сколько строк или записей показать')),
+      },
+    },
+    async ({ figma, sections, depth, hidden = false, limit }) => {
+      const { snapshot, node, fileKey, requests } = await ensureNode(figma, { client: getRestClient(), editor: editorChannel });
+      const want = new Set(sections?.length ? sections : ['outline', 'css', 'text', 'assets']);
+      const stats = {};
+
+      const out = {
+        ref: refOf(fileKey, node.id),
+        version: snapshot.version,
+        channel: snapshot.channel,
+        ...(requests ? { requests } : {}),
+      };
+
+      /*
+       * Разделы собираются по очереди и складываются, пока ответ помещается в потолок.
+       *
+       * Порядок не алфавитный, а по убыванию пользы: без дерева говорить не о чем, ассеты
+       * определяют, что скачивать, тексты нужны для контента, а стили чаще всего и так смотрят
+       * точечно. Вылетевший раздел заменяется признаком skipped с тем, чем его дочитать: молча
+       * урезанный JSON хуже отсутствующего — по нему не видно, что чего-то нет.
+       */
+      const budget = CONFIG.maxTextBytes * 0.8;
+      const skipped = {};
+      const build = {
+        outline: () => capped(outlineLines(snapshot, node.id, { depth: depth ?? 6, hidden, stats }), { limit: limit ?? 200 }),
+        assets: () => assetInventory(snapshot, node.id, { limit: limit ?? 60 }),
+        text: () => capped(textItems(snapshot, node.id, { hidden }), { limit: limit ?? 100 }),
+        css: () => {
+          const page = capped(cssItems(snapshot, node.id, { depth: 2, hidden, stats }), { limit: limit ?? 40 });
+          const variables = usedVariables(snapshot, page.items.map((item) => item.id));
+          return { ...(variables ? { variables } : {}), ...page };
+        },
+      };
+      const how = {
+        outline: 'figma_inspect с mode: outline',
+        assets: 'figma_spec с sections: ["assets"]',
+        text: 'figma_inspect с mode: text',
+        css: 'figma_inspect с mode: css',
+      };
+
+      for (const name of ['outline', 'assets', 'text', 'css']) {
+        if (!want.has(name)) continue;
+        const section = build[name]();
+        if (JSON.stringify(out).length + JSON.stringify(section).length > budget) {
+          skipped[name] = { skipped: true, why: 'ответ уперся в потолок объёма', how: how[name] };
+          continue;
+        }
+        out[name] = section;
+      }
+
+      return json({
+        ...out,
+        ...(Object.keys(skipped).length ? { skipped } : {}),
+        ...(stats.clippedTexts
+          ? { textsClipped: `${stats.clippedTexts} текстов обрезаны многоточием в outline и css — целиком они в разделе text` }
+          : {}),
+        note: 'План разметки — теги, классы, переподчинённые слои — это отдельный разбор: figma_structure.',
+      });
     },
   );
 

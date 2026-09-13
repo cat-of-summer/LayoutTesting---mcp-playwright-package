@@ -229,6 +229,34 @@ test('обрезанное рамкой считается отдельно и �
   assert.equal(res.issues.boxOverflow.at(-1).clipped, true, 'намеренный клип — в конце списка');
 });
 
+/*
+ * Потолок maxItems тратился на намеренные клипы раньше, чем до списка доходил настоящий вылет.
+ *
+ * Отчёт при этом не выглядел урезанным: клипы вычитались из counts.boxOverflow, и он показывал
+ * ноль — «вылетов нет» ровно там, где они были. Здесь настоящий вылет стоит в разметке ПОСЛЕ
+ * клипов и при потолке в две записи обязан найтись.
+ */
+test('намеренные клипы не съедают потолок у настоящих вылетов', options, async () => {
+  const marquees = Array.from(
+    { length: 6 },
+    (_, i) => `<div class="marquee"><div class="marquee__track">бегущая строка ${i}</div></div>`,
+  ).join('');
+  const res = await auditHtml(`<!doctype html><style>body{margin:0}
+    .marquee{width:300px;height:40px;overflow:hidden;background:#eee}
+    .marquee__track{width:2000px;height:40px;display:flex}
+    .card{width:200px;height:40px;background:#ddd}
+    .card__big{width:260px;height:40px}</style>
+    ${marquees}
+    <div class="card"><div class="card__big">торчит</div></div>`, {
+    categories: ['boxOverflow'],
+    maxItems: 2,
+  });
+
+  assert.equal(res.counts.boxOverflow, 1, `настоящий вылет потерян: ${JSON.stringify(res.counts)}`);
+  assert.equal(res.issues.boxOverflow[0].clipped, false, 'настоящий вылет стоит первым');
+  assert.equal(res.counts.boxOverflowClipped, 2, 'у клипов свой потолок, а не общий');
+});
+
 test('на замороженной странице с движением ответ несёт motion, на живой — нет', options, async () => {
   const html = `<!doctype html><style>
     .acc__body{transition:grid-template-rows 1000ms ease}

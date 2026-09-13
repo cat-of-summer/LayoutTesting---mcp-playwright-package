@@ -4,7 +4,8 @@ import { CONFIG } from '../config.js';
 import { contextOptions, hostResolverRules, normalizeProfile, profileKey } from './profile.js';
 import { applyProfileToPage, applyThrottle, stabilize } from './stabilize.js';
 import { reapplyInjections } from './inject.js';
-import { blockedHostHint, navigationErrorHint, responseFacts, sameDocument } from './response.js';
+import { blockedHostHint, isErrorPage, navigationErrorHint, responseFacts, sameDocument } from './response.js';
+import { t } from '../i18n.js';
 
 const ENGINES = { chromium, firefox, webkit };
 
@@ -29,6 +30,7 @@ const REASONS = {
   maxAge: 'достигнут предельный возраст LT_SESSION_MAX_AGE_MS',
   lru: 'вытеснена под новую сессию, достигнут потолок LT_MAX_SESSIONS',
   crashed: 'страница упала',
+  contextClosed: 'контекст браузера закрыт снаружи',
   disconnected: 'браузер отключился',
   closed: 'закрыта через browser_close',
 };
@@ -384,8 +386,23 @@ export async function createSession(profileInput = {}, { owned = null } = {}) {
     reopen,
     needsAuth,
   };
-  /* Страница падает и отдельно от браузера: тогда сессия числится живой, но мертва по сути. */
-  page.on('crash', () => forget(session, 'crashed'));
+  /*
+   * Страница падает и отдельно от браузера: тогда сессия числится живой, но мертва по сути.
+   *
+   * Контекст при этом закрываем сами: forget по устройству его не трогает (его вызывает и
+   * closeSession, который закрывает контекст сам), и на упавшей странице контекст оставался
+   * висеть сотнями мегабайт до перезапуска стенда — единственный путь, где это происходило.
+   */
+  page.on('crash', () => {
+    forget(session, 'crashed');
+    session.context.close().catch(() => {});
+  });
+  /*
+   * Контекст могут закрыть и снаружи — из кода прогона, из упавшего браузерного процесса.
+   * Без этой подписки сессия оставалась в живых, и каждый следующий вызов падал невнятной
+   * ошибкой playwright вместо готового «сессия закрыта, вот с чем открыть новую».
+   */
+  context.on('close', () => forget(session, 'contextClosed'));
   attachCollectors(page, session);
   sessions.set(id, session);
   startSweeper();
@@ -519,6 +536,7 @@ export async function gotoAndSettle(
 ) {
   let response = null;
   let timedOut = false;
+  let retried = 0;
   /*
    * Отметка в журнале: всё, что после неё, относится к этому переходу, а не к прошлому.
    * Храним её на сессии, а не только локально: без этого page_logs отдаёт всё подряд с
@@ -540,6 +558,8 @@ export async function gotoAndSettle(
    * остальных движков выключателя кэша нет, и об этом говорится в ответе.
    */
   const repeat = sameDocument(session.page.url(), url);
+  /* Снимается ДО перехода: после него адрес уже новый, и понять, откуда пришли, будет не по чему. */
+  const wasErrorPage = isErrorPage(session.page.url());
   let cdp = null;
   if (repeat && session.profile.browser === 'chromium') {
     try {
@@ -556,14 +576,35 @@ export async function gotoAndSettle(
     // Боевые сайты сплошь и рядом не доходят до load: висит аналитика, чат,
     // long-poll. Страница при этом отрисована, и проверять её можно и нужно.
     if (!/Timeout .* exceeded/i.test(err.message)) {
-      // Иначе признак «идёт свой переход» остался бы поднятым на всю жизнь сессии.
-      session.navByTool = false;
-      const hint = navigationErrorHint(err.message, url);
-      if (hint) throw new Error(`${err.message}\n\n${hint}`);
-      throw err;
+      /*
+       * Одна повторная попытка на отказ соединения — и ровно одна.
+       *
+       * Перезапуск dev-сервера занимает секунду-другую, и переход, посланный в этот зазор,
+       * отвечает ERR_CONNECTION_REFUSED. Отдать отказ сразу — значит заставить агента
+       * переспрашивать вручную; ждать в цикле — значит держать его вызов минутами и молчать.
+       * Поэтому пауза одна, короткая и заметная в ответе полем retried. Сервер, который не
+       * поднимается вовсе, отвечает тем же отказом с прежней подсказкой.
+       */
+      const refused = Boolean(navigationErrorHint(err.message, url));
+      if (refused) {
+        await new Promise((resolve) => setTimeout(resolve, 1500));
+        try {
+          response = await session.page.goto(url, { waitUntil, timeout });
+          retried = 1;
+        } catch (second) {
+          session.navByTool = false;
+          const hint = navigationErrorHint(second.message, url);
+          throw hint ? new Error(`${second.message}\n\n${hint}`) : second;
+        }
+      } else {
+        // Иначе признак «идёт свой переход» остался бы поднятым на всю жизнь сессии.
+        session.navByTool = false;
+        throw err;
+      }
+    } else {
+      timedOut = true;
+      await session.page.waitForLoadState('domcontentloaded', { timeout: 5000 }).catch(() => {});
     }
-    timedOut = true;
-    await session.page.waitForLoadState('domcontentloaded', { timeout: 5000 }).catch(() => {});
   } finally {
     if (cdp) {
       await cdp.send('Network.setCacheDisabled', { cacheDisabled: false }).catch(() => {});
@@ -598,8 +639,48 @@ export async function gotoAndSettle(
     title: await session.page.title().catch(() => ''),
   };
   if (repeat) {
-    if (cdp) result.reloaded = true;
-    else result.cacheNote = 'Адрес тот же, что был открыт, а кэш этого движка стенд сбросить не может: стили и скрипты могли прийти старыми. Если ждёте свежую правку — добавьте к адресу ?v=<число>.';
+    if (cdp) {
+      result.reloaded = true;
+      /*
+       * Не просто «перезагружено», а что именно это доказывает.
+       *
+       * Кэш браузера здесь снят целиком, вместе с подресурсами. Значит, если после правки
+       * страница по-прежнему отдаёт старые стили, старое лежит НЕ в браузере — его отдаёт
+       * сервер: dev-сервер держит свой кэш трансформации, и ?v=<число> его не трогает.
+       * Без этой строки на поиск уходит несколько вызовов подряд, и ошибку ищут в CSS,
+       * где её нет.
+       */
+      result.reloadedNote = t({
+        ru: 'Кэш браузера на этот переход снят целиком, включая стили и скрипты. Если правка всё равно не видна — старое отдаёт сервер, а не браузер: перезапустите dev-сервер. Проверить: matched_rules покажет победившее правило вместе с файлом и строкой, из которых оно приехало.',
+        en: 'The browser cache was fully bypassed for this navigation, stylesheets and scripts included. If the edit is still not visible, the stale copy comes from the server rather than the browser: restart the dev server. To confirm: matched_rules shows the winning rule together with the file and line it arrived from.',
+      });
+    } else {
+      result.cacheNote = t({
+        ru: 'Адрес тот же, что был открыт, а кэш этого движка стенд сбросить не может: стили и скрипты могли прийти старыми. Если ждёте свежую правку — добавьте к адресу ?v=<число>.',
+        en: 'The address is the one already open, and the stand cannot drop this engine cache: stylesheets and scripts may have arrived stale. If you are waiting for a fresh edit, add ?v=<number> to the address.',
+      });
+    }
+  }
+  /*
+   * Страница-ошибка переживается переходом, а не пересозданием сессии.
+   *
+   * Перезапуск dev-сервера уводит вкладку на chrome-error://chromewebdata/, и дальше каждый
+   * инструмент честно отвечает «элемент не найден» — по пустой странице это правда, но ответ
+   * на вопрос не тот. Сама сессия при этом цела: контекст жив, патчи и логин на месте, и
+   * обычный переход её возвращает. Поэтому здесь не ошибка, а отметка о том, что произошло.
+   */
+  if (wasErrorPage && !isErrorPage(session.page.url())) {
+    result.recovered = t({
+      ru: 'Сессия стояла на странице-ошибке браузера (обычно это перезапуск dev-сервера) и вернулась этим переходом. Контекст, патчи и сохранённый логин целы — открывать новую сессию не надо.',
+      en: 'The session was sitting on a browser error page (usually a dev server restart) and this navigation brought it back. The context, the patches and the saved login are intact — there is no need to open a new session.',
+    });
+  }
+  if (retried) {
+    result.retried = retried;
+    result.retriedNote = t({
+      ru: 'Первая попытка упёрлась в отказ соединения, вторая через 1,5 с прошла — обычно это перезапускающийся dev-сервер. Если такое повторяется на каждом переходе, сервер перезапускается сам (падает и поднимается), и разбирать надо его, а не вёрстку.',
+      en: 'The first attempt hit a refused connection and the second, 1.5s later, went through — usually a dev server coming back up. If this repeats on every navigation, the server is restarting on its own (crashing and recovering), and that, not the markup, is what needs looking at.',
+    });
   }
   if (timedOut) {
     result.navigationTimedOut = true;

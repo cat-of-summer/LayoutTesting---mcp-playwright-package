@@ -12,8 +12,12 @@
  * сама. Поэтому read_artifact остаётся, а ссылка добавляется рядом.
  *
  * Схема адресов повторяет устройство каталогов, а не маршруты nginx: lt://artifacts/…,
- * lt://baselines/…, lt://sites/…. Публичный http сюда не годится — он зависит от
+ * lt://baselines/…, lt://sites/…, lt://guide/…. Публичный http сюда не годится — он зависит от
  * PUBLIC_BASE_URL, и один и тот же файл получал бы разное имя на разных стендах.
+ *
+ * Регламент вёрстки (lt://guide/…) — единственное здесь, что стенд не производил, а привёз с
+ * собой. Адресуется тем же способом по той же причине: это текст с именем, который читают по
+ * частям и закрепляют в контексте, а не действие.
  *
  * state/ не адресуем ни под каким видом: там лежат сохранённые логины. Чтение идёт через
  * resolveInside, где этот каталог уже запрещён, — отдельной проверки здесь нет намеренно,
@@ -30,6 +34,7 @@ import { listSites } from '../crawl/store.js';
 import { resolveInArtifacts, resolveInside } from '../paths.js';
 import { IMAGE_MIME } from './shared.js';
 import { t } from '../i18n.js';
+import { ORDER as GUIDE_ORDER, list as listGuide, read as readGuide } from '../guide.js';
 
 const TEXT_LIKE = new Set(['.json', '.html', '.htm', '.txt', '.css', '.js', '.svg', '.xml', '.md']);
 
@@ -162,6 +167,56 @@ export function register(server, ctx = {}) {
     async (uri) => ({
       contents: [{ uri: uri.href, mimeType: 'application/json', text: JSON.stringify(await ctx.standInfo()) }],
     }),
+  );
+
+  /*
+   * Регламент вёрстки по макету — второй путь к тому же тексту, что отдаёт help с guide.
+   *
+   * Смысл ровно тот же, что у lt://stand/info: раздел можно закрепить в контексте, не тратя вызов
+   * инструмента и не возвращаясь к нему на каждой фазе. Инструмент при этом остаётся: ресурсы
+   * клиент показывает по своим правилам, и модель не может перебирать их сама.
+   */
+  server.registerResource(
+    'guide',
+    new ResourceTemplate('lt://guide/{name}', {
+      list: async () => {
+        const sections = await listGuide();
+        return {
+          resources: sections.map((section) => ({
+            uri: `lt://guide/${section.section}`,
+            name: section.section,
+            description: section.about,
+            mimeType: 'text/markdown',
+          })),
+        };
+      },
+      complete: {
+        name: async (value) => GUIDE_ORDER.filter((slug) => slug.startsWith(String(value || ''))).slice(0, 20),
+      },
+    }),
+    {
+      title: t({ ru: 'Регламент вёрстки по макету', en: 'The design-to-markup handbook' }),
+      description: t({
+        ru: 'Порядок работы по макету, разложенный по фазам: от разведки кадров до сборки. Тот же текст отдаёт help с guide: имя раздела. Начинать — с lt://guide/index; одна страница, если нужна одна, — lt://guide/rules.',
+        en: 'The order of work on a design laid out by phase, from reading the frames to the build. The same text comes back from help with guide: section name. Start at lt://guide/index; if you want a single page, lt://guide/rules.',
+      }),
+      mimeType: 'text/markdown',
+    },
+    async (uri, { name }) => {
+      const section = await readGuide(Array.isArray(name) ? name[0] : name);
+      if (!section) {
+        throw new Error(`Раздела регламента «${name}» нет. Доступные: ${GUIDE_ORDER.join(', ')}.`);
+      }
+      return {
+        contents: [
+          {
+            uri: uri.href,
+            mimeType: 'text/markdown',
+            text: section.note ? `${section.text}\n\n${section.note}` : section.text,
+          },
+        ],
+      };
+    },
   );
 
   server.registerResource(

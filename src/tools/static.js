@@ -25,17 +25,24 @@ export function register(server) {
         sessionId: z.string().optional(),
         url: z.string().optional(),
         html: z.string().optional(),
+        strict: z.boolean().optional().describe(d('Показать и то, чего валидатор не знает: современный CSS и новые атрибуты платформы')),
       },
     },
-    async ({ sessionId, url, html }) => {
+    async ({ sessionId, url, html, strict }) => {
       let source = html;
       if (!source && sessionId) source = await getSession(sessionId).page.content();
       if (!source && url) source = await (await fetch(url)).text();
       if (!source) throw new Error('Нужен sessionId, url или html.');
       try {
-        return json({ source: 'vnu', ...(await validateHtmlWithVnu(source)) });
+        return json({ source: 'vnu', ...(await validateHtmlWithVnu(source, { strict })) });
       } catch (err) {
-        return json({ source: 'html-validate', fallbackReason: err.message, ...(await validateHtmlLocal(source)) });
+        /* У запасного пути разделения нет — говорим об этом, а не делаем вид, что strict сработал. */
+        return json({
+          source: 'html-validate',
+          fallbackReason: err.message,
+          ...(await validateHtmlLocal(source)),
+          ...(strict ? { strictNote: 'Запасной путь html-validate делит сообщения иначе: у него нет разделения на известные ограничения, и strict здесь ничего не меняет.' } : {}),
+        });
       }
     },
   );

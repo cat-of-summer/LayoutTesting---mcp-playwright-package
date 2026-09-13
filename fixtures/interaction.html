@@ -1,0 +1,66 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<title>Интерактив: рабочий, сломанный и бесконечный</title>
+<style>
+  body { margin: 0; font: 16px/1.4 system-ui, sans-serif; }
+  section { padding: 16px; border-bottom: 1px solid #ddd; }
+
+  /* Честный аккордеон: раскрывается переходом, который длится заметное время. */
+  .acc__body { display: grid; grid-template-rows: 0fr; transition: grid-template-rows 300ms ease; }
+  .acc__body > div { overflow: hidden; }
+  .acc[aria-expanded="true"] + .acc__body { grid-template-rows: 1fr; }
+
+  /* Слайдер двигается прокруткой дорожки, а не геометрией слайдов. */
+  .slider { width: 300px; overflow-x: auto; scroll-behavior: smooth; }
+  .slider__track { display: flex; width: 900px; }
+  .slider__slide { width: 300px; height: 80px; background: #eee; }
+
+  /* Бесконечная бегущая строка: она не уляжется никогда, и это не дефект. */
+  @keyframes run { to { transform: translateX(-100%); } }
+  .marquee { overflow: hidden; white-space: nowrap; }
+  .marquee__track { display: inline-block; animation: run 2s linear infinite; }
+</style>
+</head>
+<body>
+
+<section>
+  <button class="acc" aria-expanded="false" aria-controls="acc-body">Раскрыть</button>
+  <div class="acc__body" id="acc-body"><div>Текст, который появляется переходом на 300 мс.</div></div>
+</section>
+
+<section>
+  <!-- Кнопка без обработчика: на снимке неотличима от рабочей. -->
+  <button class="dead" type="button">Ничего не делает</button>
+</section>
+
+<section>
+  <button class="slider__next" type="button">Дальше</button>
+  <div class="slider" id="slider">
+    <div class="slider__track">
+      <div class="slider__slide">1</div>
+      <div class="slider__slide">2</div>
+      <div class="slider__slide">3</div>
+    </div>
+  </div>
+</section>
+
+<section>
+  <div class="marquee"><span class="marquee__track">бегущая строка, которая не кончается</span></div>
+</section>
+
+<script>
+  document.querySelector('.acc').addEventListener('click', (event) => {
+    const button = event.currentTarget;
+    button.setAttribute('aria-expanded', button.getAttribute('aria-expanded') === 'true' ? 'false' : 'true');
+  });
+
+  document.querySelector('.slider__next').addEventListener('click', () => {
+    const slider = document.getElementById('slider');
+    slider.scrollLeft = slider.scrollLeft >= 600 ? 0 : slider.scrollLeft + 300;
+  });
+</script>
+
+</body>
+</html>
