@@ -1,20 +1,35 @@
 # Building markup from a design
 
-A map of the phases: what to do in what order, and what closes each one.
+The order of work: thirteen phases, walked one at a time rather than read all at once.
 
 This guide is assembled from real mistakes — eleven bugs from the review of one landing page, plus
 the ones the tools found afterwards. Every rule is backed by a case where breaking it cost rework.
 
-## How to read it
+## How to work with this
 
-The sections are phases. They run in order, and each has a **gate**: the condition under which the
-phase counts as closed and the next one can begin. A gate is not a formality: almost every
-expensive rework happened where a phase was closed "roughly".
+It is a procedure, not a reference book. The order is:
 
-If you read one section of this guide, read `rules`. If you are looking for the tool that fits a
-symptom, read `symptoms`.
+1. Call `help(guide: "setup")` — phase 0.
+2. Do what it says.
+3. Check the **gate** — the condition at the end of the section under which the phase counts as
+   closed.
+4. Once the gate is closed, call the next phase; its name is right there at the end of the section.
 
-## The phases
+Every phase names the next one, so there is no need to hold the whole list in your head — only
+which phase you are on.
+
+A gate is not a formality. Almost every expensive rework happened where a phase was closed
+"roughly": the stand's reachability from the project was not checked, and five calls went on
+diagnosing it mid-build; the fonts were never asked about, and the typography was redone; the
+slider was never clicked through, and shipped broken.
+
+Two sections sit outside the sequence and are read at any time: `rules` — the ten rules on one
+page, and `symptoms` — the "symptom → tool" table.
+
+## The phases in full
+
+The list is here only to show the scale of the work. Do not walk it from here — follow the chain,
+each phase leads to the next.
 
 | Section | Phase | About |
 |---|---|---|
@@ -31,11 +46,6 @@ symptom, read `symptoms`.
 | `block` | 10 | the block cycle — the central section |
 | `page` | 11 | the whole page |
 | `project` | 12 | the whole project and the build |
-
-## Two reference sections
-
-- `rules` — the ten rules whose violation produced bugs. One page.
-- `symptoms` — a "symptom → what to look with" table.
 
 ## What is not here
 

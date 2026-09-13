@@ -169,12 +169,14 @@ Do not retell the tool output in full — name the cause and what exactly produc
         t({
           ru: `Свёрстай страницу по макету: ${figma}.
 
-Порядок работы целиком лежит в регламенте и читается по фазам: help с guide: имя раздела. Не пересказывай его себе по памяти — фаз двенадцать, и пропущенная обычно всплывает переделкой блока.
+Работа идёт по регламенту, и он проходится по одной фазе, а не читается целиком. Порядок такой: вызвал фазу — сделал — проверил её гейт — вызвал следующую. Имя следующей стоит в конце каждой фазы, поэтому список держать в голове не надо.
 
-1. help(guide: "index") — карта фаз и что закрывает каждую.
-2. help(guide: "setup") — до первой строки кода: стенд в контейнере не видит localhost хоста, dev-сервер поднимается на 0.0.0.0 и открывается как http://host.docker.internal:<порт>. Проверь это первым делом: выяснять в середине работы дороже впятеро.
+1. help(guide: "index") — как устроена процедура и сколько всего фаз.
+2. help(guide: "setup") — фаза 0, и она до первой строки кода. Стенд в контейнере не видит localhost хоста: dev-сервер поднимается на 0.0.0.0 и открывается как http://host.docker.internal:<порт>. Проверь это первым делом — выяснять в середине работы дороже впятеро.
 3. figma_status, затем figma_sync со ВСЕМИ кадрами задачи одним вызовом. Дальше разбор идёт по снимку и в Figma не ходит: лимит REST — десять запросов в минуту, у места View/Collab двадцать в месяц.
-4. Дальше по фазам: frames, inventory, system${projectUrl ? ` (figma_components и figma_tokens с project: { url: "${projectUrl}" })` : ''}, assets, fonts, content, questions, motion, shell, block, page, project.
+4. Дальше веди цепочку до конца: фаза 1 — help(guide: "frames")${projectUrl ? `. На фазе 3 передавай figma_components и figma_tokens project: { url: "${projectUrl}" }` : ''}.
+
+Не пропускай фазы и не меняй их местами. Пропущенная обычно всплывает переделкой блока: не спросил про шрифты — переделал типографику, не прокликал слайдер — сдал его сломанным.
 
 Три вещи, которые надо знать до первого вызова, — остальное в регламенте:
 
@@ -185,12 +187,14 @@ Do not retell the tool output in full — name the cause and what exactly produc
 Проверка блока — help(guide: "block")${pageUrl ? `; figma_compare по адресу ${pageUrl}` : ''}. Десять правил одной страницей — help(guide: "rules"). Выбор инструмента под симптом — help(guide: "symptoms").`,
           en: `Build the page from the design: ${figma}.
 
-The whole order of work lives in the handbook and is read by phase: help with guide: section name. Do not retell it to yourself from memory — there are twelve phases, and a skipped one usually surfaces as a rebuilt block.
+The work follows the handbook, and the handbook is walked one phase at a time rather than read in full. The order is: call a phase, do it, check its gate, call the next. The name of the next one sits at the end of every phase, so there is no list to keep in your head.
 
-1. help(guide: "index") — the map of phases and what closes each.
-2. help(guide: "setup") — before the first line of code: the stand runs in a container and cannot see the host localhost; the dev server must listen on 0.0.0.0 and is reached as http://host.docker.internal:<port>. Check this first: finding it out mid-work costs five times as much.
+1. help(guide: "index") — how the procedure works and how many phases there are.
+2. help(guide: "setup") — phase 0, and it comes before the first line of code. The stand runs in a container and cannot see the host localhost: the dev server must listen on 0.0.0.0 and is reached as http://host.docker.internal:<port>. Check this first — finding it out mid-work costs five times as much.
 3. figma_status, then figma_sync with EVERY frame of the task in one call. After that the analysis reads the snapshot and never calls Figma: the REST limit is ten requests a minute, and twenty a month on a View/Collab seat.
-4. Then by phase: frames, inventory, system${projectUrl ? ` (figma_components and figma_tokens with project: { url: "${projectUrl}" })` : ''}, assets, fonts, content, questions, motion, shell, block, page, project.
+4. Then follow the chain to the end: phase 1 is help(guide: "frames")${projectUrl ? `. At phase 3 pass figma_components and figma_tokens project: { url: "${projectUrl}" }` : ''}.
+
+Do not skip phases and do not reorder them. A skipped one usually surfaces as a rebuilt block: the fonts were never asked about and the typography was redone; the slider was never clicked through and shipped broken.
 
 Three things to know before the first call — the rest is in the handbook:
 

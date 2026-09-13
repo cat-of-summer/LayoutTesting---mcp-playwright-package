@@ -131,20 +131,16 @@ const HINTS = [
   },
   {
     groups: ['figma'],
-    ru: `- «сверстай по макету», «вот ссылка на Figma», «сделай как в макете» — начните с
-  help(guide: "index"): порядок работы разложен по двенадцати фазам, и пропущенная фаза обычно
-  всплывает переделкой блока. Коротко: figma_status, затем figma_sync со всеми кадрами задачи
-  разом, дальше разбор по снимку — figma_structure (план разметки), figma_breakpoints (что
-  меняется с шириной), figma_components (сколько на самом деле блоков), figma_tokens (что
-  становится переменной), figma_comments и figma_behavior (требования и связи); по каждому блоку
-  figma_spec (дерево, краска, тексты и что скачивать), затем figma_export;`,
-    en: `- "build this from the design", "here is a Figma link", "make it like the mockup" — start with
-  help(guide: "index"): the order of work is laid out in twelve phases, and a skipped phase usually
-  surfaces as a rebuilt block. In short: figma_status, then figma_sync with every frame of the task
-  at once, then analysis over the snapshot — figma_structure (the markup plan), figma_breakpoints
-  (what changes with width), figma_components (how many blocks there really are), figma_tokens
-  (what becomes a variable), figma_comments and figma_behavior (requirements and links); per block
-  figma_spec (tree, paint, texts and what to export), then figma_export;`,
+    ru: `- «сверстай по макету», «вот ссылка на Figma», «сделай как в макете» — эта задача идёт по
+  регламенту, а не по наитию: help(guide: "index"), дальше по одной фазе. Каждая фаза называет
+  условие, при котором она закрыта, и имя следующей — так что держать список в голове не надо.
+  Не начинайте верстать, не пройдя фазу 0: стенд в контейнере не видит localhost хоста, и
+  выясняется это обычно уже посреди работы;`,
+    en: `- "build this from the design", "here is a Figma link", "make it like the mockup" — this task
+  follows the handbook rather than instinct: help(guide: "index"), then one phase at a time. Each
+  phase states the condition under which it is closed and names the next one, so there is no list
+  to keep in your head. Do not start building before phase 0 is done: the stand runs in a container
+  and cannot see the host localhost, and that is usually discovered mid-work;`,
   },
   {
     groups: ['figma'],

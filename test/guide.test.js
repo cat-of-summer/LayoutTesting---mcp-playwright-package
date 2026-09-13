@@ -11,7 +11,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs/promises';
 import path from 'node:path';
-import { ORDER, list, read } from '../src/guide.js';
+import { ORDER, PHASES, list, read } from '../src/guide.js';
 
 const ROOT = path.resolve(import.meta.dirname, '../guide');
 const LANGS = ['ru', 'en'];
@@ -45,6 +45,55 @@ test('ни один раздел не пуст ни на одном языке',
       assert.match(text, /^# /, `${lang}/${slug}: первая строка должна быть заголовком`);
     }
   }
+});
+
+/*
+ * Цепочка — и есть механизм регламента.
+ *
+ * Без неё это перечень из шестнадцати разделов, из которого читают тот, на который упал взгляд.
+ * Каждая фаза обязана назвать условие, при котором она закрыта, и имя следующей: тогда порядок
+ * держится на самом тексте, а не на том, вспомнит ли о нём агент.
+ */
+test('каждая фаза называет свой номер, гейт и следующую фазу', async () => {
+  for (const [index, slug] of PHASES.entries()) {
+    const section = await read(slug);
+    assert.equal(section.phase, index, `${slug}: неверный номер фазы`);
+
+    const tail = section.text.split('---').pop();
+    assert.match(tail, new RegExp(`Фаза ${index} из`), `${slug}: нет номера в хвосте`);
+    assert.match(tail, /Фаза закрыта, когда: \S/, `${slug}: гейт не вытащился из тела`);
+
+    const next = PHASES[index + 1];
+    if (next) assert.match(tail, new RegExp(`help\\(guide: "${next}"\\)`), `${slug}: не ведёт в ${next}`);
+    else {
+      assert.match(tail, /последняя фаза/, `${slug}: последняя фаза должна говорить, что она последняя`);
+      assert.ok(
+        !tail.includes('help(guide:'),
+        `${slug}: на последней фазе не должно быть вызова — обход по хвостам ушёл бы на второй круг`,
+      );
+    }
+  }
+});
+
+test('index запускает цепочку, справочные разделы из неё выведены', async () => {
+  const index = await read('index');
+  assert.equal(index.phase, undefined, 'index — не фаза');
+  assert.match(index.text, new RegExp(`help\\(guide: "${PHASES[0]}"\\)`), 'index обязан называть первую фазу');
+
+  for (const slug of ['rules', 'symptoms']) {
+    const section = await read(slug);
+    assert.equal(section.phase, undefined, `${slug} не должен быть фазой`);
+    assert.match(section.text, /справочный раздел, а не фаза/, `${slug}: не сказано, что он вне очереди`);
+  }
+});
+
+/* Гейт вытаскивается из тела, а не пишется в коде второй раз, — иначе разъедется при правке. */
+test('гейт в хвосте совпадает с тем, что написано в разделе', async () => {
+  const section = await read('setup');
+  const fromBody = /##\s+Гейт[^\n]*\n+([\s\S]*?)$/.exec(section.text.split('---')[0]);
+  assert.ok(fromBody, 'в разделе должен быть гейт');
+  const normalized = fromBody[1].replace(/\s+/g, ' ').trim();
+  assert.ok(section.text.includes(`Фаза закрыта, когда: ${normalized}`), 'хвост должен цитировать тело дословно');
 });
 
 test('слаг не выпускает за пределы каталога', async () => {

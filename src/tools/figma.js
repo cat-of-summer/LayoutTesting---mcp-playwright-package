@@ -176,7 +176,22 @@ export function register(server) {
     async ({ figma, refresh = false, channel = 'auto', css = false }) => {
       const client = getRestClient();
       const result = await syncFigma(figma, { refresh, client, editor: editorChannel, channel, css });
-      return json({ ...result, budget: (await client.budget()).tiers });
+      /*
+       * Указатель на регламент стоит именно здесь, а не в каждом figma_*.
+       *
+       * Снятие макета — единственный вызов, который в работе по макету случается заведомо и
+       * заведомо в начале: все кадры задачи снимаются одним вызовом, это и есть точка старта.
+       * Рамка подключения про регламент уже сказала, но между подключением и этим вызовом
+       * помещается весь разбор задачи, и напоминание в момент старта дешевле пропущенной фазы.
+       */
+      return json({
+        ...result,
+        budget: (await client.budget()).tiers,
+        guide: t({
+          ru: 'Порядок работы по макету — help(guide: "index"), дальше по одной фазе; каждая называет следующую. Разведка кадров — фаза 1, help(guide: "frames").',
+          en: 'The order of work on a design is help(guide: "index"), then one phase at a time; each names the next. Reading the frames is phase 1, help(guide: "frames").',
+        }),
+      });
     },
   );
 
