@@ -96,12 +96,33 @@ async function fetchLatest(fetchImpl) {
  */
 export function upgradeSteps(tag) {
   const version = tag || 'НОВАЯ_ВЕРСИЯ';
+  const assets = `${UPDATE.releases}/download/v${version}`;
+
+  /*
+   * Файлы релиза — часть обновления, а не справочный материал. docker-compose.yml описывает
+   * порты, тома и healthcheck; между версиями там появляются новые тома и меняются проверки
+   * готовности, и новый образ со старым compose поднимается неверно или не поднимается вовсе.
+   * Раньше инструкция состояла из docker pull и правки одной строки, и агент честно её
+   * выполнял — а стенд оставался на прошлой обвязке.
+   *
+   * Имя ассета у .env.example — default.env.example: GitHub не принимает имена с точки в начале.
+   */
+  const files = {
+    'docker-compose.yml': `${assets}/docker-compose.yml`,
+    '.env.example': `${assets}/default.env.example`,
+    'docker-bundle.lock.yml': `${assets}/docker-bundle.lock.yml`,
+  };
+
   return {
     releases: UPDATE.releases,
     image: `${UPDATE.image}:${version}`,
+    files,
     fromImage: [
       `docker pull ${UPDATE.image}:${version}`,
-      'подставить новый тег в BUNDLE_IMAGE в .env стенда',
+      `скачать ${files['docker-compose.yml']} и заменить им docker-compose.yml стенда`,
+      `скачать ${files['.env.example']} и сверить со своим .env: перенести появившиеся ключи, ` +
+        'свои значения при этом не терять — .env целиком не перезаписывать',
+      `в .env выставить BUNDLE_IMAGE=${UPDATE.image}:${version}`,
       'docker compose up -d',
     ],
     fromSource: [
@@ -111,32 +132,46 @@ export function upgradeSteps(tag) {
     ],
     note:
       'Артефакты, эталоны и архивы обходов лежат в томах и обновление переживают. ' +
-      'Каталог state/ с сохранёнными логинами — тоже том, но его стоит проверить отдельно.',
+      'Каталог state/ с сохранёнными логинами — тоже том, но его стоит проверить отдельно. ' +
+      'Единственный файл, который правится руками и не берётся из релиза, — .env.',
   };
 }
 
 /**
- * Текущая версия.
+ * Тег образа, на котором работает стенд.
  *
- * Их две, и путать их нельзя. version — версия кода из package.json. imageTag — тег образа, и
- * именно он нужен для docker pull. В сборке они не обязаны совпадать, поэтому тег берём из
- * окружения, если сборка его туда положила.
+ * Источник ровно один — BUNDLE_IMAGE из .env стенда. Docker compose отдаёт его в контейнер
+ * через env_file, и это тот самый ref, который правят руками при обновлении. Отдельной
+ * переменной с тем же значением здесь была LT_IMAGE_TAG: две записи одного факта неизбежно
+ * расходятся, и расходились — в .env стенда лежал закреплённый тег, а в .env.example рядом
+ * плавающий latest.
+ *
+ * Версии кода в этой паре больше нет вовсе. package.json нумеровался отдельно от тегов
+ * релизов, сравнивать его было не с чем, и единственное, что он давал, — второе число,
+ * которое приходилось объяснять в каждом ответе.
  */
-export function currentVersion(pkgVersion) {
-  return {
-    version: pkgVersion,
-    imageTag: process.env.LT_IMAGE_TAG || process.env.BUNDLE_IMAGE_TAG || null,
-  };
+export function currentImageTag(ref = process.env.BUNDLE_IMAGE) {
+  const value = String(ref ?? '').trim();
+  if (!value) return null;
+
+  /* Дайджест сильнее тега: ghcr.io/owner/app@sha256:… тега не несёт вовсе. */
+  const name = value.split('@')[0];
+  const colon = name.lastIndexOf(':');
+  if (colon < 0) return null;
+
+  /* Двоеточие в имени реестра — это порт (localhost:5000/app), а не тег: у тега слешей нет. */
+  const tag = name.slice(colon + 1);
+  return tag && !tag.includes('/') ? tag : null;
 }
 
-export async function checkForUpdate(pkgVersion, {
+export async function checkForUpdate({
   force = false,
   fetchImpl = (...args) => globalThis.fetch(...args),
   cacheFile = CACHE_FILE,
   enabled = UPDATE.enabled,
   now = Date.now(),
 } = {}) {
-  const current = currentVersion(pkgVersion);
+  const current = { imageTag: currentImageTag() };
 
   /* Выключатель нужен стендам без выхода наружу и закрытым контурам: там проверка каждый раз
      упирается в таймаут, и четыре секунды на старте платятся впустую. */
@@ -149,11 +184,8 @@ export async function checkForUpdate(pkgVersion, {
 
   try {
     const latest = await fetchLatest(fetchImpl);
-    /*
-     * Сравнивать можно только с тегом образа: версия кода в package.json и теги релизов живут
-     * на разных нумерациях, и подставлять её вместо тега значит сравнивать несравнимое. Если
-     * тега нет или он плавающий — ответ «неизвестно» с объяснением, что закрепить.
-     */
+    /* Сравнивать есть с чем, только если тег закреплён. Плавающий latest и отсутствие тега —
+       ответ «неизвестно» с объяснением, что именно закрепить. */
     const base = current.imageTag;
     const known = comparable(base);
     const behind = known && compareVersions(latest.tag, base) > 0;
@@ -167,11 +199,10 @@ export async function checkForUpdate(pkgVersion, {
         ? {}
         : {
             undetermined: base
-              ? `LT_IMAGE_TAG=${base} — это не версия, сравнивать не с чем.`
-              : 'LT_IMAGE_TAG не задан, а версия кода из package.json нумеруется отдельно от тегов релизов.',
+              ? `BUNDLE_IMAGE указывает на тег ${base} — это не версия, сравнивать не с чем.`
+              : 'BUNDLE_IMAGE не задан или указан без тега — сравнивать не с чем.',
             hint:
-              'Закрепите версию: BUNDLE_IMAGE=' +
-              `${UPDATE.image}:${latest.tag} и LT_IMAGE_TAG=${latest.tag} в .env стенда. ` +
+              `Закрепите версию: BUNDLE_IMAGE=${UPDATE.image}:${latest.tag} в .env стенда. ` +
               'До этого стенд не может сказать, отстал он или нет.',
           }),
       /* Порядок обновления отдаём и когда сравнить не вышло: он там и нужен — чтобы закрепить тег. */
@@ -195,7 +226,7 @@ export async function checkForUpdate(pkgVersion, {
 /** Короткая строка для instructions: агент должен увидеть её, не вызывая ничего. */
 export function updateNotice(result) {
   if (!result || result.updateAvailable !== true) return null;
-  const from = result.current.imageTag || result.current.version;
+  const from = result.current.imageTag;
   return t({
     ru:
       `Доступно обновление стенда: ${from} → ${result.latest}. ` +

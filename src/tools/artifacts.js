@@ -15,10 +15,10 @@ import { listSessions } from '../browser/pool.js';
 import { listProfiles } from '../browser/profiles.js';
 import { readLocalFile } from '../checks/static.js';
 import { ALL_CHECKS } from '../audit.js';
-import { IMAGE_MIME, capped, cappedText, json, linkBlocks, pkg, text } from './shared.js';
+import { IMAGE_MIME, capped, cappedText, json, linkBlocks, text } from './shared.js';
 import { inlineImage } from '../checks/visual.js';
 import { resolveInArtifacts, resolveInRoot } from '../paths.js';
-import { upgradeSteps } from '../update.js';
+import { currentImageTag, upgradeSteps } from '../update.js';
 import { langInfo, t } from '../i18n.js';
 import { resolveSelection, vocabulary } from './groups.js';
 
@@ -245,7 +245,8 @@ export async function buildStandInfo({ update, selection = resolveSelection('all
     .then((r) => (r.ok ? 'доступен' : `ответил ${r.status}`))
     .catch((e) => (e.name === 'TimeoutError' ? 'не ответил за 2 с' : `недоступен: ${e.message}`));
   return {
-    version: pkg.version,
+    /* Тег образа, он же то, что сравнивается с релизом в update. unknown — стенд поднят без тега. */
+    version: currentImageTag() ?? 'unknown',
     /* Порядок обновления кладём прямо сюда: уведомление без инструкции заставляет
        агента гадать или искать документацию снаружи. */
     update: update

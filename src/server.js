@@ -13,10 +13,9 @@ import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { ensureDirs } from './artifacts.js';
 import { loadProfiles } from './browser/profiles.js';
 import { installProtocolPatches } from './protocol.js';
-import { pkg } from './tools/shared.js';
 import { buildInstructions } from './tools/instructions.js';
 import { resolveSelection } from './tools/groups.js';
-import { checkForUpdate, updateNotice } from './update.js';
+import { checkForUpdate, currentImageTag, updateNotice } from './update.js';
 import { checkFigmaApi, figmaApiNotice } from './figma/api-check.js';
 
 import { register as registerSession } from './tools/session.js';
@@ -80,7 +79,7 @@ export async function createServer({ selection = resolveSelection('all') } = {})
    * Версия Figma API проверяется так же и по той же причине: отставание должно быть видно
    * агенту сразу, а не после отказа Figma. Обе проверки идут параллельно — ни одна не ждёт другую.
    */
-  updatePromise ??= checkForUpdate(pkg.version).catch(() => null);
+  updatePromise ??= checkForUpdate().catch(() => null);
   if (on('figma')) figmaApiPromise ??= checkFigmaApi().catch(() => null);
   const [update, figmaApi] = await Promise.all([updatePromise, on('figma') ? figmaApiPromise : null]);
   const notices = [updateNotice(update), figmaApiNotice(figmaApi)].filter(Boolean);
@@ -95,7 +94,10 @@ export async function createServer({ selection = resolveSelection('all') } = {})
   const server = new McpServer(
     {
       name: selection.groups ? `layout-testing/${selection.key}` : 'layout-testing',
-      version: pkg.version,
+      /* Версия сервера для клиента — тег образа. Версии кода отдельно от него нет: package.json
+         нумеровался сам по себе, и это второе число только сбивало с толку. unknown — когда стенд
+         поднят не из образа или без тега. */
+      version: currentImageTag() ?? 'unknown',
     },
     { instructions: [buildInstructions(selection.groups), ...notices].join('\n\n') },
   );

@@ -12,7 +12,7 @@ import assert from 'node:assert/strict';
 import os from 'node:os';
 import path from 'node:path';
 import fsp from 'node:fs/promises';
-import { checkForUpdate, compareVersions, currentVersion, updateNotice, upgradeSteps } from '../src/update.js';
+import { checkForUpdate, compareVersions, currentImageTag, updateNotice, upgradeSteps } from '../src/update.js';
 
 test('версии сравниваются по числам, а не по строке', () => {
   /* Ровно та ошибка, ради которой функция и написана: строкой '0.10.0' меньше '0.9.0',
@@ -36,8 +36,34 @@ test('предрелиз не считается новее релиза по о
   assert.notEqual(compareVersions('1.0.0-rc1', '1.0.0'), 0);
 });
 
+/*
+ * Тег образа читается из BUNDLE_IMAGE — того самого ref, который правят при обновлении.
+ * Отдельной переменной под тег больше нет: две записи одного факта расходились.
+ */
+test('тег образа берётся из хвоста BUNDLE_IMAGE', () => {
+  assert.equal(currentImageTag('ghcr.io/owner/app:0.0.9'), '0.0.9');
+  assert.equal(currentImageTag('ghcr.io/owner/app:latest'), 'latest');
+  assert.equal(currentImageTag('  ghcr.io/owner/app:1.2.3  '), '1.2.3', 'пробелы из .env не мешают');
+});
+
+test('порт реестра не принимается за тег', () => {
+  assert.equal(currentImageTag('localhost:5000/app'), null);
+  assert.equal(currentImageTag('localhost:5000/app:0.0.9'), '0.0.9');
+});
+
+test('дайджест тега не несёт', () => {
+  assert.equal(currentImageTag('ghcr.io/owner/app@sha256:abc123'), null);
+  assert.equal(currentImageTag('ghcr.io/owner/app:0.0.9@sha256:abc123'), '0.0.9');
+});
+
+test('без BUNDLE_IMAGE тега нет', () => {
+  assert.equal(currentImageTag(''), null);
+  assert.equal(currentImageTag(undefined), null);
+  assert.equal(currentImageTag('ghcr.io/owner/app'), null);
+});
+
 test('уведомление появляется только при настоящем обновлении', () => {
-  const current = { version: '0.2.0', imageTag: null };
+  const current = { imageTag: '0.2.0' };
   assert.equal(updateNotice({ updateAvailable: false, current }), null);
   assert.equal(updateNotice({ updateAvailable: null, current }), null);
   assert.equal(updateNotice(null), null);
@@ -48,32 +74,22 @@ test('уведомление появляется только при насто
   assert.match(notice, /продолжает работать/);
 });
 
-test('уведомление опирается на тег образа, если он известен', () => {
-  const notice = updateNotice({
-    updateAvailable: true,
-    latest: '0.0.6',
-    current: { version: '0.2.0', imageTag: '0.0.5' },
-  });
-  /* Для docker pull важен тег образа, а не версия кода: они не обязаны совпадать. */
-  assert.match(notice, /0\.0\.5 → 0\.0\.6/);
-});
-
-test('инструкция по обновлению даёт оба пути и не молчит про данные', () => {
+/*
+ * Инструкция для агента. docker pull и правка одной строки — это не обновление: docker-compose.yml
+ * в релизе описывает тома и healthcheck, и новый образ со старым compose поднимается неверно.
+ */
+test('инструкция по обновлению ведёт к файлам релиза, а не только к образу', () => {
   const steps = upgradeSteps('0.3.0');
   assert.match(steps.image, /ghcr\.io\/.*:0\.3\.0$/);
+  assert.match(steps.files['docker-compose.yml'], /\/releases\/download\/v0\.3\.0\/docker-compose\.yml$/);
+  /* Имя ассета не совпадает с именем файла: GitHub не принимает имена с точки в начале. */
+  assert.match(steps.files['.env.example'], /\/download\/v0\.3\.0\/default\.env\.example$/);
   assert.ok(steps.fromImage.some((s) => s.includes('docker pull')));
+  assert.ok(steps.fromImage.some((s) => s.includes('docker-compose.yml')), 'compose из релиза — обязательный шаг');
+  assert.ok(steps.fromImage.some((s) => s.includes('.env') && s.includes('не перезаписывать')), 'про .env сказано явно');
+  assert.ok(steps.fromImage.some((s) => s.includes('BUNDLE_IMAGE=')));
   assert.ok(steps.fromSource.some((s) => s.includes('dockerbundle')));
   assert.match(steps.note, /том/);
-});
-
-test('версия кода и тег образа различаются как отдельные поля', () => {
-  const before = process.env.LT_IMAGE_TAG;
-  process.env.LT_IMAGE_TAG = '0.0.5';
-  const cur = currentVersion('0.2.0');
-  assert.equal(cur.version, '0.2.0');
-  assert.equal(cur.imageTag, '0.0.5');
-  if (before === undefined) delete process.env.LT_IMAGE_TAG;
-  else process.env.LT_IMAGE_TAG = before;
 });
 
 /* Источник обновлений вынесен в конфигурацию: у форка репозиторий и реестр свои, и менять их
@@ -91,10 +107,10 @@ test('источник обновлений берётся из конфигур
 /*
  * Плавающий тег и отсутствие тега.
  *
- * Это не экзотика, а конфигурация по умолчанию: docker-bundle.yml прописывает
- * LT_IMAGE_TAG=latest, и он же уезжает в .env.example. Пока сравнение шло через строковое
- * «0» < «latest», стенд при любой выпущенной версии уверенно отвечал «обновлений нет».
- * Здесь закреплено, что он отвечает «неизвестно» и говорит, что именно закрепить.
+ * Это не экзотика, а конфигурация по умолчанию: docker-bundle.yml собирает образ как :latest, и
+ * он же уезжает в .env.example. Пока сравнение шло через строковое «0» < «latest», стенд при
+ * любой выпущенной версии уверенно отвечал «обновлений нет». Здесь закреплено, что он отвечает
+ * «неизвестно» и говорит, что именно закрепить.
  */
 const tmp = await fsp.mkdtemp(path.join(os.tmpdir(), 'update-check-'));
 let seq = 0;
@@ -109,12 +125,12 @@ const registry = (tag) => {
   return { impl, calls };
 };
 
-async function check(imageTag, options = {}) {
-  const before = process.env.LT_IMAGE_TAG;
-  if (imageTag === null) delete process.env.LT_IMAGE_TAG;
-  else process.env.LT_IMAGE_TAG = imageTag;
+async function check(image, options = {}) {
+  const before = process.env.BUNDLE_IMAGE;
+  if (image === null) delete process.env.BUNDLE_IMAGE;
+  else process.env.BUNDLE_IMAGE = image;
   try {
-    return await checkForUpdate('0.4.0', {
+    return await checkForUpdate({
       force: true,
       enabled: true,
       fetchImpl: registry('0.0.8').impl,
@@ -122,36 +138,35 @@ async function check(imageTag, options = {}) {
       ...options,
     });
   } finally {
-    if (before === undefined) delete process.env.LT_IMAGE_TAG;
-    else process.env.LT_IMAGE_TAG = before;
+    if (before === undefined) delete process.env.BUNDLE_IMAGE;
+    else process.env.BUNDLE_IMAGE = before;
   }
 }
 
-test('закреплённый тег сравнивается как раньше', async () => {
-  assert.equal((await check('0.0.7')).updateAvailable, true);
-  assert.equal((await check('0.0.8')).updateAvailable, false);
-  assert.equal((await check('v0.0.7')).updateAvailable, true, 'префикс v не должен ломать сравнение');
+test('закреплённый тег сравнивается с релизом', async () => {
+  assert.equal((await check('ghcr.io/o/a:0.0.7')).updateAvailable, true);
+  assert.equal((await check('ghcr.io/o/a:0.0.8')).updateAvailable, false);
+  assert.equal((await check('ghcr.io/o/a:v0.0.7')).updateAvailable, true, 'префикс v не должен ломать сравнение');
 });
 
 test('плавающий тег даёт «неизвестно», а не «обновлений нет»', async () => {
   for (const tag of ['latest', 'stable', 'main']) {
-    const result = await check(tag);
+    const result = await check(`ghcr.io/o/a:${tag}`);
     assert.equal(result.updateAvailable, null, `${tag}: сравнивать не с чем, значит неизвестно`);
     assert.match(result.undetermined, new RegExp(tag), 'в объяснении должно быть видно, что именно мешает');
-    assert.match(result.hint, /LT_IMAGE_TAG=0\.0\.8/, 'подсказка обязана называть, что закрепить');
+    assert.match(result.hint, /BUNDLE_IMAGE=.*:0\.0\.8/, 'подсказка обязана называть, что закрепить');
   }
 });
 
-test('без тега версия кода не подставляется вместо него', async () => {
-  /* package.json нумеруется отдельно от тегов релизов: 0.4.0 против 0.0.8. Сравнение этих двух
-     чисел давало «вы впереди» — то же самое молчаливое «всё хорошо». */
+test('без BUNDLE_IMAGE стенд не выдумывает версию', async () => {
   const result = await check(null);
   assert.equal(result.updateAvailable, null);
-  assert.match(result.undetermined, /package\.json/);
+  assert.equal(result.current.imageTag, null);
+  assert.match(result.undetermined, /BUNDLE_IMAGE/);
 });
 
 test('порядок обновления отдаётся и когда сравнить не вышло', async () => {
-  const result = await check('latest');
+  const result = await check('ghcr.io/o/a:latest');
   assert.ok(result.upgrade, 'без инструкции подсказка «закрепите тег» повисает в воздухе');
   assert.ok(result.upgrade.image.endsWith(':0.0.8'));
 });
@@ -166,15 +181,15 @@ test('уведомление в instructions молчит, пока сравне
 test('свежий кэш не ходит в сеть, протухший ходит', async () => {
   const file = cacheFile();
   const first = registry('0.0.8');
-  await checkForUpdate('0.4.0', { force: true, enabled: true, fetchImpl: first.impl, cacheFile: file });
+  await checkForUpdate({ force: true, enabled: true, fetchImpl: first.impl, cacheFile: file });
   assert.equal(first.calls.length, 1);
 
   const second = registry('0.0.8');
-  await checkForUpdate('0.4.0', { enabled: true, fetchImpl: second.impl, cacheFile: file });
+  await checkForUpdate({ enabled: true, fetchImpl: second.impl, cacheFile: file });
   assert.equal(second.calls.length, 0, 'кэш моложе шести часов — спрашивать незачем');
 
   const third = registry('0.0.8');
   const later = Date.now() + 7 * 60 * 60 * 1000;
-  await checkForUpdate('0.4.0', { enabled: true, fetchImpl: third.impl, cacheFile: file, now: later });
+  await checkForUpdate({ enabled: true, fetchImpl: third.impl, cacheFile: file, now: later });
   assert.equal(third.calls.length, 1, 'через семь часов кэш протух');
 });

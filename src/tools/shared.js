@@ -8,10 +8,7 @@
 import { z } from 'zod';
 import { d } from '../i18n-params.js';
 import { t } from '../i18n.js';
-import { readFile } from 'node:fs/promises';
 import { BROWSERS, VIEWPORTS } from '../config.js';
-
-export const pkg = JSON.parse(await readFile(new URL('../../package.json', import.meta.url), 'utf8'));
 
 /** Расширения, которые нет смысла отдавать как utf8. */
 export const IMAGE_MIME = {
