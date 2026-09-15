@@ -287,6 +287,9 @@ export async function revealAll(page, { initDelayMs = 200, maxCandidates = 3000 
           el.style.setProperty('opacity', '1', 'important');
           el.style.setProperty('visibility', 'visible', 'important');
           el.style.setProperty('transform', 'none', 'important');
+          /* Пометка, по которой computed_styles и matched_rules отличают «перебито стендом» от
+             «так написано в CSS»: инлайн с !important иначе выглядит как чужая правка. */
+          el.dataset.ltPinned = '';
           pinned += 1;
         }
 

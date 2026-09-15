@@ -31,6 +31,48 @@ function collectLayoutIssues(options) {
   };
 
   const label = (el) => (el.innerText || el.textContent || '').trim().slice(0, 80);
+
+  /*
+   * Зона нажатия с учётом ::before и ::after.
+   *
+   * Точку пагинации в 12px дотягивают до 24px псевдоэлементом с inset: -6px — и она кликабельна
+   * на всей площади, а getBoundingClientRect об этом не знает. Абсолютно спозиционированный
+   * псевдоэлемент восстанавливается по его top/right/bottom/left/width/height относительно
+   * коробки элемента; всё остальное (статичные, inline) зону не расширяет.
+   */
+  const effectiveTarget = (el, rect) => {
+    let x0 = rect.left;
+    let y0 = rect.top;
+    let x1 = rect.right;
+    let y1 = rect.bottom;
+    const extendedBy = [];
+    for (const pseudo of ['::before', '::after']) {
+      const ps = getComputedStyle(el, pseudo);
+      if (!ps || ps.content === 'none' || ps.content === 'normal' || ps.display === 'none') continue;
+      if (ps.position !== 'absolute' && ps.position !== 'fixed') continue;
+      const num = (value) => {
+        const n = parseFloat(value);
+        return Number.isFinite(n) ? n : null;
+      };
+      const left = num(ps.left);
+      const right = num(ps.right);
+      const top = num(ps.top);
+      const bottom = num(ps.bottom);
+      const w = num(ps.width);
+      const h = num(ps.height);
+      const px0 = left !== null ? rect.left + left : right !== null && w !== null ? rect.right - right - w : rect.left;
+      const px1 = right !== null ? rect.right - right : w !== null ? px0 + w : rect.right;
+      const py0 = top !== null ? rect.top + top : bottom !== null && h !== null ? rect.bottom - bottom - h : rect.top;
+      const py1 = bottom !== null ? rect.bottom - bottom : h !== null ? py0 + h : rect.bottom;
+      if (px1 - px0 <= 0 || py1 - py0 <= 0) continue;
+      if (px0 < x0 || py0 < y0 || px1 > x1 || py1 > y1) extendedBy.push(pseudo);
+      x0 = Math.min(x0, px0);
+      y0 = Math.min(y0, py0);
+      x1 = Math.max(x1, px1);
+      y1 = Math.max(y1, py1);
+    }
+    return { w: x1 - x0, h: y1 - y0, extendedBy };
+  };
   const box = (r) => ({
     x: Math.round(r.x),
     y: Math.round(r.y),
@@ -327,12 +369,18 @@ function collectLayoutIssues(options) {
         el.matches('a[href], button, input, select, textarea, [role="button"], [role="link"], [onclick]') &&
         !el.matches('input[type="hidden"]');
       if (interactive && (rect.width < minTarget || rect.height < minTarget)) {
-        issues.tinyTargets.push({
-          selector: cssPath(el),
-          text: label(el),
-          box: box(rect),
-          minRequired: minTarget,
-        });
+        const effective = effectiveTarget(el, rect);
+        if (effective.w < minTarget || effective.h < minTarget) {
+          issues.tinyTargets.push({
+            selector: cssPath(el),
+            text: label(el),
+            box: box(rect),
+            minRequired: minTarget,
+            ...(effective.extendedBy.length
+              ? { effective: { w: Math.round(effective.w), h: Math.round(effective.h) }, extendedBy: effective.extendedBy }
+              : {}),
+          });
+        }
       }
     }
 
@@ -735,10 +783,21 @@ export async function computedStyles(page, selector, props, { pseudo = null, all
       const dump = (el) => {
         const style = getComputedStyle(el, pseudo || undefined);
         const rect = el.getBoundingClientRect();
+        // Закреплённый стендом элемент: opacity, visibility и transform у него не из CSS страницы.
+        const pinned = el.hasAttribute('data-lt-pinned');
+        const placeholder = el.hasAttribute('data-lt-placeholder');
         return {
           box: { x: Math.round(rect.x), y: Math.round(rect.y), w: Math.round(rect.width), h: Math.round(rect.height) },
           scroll: { scrollWidth: el.scrollWidth, scrollHeight: el.scrollHeight, clientWidth: el.clientWidth, clientHeight: el.clientHeight },
           styles: Object.fromEntries(wanted.map((p) => [p, style.getPropertyValue(p)])),
+          ...(pinned
+            ? {
+                overriddenByStand: ['opacity', 'visibility', 'transform'],
+                overriddenNote:
+                  'Элемент закреплён стендом в замороженной сессии (data-lt-pinned): эти значения перебиты инлайном с !important и не отражают CSS страницы. В сессии с animations: "allow" этого нет.',
+              }
+            : {}),
+          ...(placeholder ? { placeholderByStand: 'src подменён заглушкой стенда: исходник не загрузился' } : {}),
         };
       };
 
@@ -755,4 +814,43 @@ export async function computedStyles(page, selector, props, { pseudo = null, all
     },
     { selector, props, pseudo, all, maxItems },
   );
+}
+
+/**
+ * Тот же аудит на нескольких ширинах окна — сводкой, а не по вызову на ширину.
+ *
+ * Две макетные точки проверяли по одной сессии на каждую, а промежуточные не открывали вовсе:
+ * на 1068px боковая колонка уходила за экран, и это увидели только после сдачи. Здесь окно
+ * переставляется по списку и возвращается к исходному; по каждой ширине — счётчики и первые
+ * находки, отдельно worst — где хуже всего.
+ */
+export async function layoutAuditAcrossWidths(page, widths, options = {}) {
+  const original = page.viewportSize() || { width: 1440, height: 900 };
+  const settle = () => page.evaluate(() => new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve))));
+  const byWidth = {};
+  const worst = [];
+  const top = (report) =>
+    Object.entries(report.issues || {})
+      .filter(([, value]) => Array.isArray(value) && value.length)
+      .flatMap(([category, list]) => list.slice(0, 3).map((issue) => ({ category, ...issue })))
+      .slice(0, 8);
+  try {
+    for (const width of [...new Set(widths)].sort((a, b) => a - b)) {
+      await page.setViewportSize({ width, height: original.height });
+      await settle();
+      const report = await layoutAudit(page, { ...options, maxItems: Math.min(options.maxItems || 50, 10) });
+      byWidth[width] = { total: report.total, counts: report.counts, top: top(report), ...(report.motion ? { motion: report.motion } : {}) };
+      worst.push({ width, total: report.total });
+    }
+  } finally {
+    await page.setViewportSize(original);
+    await settle();
+  }
+  worst.sort((a, b) => b.total - a.total);
+  return {
+    widths: Object.keys(byWidth).map(Number),
+    byWidth,
+    worst: worst.slice(0, 3),
+    note: 'По каждой ширине — счётчики и первые находки; полный список по одной ширине — обычный layout_audit в сессии нужной ширины. Окно возвращено к исходному размеру.',
+  };
 }

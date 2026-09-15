@@ -9,7 +9,7 @@ import { resolveInRoot } from '../paths.js';
  * Nu HTML Checker — эталонный валидатор разметки. Отправляем содержимое,
  * а не URL: так же проверяется отрендеренный DOM и локальные файлы.
  */
-export async function validateHtmlWithVnu(html, { maxMessages = 50, strict = false } = {}) {
+export async function validateHtmlWithVnu(html, { maxMessages = 50, strict = false, ignore = null } = {}) {
   const res = await fetch(`${CONFIG.vnuUrl}/?out=json`, {
     method: 'POST',
     headers: { 'Content-Type': 'text/html; charset=utf-8' },
@@ -19,7 +19,62 @@ export async function validateHtmlWithVnu(html, { maxMessages = 50, strict = fal
     throw new Error(`vnu ответил ${res.status}. Проверьте, что контейнер vnu поднят (${CONFIG.vnuUrl}).`);
   }
   const data = await res.json();
-  return splitVnuMessages(data.messages || [], { maxMessages, strict });
+  return splitVnuMessages(data.messages || [], { maxMessages, strict, ignore });
+}
+
+/**
+ * Соглашения проекта, которые валидатор не знает: пользовательские теги, атрибуты компонентов,
+ * классы-контейнеры библиотеки шаблона.
+ *
+ * Это не known: known — отставание валидатора от платформы, общее для всех; ignore — решение
+ * человека для этого проекта. Отфильтрованное не исчезает, а считается отдельно в ignored:
+ * 38 сообщений, из которых 29 — библиотечные, и 9 настоящих — это разные ситуации, и обе
+ * должны быть видны.
+ */
+export function buildIgnore(ignore) {
+  if (!ignore) return null;
+  const messages = (ignore.messages || []).map((pattern) => {
+    try {
+      return new RegExp(pattern, 'i');
+    } catch {
+      return new RegExp(String(pattern).replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'i');
+    }
+  });
+  const tags = (ignore.tags || []).map((tag) => new RegExp(`(Element|element|tag) .${String(tag).toLowerCase()}.`, 'i'));
+  const attributes = (ignore.attributes || []).map((attribute) => new RegExp(`Attribute .${String(attribute).toLowerCase()}.`, 'i'));
+  const rules = [
+    ...messages.map((re, index) => ({ id: `message:${ignore.messages[index]}`, test: re })),
+    ...tags.map((re, index) => ({ id: `tag:${ignore.tags[index]}`, test: re })),
+    ...attributes.map((re, index) => ({ id: `attribute:${ignore.attributes[index]}`, test: re })),
+  ];
+  if (!rules.length) return null;
+  return (message) => rules.find((rule) => rule.test.test(String(message || '')))?.id || null;
+}
+
+/** Отфильтрованное по ignore — отдельной корзиной, чтобы объём шума оставался частью отчёта. */
+export function applyIgnore(messages, matcher) {
+  if (!matcher) return { kept: messages, ignored: null };
+  const byRule = {};
+  const kept = [];
+  for (const message of messages) {
+    const id = matcher(message.message);
+    if (!id) {
+      kept.push(message);
+      continue;
+    }
+    byRule[id] = (byRule[id] || 0) + 1;
+  }
+  const count = messages.length - kept.length;
+  return {
+    kept,
+    ignored: count
+      ? {
+          count,
+          byRule,
+          note: 'Отфильтровано по ignore — соглашения проекта, а не ошибки разметки. В total не входит; список правил и счёт по каждому здесь, чтобы фильтр не спрятал лишнего.',
+        }
+      : null,
+  };
 }
 
 /**
@@ -60,7 +115,7 @@ const clippedNote = (total, shown) =>
  * помечает префиксом «CSS:» — по нему и делим; тем же способом уезжает в known то, что назвал
  * KNOWN_LIMITS. Счёт и примеры у обеих корзин остаются, в общий итог они не идут.
  */
-export function splitVnuMessages(raw, { maxMessages = 50, strict = false } = {}) {
+export function splitVnuMessages(raw, { maxMessages = 50, strict = false, ignore = null } = {}) {
   const all = raw.map((m) => ({
     type: m.subType || m.type,
     message: m.message,
@@ -74,7 +129,7 @@ export function splitVnuMessages(raw, { maxMessages = 50, strict = false } = {})
   const css = strict ? [] : all.filter(isCss);
   const rest = strict ? all : all.filter((m) => !isCss(m));
   const known = strict ? [] : rest.filter((m) => classifyKnown(m.message));
-  const messages = strict ? rest : rest.filter((m) => !classifyKnown(m.message));
+  const { kept: messages, ignored } = applyIgnore(strict ? rest : rest.filter((m) => !classifyKnown(m.message)), buildIgnore(ignore));
 
   const byReason = {};
   for (const m of known) {
@@ -91,6 +146,7 @@ export function splitVnuMessages(raw, { maxMessages = 50, strict = false } = {})
     },
     messages: messages.slice(0, maxMessages),
     ...(note ? { truncated: true, note } : {}),
+    ...(ignored ? { ignored } : {}),
     ...(css.length
       ? {
           css: {
@@ -113,7 +169,7 @@ export function splitVnuMessages(raw, { maxMessages = 50, strict = false } = {})
   };
 }
 
-export async function validateHtmlLocal(html, { maxMessages = 50 } = {}) {
+export async function validateHtmlLocal(html, { maxMessages = 50, ignore = null } = {}) {
   const validator = new HtmlValidate({
     extends: ['html-validate:recommended'],
     rules: {
@@ -123,7 +179,7 @@ export async function validateHtmlLocal(html, { maxMessages = 50 } = {}) {
     },
   });
   const report = await validator.validateString(html);
-  const messages = report.results.flatMap((r) =>
+  const found = report.results.flatMap((r) =>
     r.messages.map((m) => ({
       severity: m.severity === 2 ? 'error' : 'warning',
       ruleId: m.ruleId,
@@ -133,6 +189,7 @@ export async function validateHtmlLocal(html, { maxMessages = 50 } = {}) {
       selector: m.selector || null,
     })),
   );
+  const { kept: messages, ignored } = applyIgnore(found, buildIgnore(ignore));
   const note = clippedNote(messages.length, Math.min(messages.length, maxMessages));
   return {
     valid: report.valid,
@@ -143,6 +200,7 @@ export async function validateHtmlLocal(html, { maxMessages = 50 } = {}) {
     },
     messages: messages.slice(0, maxMessages),
     ...(note ? { truncated: true, note } : {}),
+    ...(ignored ? { ignored } : {}),
   };
 }
 

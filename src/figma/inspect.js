@@ -8,7 +8,7 @@
  * auto-layout или из положения на холсте: слои в макетах перепутаны чаще, чем нет.
  */
 import { colorCss, cssText, nodeCss, paintNotes, paintSummary, round } from './css.js';
-import { childNodes, strip } from './snapshot.js';
+import { childNodes, strip, walk } from './snapshot.js';
 
 const isVisible = (node) => node.visible !== false;
 
@@ -129,6 +129,16 @@ export function outlineLines(snapshot, rootId, { depth = 6, hidden = false, stat
     if (!kids.length) return;
     if (level >= depth) {
       lines.push(`${pad(level + 1)}… ${kids.length} вложенных глубже depth`);
+      /* Сколько узлов осталось за глубиной: по этому числу figma_spec говорит, что блок не разобран. */
+      if (stats) {
+        stats.collapsed = (stats.collapsed || 0) + 1;
+        let nested = 0;
+        walk(snapshot, node.id, (inner) => {
+          if (inner !== node) nested += 1;
+          return true;
+        });
+        stats.collapsedNodes = (stats.collapsedNodes || 0) + nested;
+      }
       return;
     }
     for (let i = 0; i < kids.length; ) {
@@ -197,6 +207,40 @@ export function cssItems(snapshot, rootId, { depth = 2, hidden = false, stats = 
   const root = snapshot.nodes[rootId];
   visit(root, snapshot.nodes[root.parent] ?? null, 0);
   return items;
+}
+
+/**
+ * Что в поддереве осталось неразобранным — сводка для figma_spec.
+ *
+ * Три вещи, каждая из которых в прошлый раз стоила бага: узлы за пределами depth (цвет тире в
+ * свёрнутом фрейме), одноцветные иконки без цвета в инвентаре (чёрные иконки) и связи прототипа,
+ * ведущие за пределы снимка (hover-вариант, который так и не сняли). Пустой объект — блок
+ * разобран; непустой — фаза block не закрыта, и ответ говорит об этом сам.
+ */
+export function unresolvedOf(snapshot, rootId, { stats = {}, assets = null, hidden = false } = {}) {
+  const out = {};
+  if (stats.collapsed) out.collapsedByDepth = { branches: stats.collapsed, nodes: stats.collapsedNodes || 0 };
+
+  const svgWithoutColor = (assets?.items || []).filter((item) => item.kind === 'svg' && !item.color).length;
+  if (svgWithoutColor) out.svgWithoutColor = svgWithoutColor;
+
+  const notSynced = new Set();
+  let hiddenSkipped = 0;
+  walk(snapshot, rootId, (node) => {
+    if (node.visible === false && !hidden) {
+      hiddenSkipped += 1;
+      return false;
+    }
+    for (const interaction of node.interactions || []) {
+      for (const action of (interaction.actions || []).filter(Boolean)) {
+        if (action.destinationId && !snapshot.nodes[action.destinationId]) notSynced.add(action.destinationId);
+      }
+    }
+    return true;
+  });
+  if (notSynced.size) out.interactionsNotSynced = { count: notSynced.size, ids: [...notSynced].slice(0, 10) };
+  if (hiddenSkipped) out.hiddenSkipped = hiddenSkipped;
+  return out;
 }
 
 /**

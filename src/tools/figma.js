@@ -20,10 +20,10 @@ import { checkFigmaApi } from '../figma/api-check.js';
 import { issueTokenNow, lastTokenIssue, resolveToken } from '../figma/auth.js';
 import { editorChannel, editorLogin, editorLogout, editorStatus } from '../figma/editor.js';
 import { exportImages, exportRender, exportSvg } from '../figma/export.js';
-import { cssItems, outlineLines, textItems, usedVariables } from '../figma/inspect.js';
+import { cssItems, outlineLines, textItems, unresolvedOf, usedVariables } from '../figma/inspect.js';
 import { assetInventory } from '../figma/assets.js';
 import { getRestClient } from '../figma/rest.js';
-import { addRequests, ensureNode, ensureNodes, findNode, syncFigma } from '../figma/snapshot.js';
+import { addRequests, ensureNode, ensureNodes, findNode, pathOf, syncFigma } from '../figma/snapshot.js';
 import { groupRefs, refOf } from '../figma/url.js';
 import { loadProject, projectSummary } from '../figma/project.js';
 import { inferStructure } from '../figma/analyze/structure.js';
@@ -81,6 +81,75 @@ async function loadFrames(refs, client) {
     }
   }
   return { frames, requests };
+}
+
+/**
+ * Ширины для прогонов — из ширин снятых кадров.
+ *
+ * Макет обычно даёт две точки, а вёрстку проверяли ровно в них: «планшетного макета нет —
+ * между ними clamp()», и clamp() так и не сделали. Подсказка стоит здесь, в ответе снятия, потому
+ * что именно тут впервые видны все ширины задачи, — дальше её берут layout_stress и layout_audit.
+ */
+const STANDARD_WIDTHS = [320, 375, 768, 1024, 1280, 1440, 1920];
+
+export function suggestWidths(result) {
+  const design = [
+    ...new Set(
+      (result.files || [])
+        .flatMap((file) => file.frames || [])
+        .map((frame) => Number(String(frame.size || '').split('x')[0]))
+        .filter((w) => w > 0),
+    ),
+  ].sort((a, b) => a - b);
+  if (design.length < 2) return {};
+  const [min, max] = [design[0], design[design.length - 1]];
+  const suggested = [...new Set([...design, ...STANDARD_WIDTHS.filter((w) => w > min && w < max)])].sort((a, b) => a - b);
+  return {
+    widths: {
+      design,
+      suggested,
+      note: t({
+        ru: 'Две макетные ширины — не адаптив: вёрстка проверяется и между ними. Передайте suggested в layout_stress (widths) и layout_audit (widths); добавьте ширину на 1px выше каждого своего брейкпоинта.',
+        en: 'Two design widths are not adaptivity: the layout is checked between them too. Pass suggested to layout_stress (widths) and layout_audit (widths); add the width 1px above each of your own breakpoints.',
+      }),
+    },
+  };
+}
+
+/*
+ * Покрытие сверки по кадру — что для него уже запускали, а что нет.
+ *
+ * semantic запускали восемь раз, pixel — ни разу, и «готово» написали по высотам секций. Реестр
+ * живёт в памяти процесса и ключуется кадром с версией: сверка старой версии макета покрытием
+ * новой не считается. Ответ каждой сверки несёт, чего для этого кадра ещё не было.
+ */
+const coverage = new Map();
+
+const stamp = () => new Date().toISOString().slice(11, 16);
+
+export function noteCoverage(ref, version, { mode = 'both', sections = false } = {}) {
+  const key = `${ref}@${version}`;
+  const entry = coverage.get(key) || { semantic: null, pixel: null, sections: null };
+  if (mode !== 'pixel') entry.semantic = stamp();
+  if (mode !== 'semantic') entry.pixel = stamp();
+  if (sections) entry.sections = stamp();
+  coverage.set(key, entry);
+
+  const missing = ['semantic', 'sections'].filter((kind) => !entry[kind]);
+  const never = t({ ru: 'не запускался', en: 'not run' });
+  return {
+    semantic: entry.semantic || never,
+    pixel: entry.pixel || never,
+    sections: entry.sections || never,
+    ...(missing.length
+      ? {
+          note: t({
+            ru: `Для этого кадра ещё не было: ${missing.join(', ')}. Отчёт о готовности пишется после semantic и sections: true — картинка с картинкой по каждой секции; «высота секции совпала» — не критерий.`,
+            en: `Not run for this frame yet: ${missing.join(', ')}. A "done" report follows semantic and sections: true — picture against picture per section; "the section height matches" is not a criterion.`,
+          }),
+        }
+      : {}),
+  };
 }
 
 const withProject = async (project) => (project && (project.url || project.css || project.scss) ? loadProject(project) : null);
@@ -171,11 +240,14 @@ export function register(server) {
           .optional()
           .describe(d('auto (по умолчанию) — редактор, если в него есть вход, иначе REST; rest и editor — только этот канал')),
         css: z.boolean().optional().describe(d('Добавить CSS, который считает сама Figma. Только канал редактора, около 13 мс на узел')),
+        page: z.string().optional().describe(d('Для ссылки без node-id: имя или id одной страницы — её кадры целиком, с offset')),
+        offset: z.number().optional().describe(d('Для ссылки без node-id с page: с какого кадра продолжить список')),
+        limit: z.number().optional().describe(d('Для ссылки без node-id с page: сколько кадров показать. По умолчанию 200')),
       },
     },
-    async ({ figma, refresh = false, channel = 'auto', css = false }) => {
+    async ({ figma, refresh = false, channel = 'auto', css = false, page, offset = 0, limit }) => {
       const client = getRestClient();
-      const result = await syncFigma(figma, { refresh, client, editor: editorChannel, channel, css });
+      const result = await syncFigma(figma, { refresh, client, editor: editorChannel, channel, css, page, offset, limit });
       /*
        * Указатель на регламент стоит именно здесь, а не в каждом figma_*.
        *
@@ -186,6 +258,7 @@ export function register(server) {
        */
       return json({
         ...result,
+        ...suggestWidths(result),
         budget: (await client.budget()).tiers,
         guide: t({
           ru: 'Порядок работы по макету — help(guide: "index"), дальше по одной фазе; каждая называет следующую. Разведка кадров — фаза 1, help(guide: "frames").',
@@ -219,6 +292,7 @@ export function register(server) {
       const { snapshot, node, fileKey, requests } = await ensureNode(figma, { client: getRestClient(), editor: editorChannel });
       const head = {
         ref: refOf(fileKey, node.id),
+        ...pathOf(snapshot, node.id),
         version: snapshot.version,
         channel: snapshot.channel,
         mode,
@@ -285,6 +359,7 @@ export function register(server) {
 
       const out = {
         ref: refOf(fileKey, node.id),
+        ...pathOf(snapshot, node.id),
         version: snapshot.version,
         channel: snapshot.channel,
         ...(requests ? { requests } : {}),
@@ -327,11 +402,29 @@ export function register(server) {
         out[name] = section;
       }
 
+      /*
+       * Чего в этом ответе не хватает, чтобы считать блок разобранным.
+       *
+       * Раньше свёрнутые по depth узлы и иконки без цвета терялись молча, а «блок разобран»
+       * решалось на глаз. Пустой unresolved — критерий закрытия фазы, непустой — список работы.
+       */
+      const unresolved = unresolvedOf(snapshot, node.id, { stats, assets: out.assets ?? (want.has('assets') ? null : assetInventory(snapshot, node.id)), hidden });
       return json({
         ...out,
         ...(Object.keys(skipped).length ? { skipped } : {}),
         ...(stats.clippedTexts
           ? { textsClipped: `${stats.clippedTexts} текстов обрезаны многоточием в outline и css — целиком они в разделе text` }
+          : {}),
+        ...(Object.keys(unresolved).length
+          ? {
+              unresolved: {
+                ...unresolved,
+                note: t({
+                  ru: 'Блок не разобран до конца — фаза block не закрыта. collapsedByDepth: повторите с большим depth или figma_inspect по свёрнутым узлам; svgWithoutColor: цвет иконки возьмите из figma_inspect по узлу; interactionsNotSynced: figma_sync по этим id и разобрать; hiddenSkipped: скрытые слои, при необходимости hidden: true. См. help(guide: "block", brief: true).',
+                  en: 'The block is not fully taken apart — phase block is not closed. collapsedByDepth: repeat with a larger depth or figma_inspect on the collapsed nodes; svgWithoutColor: take the icon color from figma_inspect on the node; interactionsNotSynced: figma_sync these ids and take them apart; hiddenSkipped: hidden layers, hidden: true if needed. See help(guide: "block", brief: true).',
+                }),
+              },
+            }
           : {}),
         note: 'План разметки — теги, классы, переподчинённые слои — это отдельный разбор: figma_structure.',
       });
@@ -358,6 +451,7 @@ export function register(server) {
       const result = inferStructure(snapshot, node.id, { depth: depth ?? 10 });
       return json({
         ref: refOf(fileKey, node.id),
+        ...pathOf(snapshot, node.id),
         version: snapshot.version,
         channel: snapshot.channel,
         ...(requests ? { requests } : {}),
@@ -476,28 +570,38 @@ export function register(server) {
           .enum(['both', 'semantic', 'pixel'])
           .optional()
           .describe(d('both (по умолчанию) — и смысловое, и попиксельное; semantic — только смысловое; pixel — только попиксельное')),
+        sections: z
+          .boolean()
+          .optional()
+          .describe(d('Попиксельно по каждой секции кадра (дочерним узлам верхнего уровня) с поправкой на сдвиг её текстов — сверка картинкой на длинной странице')),
         tolerance: z.number().optional().describe(d('Допуск смещения в пикселях. По умолчанию 2')),
         threshold: z.number().optional().describe(d('Допустимое расхождение в процентах пикселей')),
         limit: z.number().optional().describe(d('Сколько строк или записей показать')),
       },
     },
-    async ({ figma, sessionId, url, selector, mode = 'both', tolerance, threshold, limit }) => {
+    async ({ figma, sessionId, url, selector, mode = 'both', sections = false, tolerance, threshold, limit }) => {
       const client = getRestClient();
       const { snapshot, node, fileKey } = await ensureNode(figma, { client, editor: editorChannel });
+      const ref = refOf(fileKey, node.id);
       const options = {
-        figmaRef: refOf(fileKey, node.id),
+        figmaRef: ref,
         snapshot,
         rootId: node.id,
         selector,
         mode,
+        sections,
         client,
         editor: editorChannel,
         ...(tolerance ? { tolerance } : {}),
         ...(threshold ? { threshold } : {}),
         ...(limit ? { limit } : {}),
       };
+      const withCoverage = (result) => ({
+        ...result,
+        coverage: noteCoverage(ref, snapshot.version, { mode, sections }),
+      });
 
-      if (sessionId) return json(await compareWithDesign({ ...options, page: getSession(sessionId).page }));
+      if (sessionId) return json(withCoverage(await compareWithDesign({ ...options, page: getSession(sessionId).page })));
       if (!url) throw new Error('Нужен sessionId открытой сессии или url страницы.');
 
       /* Своя сессия открывается шириной кадра: сравнивать десктопный макет с мобильной вёрсткой
@@ -506,7 +610,7 @@ export function register(server) {
       return withSession({ viewport: `${width}x900` }, async (session) => {
         const navigation = await gotoAndSettle(session, url);
         const result = await compareWithDesign({ ...options, page: session.page });
-        return json({ ...result, navigation });
+        return json({ ...withCoverage(result), navigation });
       });
     },
   );
@@ -643,15 +747,19 @@ export function register(server) {
           .optional()
           .describe(d('Для render: вырезать прямоугольник в координатах узла')),
         inline: z.boolean().optional().describe(d('Вложить картинку в ответ. По умолчанию только ссылки')),
+        parts: z
+          .union([z.enum(['auto', 'children']), z.number().int().min(2).max(40)])
+          .optional()
+          .describe(d('Для render: auto (по умолчанию) — высокий кадр режется по 1,4 ширины; children — по одной части на дочерний фрейм верхнего уровня, с его node; число — столько равных частей')),
       },
     },
-    async ({ figma, kind = 'render', scale, clip, inline = false }) => {
+    async ({ figma, kind = 'render', scale, clip, inline = false, parts = 'auto' }) => {
       const options = { client: getRestClient(), editor: editorChannel };
       if (kind === 'svg') return json(await exportSvg(figma, options));
       if (kind === 'image') return json(await exportImages(figma, { ...options, scales: scale ? [scale] : [1, 2] }));
 
       if (clip && figma.length !== 1) throw new Error('clip относится к одному узлу: передайте ровно одну ссылку.');
-      const result = await exportRender(figma, { ...options, scale, clip });
+      const result = await exportRender(figma, { ...options, scale, clip, parts });
       const content = [{ type: 'text', text: JSON.stringify(result) }, ...linkBlocks(result)];
       if (inline) {
         /* Не больше трёх картинок: части высокого кадра по отдельности читаются, а десяток разом

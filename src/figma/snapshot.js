@@ -290,6 +290,23 @@ function stylesOf(raw, context) {
   return out;
 }
 
+/**
+ * Связи прототипа без пустых действий.
+ *
+ * В JSON_REST_V1 у реакции бывает actions: [null] — триггер задан, действие не выбрано. Такой
+ * null валил figma_behavior и figma_tokens на всём кадре («reading 'transition'»), и агент
+ * оставался без интеракций десктопа. Триггер при этом сохраняем: элемент помечен как
+ * интерактивный, даже если действие не назначено.
+ */
+function interactionsOf(list) {
+  if (!list?.length) return undefined;
+  const out = list.filter(Boolean).map((interaction) => ({
+    ...interaction,
+    ...(Array.isArray(interaction.actions) ? { actions: interaction.actions.filter(Boolean) } : {}),
+  }));
+  return out.length ? out : undefined;
+}
+
 function vectorHash(raw) {
   const geometry = raw.fillGeometry?.length ? raw.fillGeometry : raw.strokeGeometry;
   if (!geometry?.length) return undefined;
@@ -334,7 +351,7 @@ export function normalizeRestTree(document, context = {}) {
       component: componentOf(raw, context),
       vars: aliases(raw.boundVariables),
       styles: stylesOf(raw, context),
-      interactions: raw.interactions?.length ? raw.interactions : undefined,
+      interactions: interactionsOf(raw.interactions),
       scrollBehavior: raw.scrollBehavior && raw.scrollBehavior !== 'SCROLLS' ? raw.scrollBehavior : undefined,
       overlay: raw.overlayPositionType
         ? strip({
@@ -392,10 +409,13 @@ export function summarize(snapshot) {
     if (node.interactions) counts.interactions += 1;
     if (node.visible === false) counts.hidden += 1;
   }
+  const where = pathOf(snapshot, root.id);
   return strip({
     ref: refOf(snapshot.fileKey, root.id),
     name: root.name,
     type: root.type,
+    path: where.path,
+    parent: where.parent ? strip({ ref: refOf(snapshot.fileKey, where.parent.id), name: where.parent.name }) : undefined,
     size: root.box ? `${round(root.box.w)}x${round(root.box.h)}` : undefined,
     breakpoint: guessBreakpoint(root.box?.w),
     channel: snapshot.channel,
@@ -474,10 +494,31 @@ function attachExtras(snapshot, extras) {
   for (const id of new Set(JSON.stringify(snapshot.nodes).match(/VariableID:[^"\\]+/g) || [])) add(id);
   if (Object.keys(variables).length) snapshot.variables = variables;
   if (typeof extras.motionSupported === 'string') snapshot.motionUnsupported = extras.motionSupported;
+  if (extras.ancestors?.[snapshot.root]?.length) snapshot.ancestors = extras.ancestors[snapshot.root];
+}
+
+/**
+ * Путь до узла: страница и предки снятого корня (их знает только редактор) плюс цепочка внутри
+ * снимка. Отвечает на «это кадр или дочерний узел?» без перебора соседних id.
+ */
+export function pathOf(snapshot, nodeId) {
+  const inside = [];
+  for (let current = snapshot.nodes[nodeId]; current; current = snapshot.nodes[current.parent]) inside.unshift(current);
+  const outside = snapshot.ancestors || [];
+  const names = [...outside, ...inside].map((node) => node.name || node.id);
+  const known = outside.length > 0;
+  return {
+    path: names.join(' / '),
+    /* Без предков корня путь начинается с самого корня, и «кадр это или узел внутри кадра» по
+       нему не ответить. */
+    ...(known ? {} : { pathNote: 'Родители снятого корня известны только каналу редактора: путь начинается с корня снимка.' }),
+    parent: inside.length > 1 ? { id: inside[inside.length - 2].id, name: inside[inside.length - 2].name } : outside.at(-1) ?? null,
+  };
 }
 
 async function syncFile({ fileKey, nodeIds, wholeFile }, ctx) {
   const { refresh, client, cacheDir, now, spent, editor, channel, css } = ctx;
+  /* page, offset, limit в ctx относятся к списку кадров файла (wholeFile) и читаются ниже. */
   const meta = (await readMeta(fileKey, { cacheDir })) || { fileKey, roots: {} };
   meta.roots ||= {};
   const out = { fileKey };
@@ -553,11 +594,28 @@ async function syncFile({ fileKey, nodeIds, wholeFile }, ctx) {
       out.channel = 'editor';
     }
     meta.checkedAt = stamp();
-    out.pages = pages.map((page) =>
-      strip({
+    /*
+     * Страница с сотней кадров режется, и хвост должен быть достижим: без page и offset агент
+     * искал нужный кадр перебором соседних id. Одна страница по имени или id отдаётся с
+     * постраничным продолжением; без page — все страницы, но по сотне кадров на каждую.
+     */
+    const wantedPage = ctx.page ? String(ctx.page).trim().toLowerCase() : null;
+    const selected = wantedPage
+      ? pages.filter((page) => page.id === ctx.page || String(page.name || '').trim().toLowerCase() === wantedPage)
+      : pages;
+    if (wantedPage && !selected.length) {
+      out.pageNotFound = `Страницы «${ctx.page}» в файле нет. Есть: ${pages.map((page) => page.name).join(', ')}.`;
+    }
+    const offset = wantedPage ? Math.max(0, ctx.offset || 0) : 0;
+    const limit = wantedPage ? Math.max(1, ctx.limit || 200) : 100;
+    out.pages = selected.map((page) => {
+      const slice = page.frames.slice(offset, offset + limit);
+      const shown = offset + slice.length;
+      return strip({
         id: page.id,
         name: page.name,
-        frames: page.frames.slice(0, 100).map((frame) =>
+        total: page.frames.length,
+        frames: slice.map((frame) =>
           strip({
             ref: refOf(fileKey, frame.id),
             name: frame.name,
@@ -566,9 +624,14 @@ async function syncFile({ fileKey, nodeIds, wholeFile }, ctx) {
             breakpoint: guessBreakpoint(frame.w),
           }),
         ),
-        more: page.frames.length > 100 ? page.frames.length - 100 : undefined,
-      }),
-    );
+        ...(shown < page.frames.length
+          ? {
+              more: page.frames.length - shown,
+              note: `Показано ${slice.length} из ${page.frames.length}${offset ? `, начиная с ${offset}` : ''}. Дальше — figma_sync по той же ссылке с page: "${page.name}" и offset: ${shown}.`,
+            }
+          : {}),
+      });
+    });
   }
 
   const missing = nodeIds.filter((id) => wantCss || !meta.version || meta.roots[id]?.version !== meta.version);
@@ -665,12 +728,15 @@ export async function syncFigma(
     editor = null,
     channel = 'auto',
     css = false,
+    page = null,
+    offset = 0,
+    limit = null,
   } = {},
 ) {
   const spent = { tier1: 0, tier2: 0, tier3: 0 };
   const files = [];
   for (const group of groupRefs(refs)) {
-    files.push(await syncFile(group, { refresh, client, cacheDir, now, spent, editor, channel, css }));
+    files.push(await syncFile(group, { refresh, client, cacheDir, now, spent, editor, channel, css, page, offset, limit }));
   }
   return { files, requests: spent };
 }

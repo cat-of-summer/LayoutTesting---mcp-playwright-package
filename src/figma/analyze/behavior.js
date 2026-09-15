@@ -113,7 +113,8 @@ export function describeBehavior(frames, { lookup = null } = {}) {
       }
 
       for (const interaction of node.interactions || []) {
-        for (const action of interaction.actions || []) {
+        /* Старые снимки в кэше могут нести null в actions: фильтр здесь, а не только в snapshot.js. */
+        for (const action of (interaction.actions || []).filter(Boolean)) {
           const key = action.type === 'NODE' ? `NODE:${action.navigation || 'NAVIGATE'}` : action.type;
           const destination = action.destinationId || null;
           edges.push({

@@ -2,6 +2,16 @@
 
 Every width, the baselines, the build — and cleaning up afterwards.
 
+## Checklist
+
+ENTRY: every page passed the phase 11 gate.
+STEPS:
+  1. layout_stress(widths: the full range 320…1920) on every page.
+  2. visual_baselines — the baselines; from then on visual_compare.
+  3. web_vitals / lighthouse.
+  4. npm run build → dist on the stand → repeat the phase 11 checks over the build.
+  5. browser_close on every session, stop the dev server, remove one-off containers.
+
 ## The project-wide run
 
 ```
@@ -16,7 +26,9 @@ web_vitals / lighthouse
 npm run build   →   serve dist   →   repeat the phase 11 checks
 ```
 
-The dev server and the bundle are different builds, and that is not a formality.
+The dev server and the bundle are different builds, and that is not a formality: library CSS
+imported from a client script is visible in dev and never reaches the bundle; `allowedHosts` for
+preview is read from a different place in the config.
 
 > It was precisely in the build that the font plugin turned out to crash on Windows when removing a
 > duplicate, failing the whole build with a non-zero exit code. On the dev server none of it was

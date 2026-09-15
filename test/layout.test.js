@@ -301,3 +301,57 @@ test('повторный переход на тот же адрес идёт м�
     await new Promise((resolve) => srv.close(resolve));
   }
 });
+
+/*
+ * Зона нажатия с псевдоэлементом. Точку пагинации в 12px дотягивают до 24px через
+ * ::after { inset: -6px } — и она кликабельна на всей площади, а getBoundingClientRect об
+ * этом не знает. Раньше аудит считал такие точки мелкими, и им «чинили» то, что не сломано.
+ */
+test('тач-таргет, дотянутый псевдоэлементом до порога, находкой не считается', options, async () => {
+  const html = `<!doctype html><style>
+    button{position:relative;width:12px;height:12px;padding:0;border:0;display:block;margin:40px}
+    #ok::after{content:'';position:absolute;inset:-6px}
+    #half::after{content:'';position:absolute;inset:-2px}
+    #inline::after{content:'';position:static;width:40px;height:40px}</style>
+    <button id="ok"></button><button id="half"></button><button id="plain"></button><button id="inline"></button>`;
+  const res = await auditHtml(html, { categories: ['tinyTargets'] });
+  const found = res.issues.tinyTargets;
+  const ids = found.map((issue) => issue.selector);
+  assert.ok(!ids.includes('#ok'), `точка с ::after до 24px — не находка: ${JSON.stringify(ids)}`);
+  assert.ok(ids.includes('#plain'), 'точка без псевдоэлемента остаётся мелкой');
+  assert.ok(ids.includes('#inline'), 'статичный псевдоэлемент зону не расширяет');
+  const half = found.find((issue) => issue.selector === '#half');
+  assert.ok(half, 'inset: -2px не дотягивает до порога');
+  assert.deepEqual(half.effective, { w: 16, h: 16 });
+  assert.deepEqual(half.extendedBy, ['::after']);
+});
+
+/*
+ * Заморозка движения и закреплённые элементы должны быть названы в ответе навигации, а у
+ * закреплённых — помечены в computed_styles: иначе инлайн с !important читается как чужая правка.
+ */
+test('переход в замороженной сессии несёт motionNote, закреплённые элементы помечены', options, async () => {
+  const { computedStyles } = await import('../src/checks/layout.js');
+  const session = await pool.createSession({ viewport: 'desktop' });
+  try {
+    const nav = await pool.gotoAndSettle(session, `${base}/reveal-on-scroll.html`);
+    assert.equal(nav.motion, 'frozen');
+    assert.match(nav.motionNote, /animations: "allow"/);
+    if (nav.pinned) {
+      const styles = await computedStyles(session.page, '[data-lt-pinned]', ['opacity']);
+      assert.equal(styles.found, true);
+      assert.deepEqual(styles.overriddenByStand, ['opacity', 'visibility', 'transform']);
+    }
+  } finally {
+    await pool.closeSession(session.id);
+  }
+
+  const live = await pool.createSession({ viewport: 'desktop', animations: 'allow' });
+  try {
+    const nav = await pool.gotoAndSettle(live, `${base}/clean.html`);
+    assert.equal(nav.motion, 'allow');
+    assert.equal(nav.motionNote, undefined);
+  } finally {
+    await pool.closeSession(live.id);
+  }
+});

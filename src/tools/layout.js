@@ -8,7 +8,7 @@
 import { z } from 'zod';
 import { d } from '../i18n-params.js';
 import { getSession } from '../browser/pool.js';
-import { layoutAudit, computedStyles, AUDIT_CATEGORIES } from '../checks/layout.js';
+import { layoutAudit, layoutAuditAcrossWidths, computedStyles, AUDIT_CATEGORIES } from '../checks/layout.js';
 import { runStress, STRESS_SCENARIOS } from '../checks/stress.js';
 import { runInteractions, INTERACTION_ACTIONS } from '../checks/interaction.js';
 import { matchedRules } from '../checks/cssom.js';
@@ -39,21 +39,25 @@ export function register(server) {
           .optional()
           .describe(d('Разбирать только эти блоки — шапка и подвал иначе набивают счётчики своими находками')),
         exclude: z.array(z.string()).optional().describe(d('Не разбирать эти блоки')),
+        widths: z
+          .array(z.number().int().min(240).max(4000))
+          .optional()
+          .describe(d('Прогнать по этим ширинам окна и свести в таблицу; окно возвращается к исходному. Список — из widths.suggested у figma_sync')),
       },
     },
-    async ({ sessionId, minTarget, contrastRatio, maxItems, categories, include, exclude }) => {
+    async ({ sessionId, minTarget, contrastRatio, maxItems, categories, include, exclude, widths }) => {
       const session = getSession(sessionId);
-      return json(
-        await layoutAudit(session.page, {
-          minTarget,
-          contrastRatio,
-          maxItems,
-          categories,
-          include,
-          exclude,
-          frozen: Boolean(session.motionFrozen),
-        }),
-      );
+      const options = {
+        minTarget,
+        contrastRatio,
+        maxItems,
+        categories,
+        include,
+        exclude,
+        frozen: Boolean(session.motionFrozen),
+      };
+      if (!widths?.length) return json(await layoutAudit(session.page, options));
+      return json(await layoutAuditAcrossWidths(session.page, widths, options));
     },
   );
 

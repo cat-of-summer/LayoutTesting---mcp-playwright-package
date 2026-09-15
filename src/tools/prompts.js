@@ -173,7 +173,7 @@ Do not retell the tool output in full — name the cause and what exactly produc
 
 1. help(guide: "index") — как устроена процедура и сколько всего фаз.
 2. help(guide: "setup") — фаза 0, и она до первой строки кода. Стенд в контейнере не видит localhost хоста: dev-сервер поднимается на 0.0.0.0 и открывается как http://host.docker.internal:<порт>. Проверь это первым делом — выяснять в середине работы дороже впятеро.
-3. figma_status, затем figma_sync со ВСЕМИ кадрами задачи одним вызовом. Дальше разбор идёт по снимку и в Figma не ходит: лимит REST — десять запросов в минуту, у места View/Collab двадцать в месяц.
+3. figma_status — до снимка: без REST не прочитать комментарии, а в них половина требований; нет токена — action: token или вопрос человеку, не пропуск. Затем figma_sync со ВСЕМИ кадрами задачи одним вызовом. Дальше разбор идёт по снимку и в Figma не ходит: лимит REST — десять запросов в минуту, у места View/Collab двадцать в месяц. Открой две сессии сразу: рабочую и живую с animations: "allow" — hover и intro видны только во второй.
 4. Дальше веди цепочку до конца: фаза 1 — help(guide: "frames")${projectUrl ? `. На фазе 3 передавай figma_components и figma_tokens project: { url: "${projectUrl}" }` : ''}.
 
 Не пропускай фазы и не меняй их местами. Пропущенная обычно всплывает переделкой блока: не спросил про шрифты — переделал типографику, не прокликал слайдер — сдал его сломанным.
@@ -184,14 +184,16 @@ Do not retell the tool output in full — name the cause and what exactly produc
 - структура берётся из дерева макета, а не с картинки;
 - неподвижный снимок ничего не говорит про интерактив: его проходит interaction_audit в сессии с animations: "allow".
 
-Проверка блока — help(guide: "block")${pageUrl ? `; figma_compare по адресу ${pageUrl}` : ''}. Десять правил одной страницей — help(guide: "rules"). Выбор инструмента под симптом — help(guide: "symptoms").`,
+Перед переходом к следующей фазе перечитай текущую кратко: help(guide: "<фаза>", brief: true).
+
+Проверка блока — help(guide: "block")${pageUrl ? `; figma_compare по адресу ${pageUrl}` : ''}: сверка — картинка с картинкой (sections: true), «высота секции сошлась» — не критерий. Правила и запреты одной страницей — help(guide: "rules"). Выбор инструмента под симптом — help(guide: "symptoms").`,
           en: `Build the page from the design: ${figma}.
 
 The work follows the handbook, and the handbook is walked one phase at a time rather than read in full. The order is: call a phase, do it, check its gate, call the next. The name of the next one sits at the end of every phase, so there is no list to keep in your head.
 
 1. help(guide: "index") — how the procedure works and how many phases there are.
 2. help(guide: "setup") — phase 0, and it comes before the first line of code. The stand runs in a container and cannot see the host localhost: the dev server must listen on 0.0.0.0 and is reached as http://host.docker.internal:<port>. Check this first — finding it out mid-work costs five times as much.
-3. figma_status, then figma_sync with EVERY frame of the task in one call. After that the analysis reads the snapshot and never calls Figma: the REST limit is ten requests a minute, and twenty a month on a View/Collab seat.
+3. figma_status — before the snapshot: without REST the comments cannot be read, and half the requirements live there; no token means action: token or a question to the human, not a skip. Then figma_sync with EVERY frame of the task in one call. After that the analysis reads the snapshot and never calls Figma: the REST limit is ten requests a minute, and twenty a month on a View/Collab seat. Open two sessions right away: a working one and a live one with animations: "allow" — hover and intro are visible only in the second.
 4. Then follow the chain to the end: phase 1 is help(guide: "frames")${projectUrl ? `. At phase 3 pass figma_components and figma_tokens project: { url: "${projectUrl}" }` : ''}.
 
 Do not skip phases and do not reorder them. A skipped one usually surfaces as a rebuilt block: the fonts were never asked about and the typography was redone; the slider was never clicked through and shipped broken.
@@ -202,7 +204,9 @@ Three things to know before the first call — the rest is in the handbook:
 - structure comes from the design tree, not from the picture;
 - a still screenshot says nothing about interaction: interaction_audit walks it in a session with animations: "allow".
 
-Checking a block is help(guide: "block")${pageUrl ? `; run figma_compare against ${pageUrl}` : ''}. The ten rules on one page are help(guide: "rules"). Choosing a tool for a symptom is help(guide: "symptoms").`,
+Before moving to the next phase, re-read the current one briefly: help(guide: "<phase>", brief: true).
+
+Checking a block is help(guide: "block")${pageUrl ? `; run figma_compare against ${pageUrl}` : ''}: the check is picture against picture (sections: true); "the section height matches" is not a criterion. The rules and prohibitions on one page are help(guide: "rules"). Choosing a tool for a symptom is help(guide: "symptoms").`,
         }),
       ),
   );

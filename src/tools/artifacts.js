@@ -20,6 +20,7 @@ import { inlineImage } from '../checks/visual.js';
 import { resolveInArtifacts, resolveInRoot } from '../paths.js';
 import { currentImageTag, upgradeSteps } from '../update.js';
 import { langInfo, t } from '../i18n.js';
+import { status as guideStatus } from '../guide.js';
 import { resolveSelection, vocabulary } from './groups.js';
 
 export function register(server, ctx = {}) {
@@ -234,6 +235,17 @@ function toolsInfo(selection) {
  * lt://stand/info. Если бы каждая собирала payload сама, они разъехались бы на первой же
  * правке, и агент получал бы разные ответы на один вопрос в зависимости от того, как спросил.
  */
+async function guideInfo() {
+  const state = await guideStatus();
+  return {
+    available: state.available,
+    sections: `${state.sections} из ${state.expected}`,
+    ...(state.available
+      ? { how: 'help с guide: index — карта фаз; с brief: true — чек-лист фазы; GET /skill/layout-by-figma/SKILL.md — то же одним файлом для скилла.' }
+      : { reason: state.reason, hint: 'help с guide: любой раздел отдаёт встроенный минимум (карта фаз и запреты), пока образ не пересобран.' }),
+  };
+}
+
 export async function buildStandInfo({ update, selection = resolveSelection('all') } = {}) {
   /*
    * Таймаут обязателен. stand_info — то, куда идут, когда непонятно, что со стендом, и
@@ -274,6 +286,9 @@ export async function buildStandInfo({ update, selection = resolveSelection('all
               'сообщает об этом полями source и fallbackReason.',
           }),
     },
+    /* Регламент попадает в образ отдельным шагом сборки, и один релиз вышел без него. Агент
+       должен увидеть это здесь, а не по ошибке «раздел не найден» посреди работы. */
+    guide: await guideInfo(),
     chromePath: CONFIG.chromePath || '(не задан)',
     browsers: BROWSERS,
     viewports: VIEWPORTS,

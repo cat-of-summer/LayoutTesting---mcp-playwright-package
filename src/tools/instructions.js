@@ -133,13 +133,17 @@ const HINTS = [
     groups: ['figma'],
     ru: `- «сверстай по макету», «вот ссылка на Figma», «сделай как в макете» — эта задача идёт по
   регламенту, а не по наитию: help(guide: "index"), дальше по одной фазе. Каждая фаза называет
-  условие, при котором она закрыта, и имя следующей — так что держать список в голове не надо.
+  условие, при котором она закрыта, и имя следующей — так что держать список в голове не надо;
+  перед переходом дальше — та же фаза с brief: true. Если help с guide отвечает available: false,
+  образ собран без регламента — скажите об этом человеку, а не верстайте по наитию.
   Не начинайте верстать, не пройдя фазу 0: стенд в контейнере не видит localhost хоста, и
   выясняется это обычно уже посреди работы;`,
     en: `- "build this from the design", "here is a Figma link", "make it like the mockup" — this task
   follows the handbook rather than instinct: help(guide: "index"), then one phase at a time. Each
   phase states the condition under which it is closed and names the next one, so there is no list
-  to keep in your head. Do not start building before phase 0 is done: the stand runs in a container
+  to keep in your head; before moving on, re-read the phase with brief: true. If help with guide
+  answers available: false, the image was built without the handbook — tell the human instead of
+  building by instinct. Do not start building before phase 0 is done: the stand runs in a container
   and cannot see the host localhost, and that is usually discovered mid-work;`,
   },
   {

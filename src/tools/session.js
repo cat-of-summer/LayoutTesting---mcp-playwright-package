@@ -16,8 +16,10 @@ import {
   listEvicted,
   listSessions,
   gotoAndSettle,
+  motionFacts,
   takeNavigationSince,
 } from '../browser/pool.js';
+import { captureFrames } from '../browser/frames.js';
 import { profileKey } from '../browser/profile.js';
 import { evaluateOnPage } from '../browser/evaluate.js';
 import { resolveInRoot } from '../paths.js';
@@ -50,6 +52,10 @@ export function register(server) {
         unsupported: session.unsupported,
       };
       if (url) result.navigation = await gotoAndSettle(session, url);
+      /* Без адреса заморозка всё равно задана сессией — сказать о ней сразу, а не на первом переходе. */
+      if (!url && (profile.animations ?? session.profile.animations) !== 'allow') {
+        Object.assign(result, motionFacts({ motionFrozen: true }));
+      }
       return json(result);
     },
   );
@@ -74,11 +80,22 @@ export function register(server) {
           .boolean()
           .optional()
           .describe(d('Сохранить страницу в локальное зеркало сразу после перехода — дальше её можно разбирать, не трогая чужой сервер')),
+        frames: z
+          .object({
+            count: z.number().optional().describe(d('Сколько кадров, до 12. По умолчанию 6')),
+            stepMs: z.number().optional().describe(d('Шаг между кадрами, мс, не меньше 50. По умолчанию 200')),
+          })
+          .optional()
+          .describe(d('Серия снимков viewport сразу после commit, без стабилизации: стартовая анимация, вспышка контента до JS. Движение на этот переход разрешается само')),
       },
     },
-    async ({ sessionId, url, waitUntil, animations, save }) => {
+    async ({ sessionId, url, waitUntil, animations, save, frames }) => {
       const session = getSession(sessionId);
-      const navigation = await gotoAndSettle(session, url, { waitUntil, animations });
+      /* Серия кадров — до стабилизации: она бы остановила то, ради чего кадры снимают. Дальше
+         обычный переход с разрешённым движением, чтобы страница осталась в честном состоянии. */
+      const series = frames ? await captureFrames(session, url, frames) : null;
+      const navigation = await gotoAndSettle(session, url, { waitUntil, animations: series ? 'allow' : animations });
+      if (series) navigation.frames = series;
       if (!save) return json(navigation);
 
       const saved = await savePage(session);

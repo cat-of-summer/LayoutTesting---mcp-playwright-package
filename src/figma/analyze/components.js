@@ -99,6 +99,7 @@ function candidates(snapshot, rootId, frameRef) {
       ref: `${frameRef}:${node.id}`,
       frame: frameRef,
       node,
+      snapshot,
       role: containerRole(snapshot, node, 2) || (isIconLike(snapshot, node) ? 'icon' : 'card'),
       name: meaningfulName(node),
       set: node.component?.set || (node.component && !node.component.definition ? node.component.name : null),
@@ -154,6 +155,63 @@ function isDrift(base, other) {
 }
 
 const blockOf = (member) => bemName(member.set || member.name || '') || member.role;
+
+/**
+ * Параллели между инстансами: что держится на фиксированной высоте соседа.
+ *
+ * У трёх карточек даты стояли на одном y при заголовках в две и три строки — заголовок занимал
+ * 66px при любом тексте. В outline одного узла это «270x66 [h:hug]», и hug читается как «высота
+ * от контента». Видно это только на нескольких инстансах сразу: дочерний узел с одним именем на
+ * одном y у всех, а у соседа над ним высота разная. Ниже ровно это и ищется; сравнение — по
+ * именам дочерних узлов, потому что инстансы одного компонента их сохраняют.
+ */
+export function findParallels(members, { tolerance = 1 } = {}) {
+  const rows = members
+    .map((member) => {
+      const kids = childNodes(member.snapshot, member.node)
+        .filter((kid) => isVisible(kid) && kid.box && kid.name)
+        .map((kid) => ({
+          name: kid.name,
+          y: round(kid.box.y - member.node.box.y),
+          h: round(kid.box.h),
+          sizing: kid.item?.sizingV ? kid.item.sizingV.toLowerCase() : 'fixed',
+          chars: kid.type === 'TEXT' ? String(kid.text?.chars || '').length : null,
+        }));
+      return kids.length >= 2 ? kids : null;
+    })
+    .filter(Boolean);
+  if (rows.length < 2) return [];
+
+  /* Только имена, которые есть у всех: остальное сравнивать не с чем. */
+  const names = rows[0].map((kid) => kid.name).filter((name) => rows.every((row) => row.some((kid) => kid.name === name)));
+  const byName = (row, name) => row.find((kid) => kid.name === name);
+  const out = [];
+  for (const [index, name] of names.entries()) {
+    if (!index) continue;
+    const ys = rows.map((row) => byName(row, name).y);
+    const sameY = Math.max(...ys) - Math.min(...ys) <= tolerance;
+    if (!sameY) continue;
+    /* Сосед выше по потоку с разной высотой — и есть то, что держит выравнивание. */
+    const above = names[index - 1];
+    const hs = rows.map((row) => byName(row, above).h);
+    const varies = Math.max(...hs) - Math.min(...hs) > tolerance;
+    const sizing = byName(rows[0], above).sizing;
+    /* Одинаковая высота при hug подозрительна только у текста с заметно разной длиной: у
+       иконки или кнопки одинаковая высота — норма, и параллель там ничего не значит. */
+    const chars = rows.map((row) => byName(row, above).chars).filter((value) => value !== null);
+    const textVaries = chars.length === rows.length && Math.min(...chars) > 0 && Math.max(...chars) / Math.min(...chars) >= 1.25;
+    if (!varies && !(sizing === 'hug' && textVaries)) continue;
+    out.push({
+      child: name,
+      y: ys[0],
+      fixedSibling: { child: above, ...(varies ? { heights: hs } : { h: hs[0] }), sizing },
+      note: varies
+        ? `${name} стоит на одном y у всех инстансов, а ${above} разной высоты: выравнивание держится не на потоке — у ${above} в CSS фиксированная height или min-height, не hug.`
+        : `${name} стоит на одном y у всех инстансов, а ${above} помечен hug при одинаковой высоте ${hs[0]}px: в CSS задайте эту высоту явно, иначе при другом тексте ${name} поплывёт.`,
+    });
+  }
+  return out;
+}
 /* Кадры одного экрана дают «Вакансия» и «Вакансия mobile» — это один блок, а не два. */
 const responsiveKey = (block) => block.replace(/-?(mobile|desktop|tablet|mob|desk)$/i, '') || block;
 
@@ -235,6 +293,7 @@ export function findComponents(frames, { project = null, minCluster = 2 } = {}) 
     const frameCounts = {};
     for (const member of cluster.members) frameCounts[member.frame] = (frameCounts[member.frame] || 0) + 1;
 
+    const parallels = findParallels(cluster.members);
     const entry = {
       block,
       role: cluster.role,
@@ -244,6 +303,7 @@ export function findComponents(frames, { project = null, minCluster = 2 } = {}) 
       base,
       variants,
       ...(drift.length ? { drift } : {}),
+      ...(parallels.length ? { parallels } : {}),
       ...(cluster.members[0].set ? { component: cluster.members[0].set } : {}),
     };
     if (project) {
@@ -266,7 +326,15 @@ export function findComponents(frames, { project = null, minCluster = 2 } = {}) 
     first.frames = { ...first.frames, ...entry.frames };
     first.variants = [...first.variants, ...entry.variants].slice(0, 12);
     first.responsive = true;
+    if (entry.parallels && !first.parallels) first.parallels = entry.parallels;
   }
 
-  return { clusters: [...merged.values()], singles: singles.slice(0, 30), counted: all.length };
+  return {
+    clusters: [...merged.values()],
+    singles: singles.slice(0, 30),
+    counted: all.length,
+    ...(found.some((entry) => entry.parallels)
+      ? { parallelsNote: 'parallels — дочерний узел на одном y у всех инстансов при соседе разной высоты: у соседа фиксированная высота, как бы он ни был помечен. Один узел этого не покажет.' }
+      : {}),
+  };
 }

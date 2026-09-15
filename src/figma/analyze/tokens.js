@@ -180,7 +180,7 @@ export function collectTokens(frames, { project = null, minUses = 2 } = {}) {
       }
 
       for (const interaction of node.interactions || []) {
-        for (const action of interaction.actions || []) {
+        for (const action of (interaction.actions || []).filter(Boolean)) {
           const transition = action.transition;
           if (transition?.duration) bump(durations, `${Math.round(transition.duration * 1000)}ms`, ref);
           if (transition?.easing) bump(easings, easingCss(transition.easing), ref);

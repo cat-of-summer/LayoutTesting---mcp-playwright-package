@@ -154,6 +154,9 @@ function ruleView(entry, sheets) {
   };
 }
 
+/** Свойства, которые stabilize.js перебивает инлайном у закреплённых элементов. */
+export const STAND_PINNED_PROPS = ['opacity', 'visibility', 'transform'];
+
 export async function matchedRules(page, { selector, pseudo, properties, maxRules = 40, maxProperties = 60 } = {}) {
   if (!selector) throw new Error('Нужен selector.');
   const pseudoType = normalizePseudo(pseudo);
@@ -176,6 +179,14 @@ export async function matchedRules(page, { selector, pseudo, properties, maxRule
     const { root } = await cdp.send('DOM.getDocument', { depth: 1 });
     const { nodeId } = await cdp.send('DOM.querySelector', { nodeId: root.nodeId, selector });
     if (!nodeId) return { found: false, selector, pseudo: pseudo || null };
+
+    /*
+     * Закреплён ли элемент стендом. В замороженной сессии блоки, проявившиеся по прокрутке,
+     * получают инлайн с !important (opacity, visibility, transform) — и в этом ответе он
+     * выглядел бы как чужая правка, на которую тратят вызов. Атрибут ставит stabilize.js.
+     */
+    const { attributes } = await cdp.send('DOM.getAttributes', { nodeId });
+    const pinned = attributes.includes('data-lt-pinned');
 
     const matched = await cdp.send('CSS.getMatchedStylesForNode', { nodeId });
 
@@ -201,12 +212,12 @@ export async function matchedRules(page, { selector, pseudo, properties, maxRule
 
     const inline = !pseudoType && matched.inlineStyle?.cssProperties?.length
       ? {
-          selector: '(style="" на самом элементе)',
+          selector: pinned ? '(style="" — закреплено стендом, data-lt-pinned)' : '(style="" на самом элементе)',
           specificity: 'inline',
           exactSpecificity: true,
-          origin: 'inline',
+          origin: pinned ? 'stand' : 'inline',
           media: [],
-          source: { file: '(атрибут style)', line: null, column: null },
+          source: { file: pinned ? '(стенд: stabilize, не CSS страницы)' : '(атрибут style)', line: null, column: null },
           ...splitDeclarations(matched.inlineStyle),
         }
       : null;
@@ -233,6 +244,13 @@ export async function matchedRules(page, { selector, pseudo, properties, maxRule
       // то, что автор написал.
       rules: ordered.map(({ expanded, ...rule }) => rule),
       winners: conflicts.slice(0, maxProperties),
+      ...(pinned
+        ? {
+            overriddenByStand: STAND_PINNED_PROPS,
+            overriddenNote:
+              'Элемент закреплён стендом в замороженной сессии: opacity, visibility и transform перебиты инлайном с !important, чтобы блок, появляющийся по прокрутке, попал в кадр. Это не CSS страницы; в сессии с animations: "allow" этого нет.',
+          }
+        : {}),
       note: ordered.some((r) => r.source?.minified)
         ? 'Часть правил из минифицированной таблицы: строка там всегда первая, ориентируйтесь на колонку.'
         : undefined,

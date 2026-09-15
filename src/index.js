@@ -8,6 +8,7 @@ import { resolveSelection, vocabulary } from './tools/groups.js';
 import { closeAll } from './browser/pool.js';
 import { ensureDirs } from './artifacts.js';
 import { handleUpload } from './media/upload.js';
+import { handleGuideRoute } from './guide-http.js';
 
 const arg = (name, fallback) => {
   const hit = process.argv.find((a) => a.startsWith(`--${name}=`));
@@ -80,8 +81,18 @@ async function startHttp() {
       return;
     }
 
+    /* Регламент и скилл — обычным GET, мимо протокола: их скачивает заглушка скилла в проекте
+       агента (curl), а не сам агент через инструмент. */
+    if (url.pathname.startsWith('/skill/') || url.pathname.startsWith('/guide/')) {
+      await handleGuideRoute(req, res, url).catch((err) => {
+        process.stderr.write(`[guide] ошибка: ${err.stack || err.message}\n`);
+        if (!res.headersSent) plain(500, `${err.message}\n`);
+      });
+      return;
+    }
+
     if (url.pathname !== '/mcp' && !url.pathname.startsWith('/mcp/')) {
-      plain(404, 'Есть только /mcp, /mcp/<группы>, /upload и /health\n');
+      plain(404, 'Есть только /mcp, /mcp/<группы>, /upload, /health, /skill/layout-by-figma/SKILL.md и /guide/<ru|en>/<раздел>.md\n');
       return;
     }
 

@@ -19,6 +19,7 @@ import { colorCss, round } from './css.js';
 import { t } from '../i18n.js';
 import { clip, contains, deltaE, parseColor, SAME_COLOR, visibleNodes } from './analyze/common.js';
 import { exportRender } from './export.js';
+import { orderedChildren } from './inspect.js';
 
 const norm = (value) => String(value || '').replace(/\s+/g, ' ').trim().toLowerCase();
 
@@ -559,6 +560,7 @@ export async function compareWithDesign({
   page,
   selector = null,
   mode = 'both',
+  sections = false,
   tolerance = 2,
   threshold = 0.1,
   limit = 30,
@@ -572,9 +574,14 @@ export async function compareWithDesign({
   const design = designItems(snapshot, rootId);
   const out = { runId, ref: figmaRef, frame: design.size };
 
-  if (mode !== 'pixel') {
-    const probed = await page.evaluate(probePage, selector);
+  /* Секциям нужны пары текстов для сдвига — то есть тот же обход страницы, что и semantic. */
+  let probed = null;
+  if (mode !== 'pixel' || sections) {
+    probed = await page.evaluate(probePage, selector);
     if (probed.error) throw new Error(probed.error);
+  }
+
+  if (mode !== 'pixel') {
     const semantic = compareGeometry(design, probed, { tolerance });
     out.page = probed.origin;
     out.semantic = {
@@ -647,5 +654,141 @@ export async function compareWithDesign({
     out.pixel = await comparePixels({ figmaRef, page, selector, dir, name, threshold, client, editor });
   }
 
+  if (sections) {
+    out.sections = await compareSections({ figmaRef, snapshot, rootId, page, selector, dir, name, threshold, client, editor, design, probed });
+  }
+
   return out;
+}
+
+
+/**
+ * Секции кадра: видимые дочерние узлы верхнего уровня, достаточно крупные, чтобы их сравнивать.
+ *
+ * Отдельная функция ради теста: разбиение считается по снимку и не требует браузера.
+ */
+export function frameSections(snapshot, rootId, { minSize = 40 } = {}) {
+  const root = snapshot.nodes[rootId];
+  if (!root?.box) return [];
+  return orderedChildren(snapshot, root)
+    .filter((kid) => kid.box && kid.box.w >= minSize && kid.box.h >= minSize)
+    .map((kid) => ({
+      node: kid.id,
+      name: clip(kid.name || '', 40),
+      box: { x: round(kid.box.x - root.box.x), y: round(kid.box.y - root.box.y), w: round(kid.box.w), h: round(kid.box.h) },
+    }));
+}
+
+/**
+ * Сдвиг секции на странице относительно макета — по совпавшим текстам внутри неё.
+ *
+ * Медиана, а не среднее: один перенесённый заголовок не должен утянуть всю секцию. Пустой
+ * список пар — сдвиг нулевой, и об этом секция скажет полем texts: 0.
+ */
+export function sectionShift(section, pairs) {
+  const inside = pairs.filter(
+    (pair) => pair.design.box.y >= section.box.y - 1 && pair.design.box.y + pair.design.box.h <= section.box.y + section.box.h + 1,
+  );
+  return {
+    texts: inside.length,
+    shift: {
+      x: round(median(inside.map((pair) => pair.page.box.x - pair.design.box.x))),
+      y: round(median(inside.map((pair) => pair.page.box.y - pair.design.box.y))),
+    },
+  };
+}
+
+/**
+ * Попиксельно по секциям, а не по кадру целиком.
+ *
+ * На длинной странице с подменённым шрифтом сдвиг копится по секциям, и общий diff показывает
+ * четверть страницы при верной вёрстке — поэтому pixel не запускали вовсе, и чёрные иконки с
+ * уехавшим рядом ушли в сдачу. Здесь каждая секция кадра сравнивается со своим куском страницы,
+ * взятым с поправкой на сдвиг её же текстов: накопленное смещение секцию не трогает, а внутри
+ * неё разница — настоящая.
+ */
+async function compareSections({ figmaRef, snapshot, rootId, page, selector, dir, name, threshold, client, editor, design, probed }) {
+  const render = await exportRender([figmaRef], { client, editor, scale: 1 });
+  const image = render.renders[0];
+  if (!image?.image) return { error: image?.error || 'макет не отрисовался' };
+
+  const meta = await sharp(image.image.path).metadata();
+  const pageOrigin = await page.evaluate((sel) => {
+    const el = sel ? document.querySelector(sel) : document.body;
+    const rect = el.getBoundingClientRect();
+    return {
+      x: rect.x + window.scrollX,
+      y: rect.y + window.scrollY,
+      docW: document.documentElement.scrollWidth,
+      docH: document.documentElement.scrollHeight,
+    };
+  }, selector);
+  const { pairs } = pairTexts(design.items, probed.items);
+
+  const sections = [];
+  for (const [index, section] of frameSections(snapshot, rootId).entries()) {
+    const { texts, shift } = sectionShift(section, pairs);
+    const left = Math.min(Math.max(0, section.box.x), meta.width - 1);
+    const top = Math.min(Math.max(0, section.box.y), meta.height - 1);
+    const width = Math.min(section.box.w, meta.width - left);
+    const height = Math.min(section.box.h, meta.height - top);
+    if (width <= 0 || height <= 0) continue;
+
+    const stem = `${name}-section-${String(index + 1).padStart(2, '0')}`;
+    const designCrop = path.join(dir, `${stem}-design.png`);
+    await sharp(image.image.path).extract({ left, top, width, height }).png().toFile(designCrop);
+
+    /* Снимок страницы — в координатах документа: fullPage делает clip абсолютным. */
+    const clipBox = {
+      x: Math.max(0, Math.round(pageOrigin.x + section.box.x + shift.x)),
+      y: Math.max(0, Math.round(pageOrigin.y + section.box.y + shift.y)),
+    };
+    clipBox.width = Math.max(1, Math.min(width, pageOrigin.docW - clipBox.x));
+    clipBox.height = Math.max(1, Math.min(height, pageOrigin.docH - clipBox.y));
+    const pageCrop = path.join(dir, `${stem}-page.png`);
+    await fs.writeFile(pageCrop, await page.screenshot({ fullPage: true, clip: clipBox, type: 'png' }));
+
+    /* Общая область: у края документа кусок страницы бывает короче куска макета. */
+    const pageMeta = await sharp(pageCrop).metadata();
+    const cw = Math.min(width, pageMeta.width);
+    const ch = Math.min(height, pageMeta.height);
+    if (cw !== width || ch !== height) {
+      await sharp(designCrop).extract({ left: 0, top: 0, width: cw, height: ch }).png().toFile(`${designCrop}.tmp`);
+      await fs.rename(`${designCrop}.tmp`, designCrop);
+    }
+    if (cw !== pageMeta.width || ch !== pageMeta.height) {
+      await sharp(pageCrop).extract({ left: 0, top: 0, width: cw, height: ch }).png().toFile(`${pageCrop}.tmp`);
+      await fs.rename(`${pageCrop}.tmp`, pageCrop);
+    }
+
+    const diffFile = path.join(dir, `${stem}.diff.png`);
+    const result = await odiffCompare(designCrop, pageCrop, diffFile, { threshold: 0.1, antialiasing: true, outputDiffMask: false });
+    const diffPercentage = result.match ? 0 : Number(result.diffPercentage || 0);
+    if (result.match) await fs.rm(diffFile, { force: true });
+
+    sections.push({
+      node: section.node,
+      name: section.name,
+      box: section.box,
+      shift,
+      texts,
+      diffPercentage: round(diffPercentage, 3),
+      match: diffPercentage <= threshold,
+      compared: `${cw}x${ch}`,
+      design: artifactRef(designCrop),
+      page: artifactRef(pageCrop),
+      ...(result.match ? {} : { diff: artifactRef(diffFile) }),
+    });
+  }
+
+  sections.sort((a, b) => b.diffPercentage - a.diffPercentage);
+  return {
+    count: sections.length,
+    matched: sections.filter((section) => section.match).length,
+    sections,
+    note: t({
+      ru: 'Каждая секция кадра сравнена со своим куском страницы с поправкой на сдвиг её текстов (shift). Разница шрифтового рендеринга даёт единицы процентов; десятки — цвет, ряд, выравнивание, пропавший элемент: смотрите diff. texts: 0 — секцию не по чему выровнять, сдвиг взят нулевым.',
+      en: 'Every section of the frame is compared with its own piece of the page, corrected by the shift of its texts (shift). Font rendering differences give a few percent; tens mean color, a row, alignment or a missing element: look at the diff. texts: 0 — nothing to align the section by, the shift was taken as zero.',
+    }),
+  };
 }

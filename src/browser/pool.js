@@ -529,6 +529,32 @@ export function summarizeFailures(entries, { limit = 5 } = {}) {
   };
 }
 
+/**
+ * Как открыта страница с точки зрения движения — и что из-за этого не проверить.
+ *
+ * Отдаётся и browser_open, и browser_goto: заморозка задаётся сессией, а действует на каждой
+ * странице. pinned — сколько элементов стенд закрепил инлайном с !important после прокрутки:
+ * у них opacity, visibility и transform уже не из CSS страницы.
+ */
+export function motionFacts(session, { revealed = null } = {}) {
+  if (!session.motionFrozen) return { motion: 'allow' };
+  const out = {
+    motion: 'frozen',
+    motionNote: t({
+      ru: 'Движение на странице остановлено: hover, стартовые анимации и переходы в этой сессии не проверить — через сто миллисекунд всё уже в конечном состоянии. Для них нужна сессия с animations: "allow" (browser_open) или такой же переход (browser_goto); замер — interaction_audit, первые кадры — browser_goto с frames.',
+      en: 'Motion on the page is stopped: hover, intro animations and transitions cannot be checked in this session — a hundred milliseconds in, everything is in its final state. They need a session with animations: "allow" (browser_open) or such a navigation (browser_goto); the measurement is interaction_audit, the first frames are browser_goto with frames.',
+    }),
+  };
+  if (revealed?.pinned) {
+    out.pinned = revealed.pinned;
+    out.pinnedNote = t({
+      ru: `${revealed.pinned} элементов, появляющихся по прокрутке, закреплены стендом инлайном с !important (opacity, visibility, transform) и помечены атрибутом data-lt-pinned. Это не CSS страницы: computed_styles и matched_rules отмечают такие значения полем overriddenByStand.`,
+      en: `${revealed.pinned} elements revealed on scroll were pinned by the stand with inline !important (opacity, visibility, transform) and marked with the data-lt-pinned attribute. That is not the page CSS: computed_styles and matched_rules flag such values with overriddenByStand.`,
+    });
+  }
+  return out;
+}
+
 export async function gotoAndSettle(
   session,
   url,
@@ -614,6 +640,7 @@ export async function gotoAndSettle(
 
   let images = null;
   let stubbed = null;
+  let revealed = null;
   /* Разовое значение перебивает условие сессии: иногда живая анимация нужна на одном
      переходе, а переоткрывать сессию ради этого незачем. */
   const killMotion = (animations || session.profile.animations) !== 'allow';
@@ -621,7 +648,7 @@ export async function gotoAndSettle(
      движение на ней не проверялось. */
   session.motionFrozen = stabilizePage && killMotion;
   if (stabilizePage) {
-    ({ images, stubbed } = await stabilize(session.page, { pseudoLoc: session.profile.pseudoLoc, killMotion }));
+    ({ images, stubbed, revealed } = await stabilize(session.page, { pseudoLoc: session.profile.pseudoLoc, killMotion }));
   }
 
   // Патчи агента возвращаем последними: они должны перебивать и стили страницы,
@@ -682,6 +709,12 @@ export async function gotoAndSettle(
       en: 'The first attempt hit a refused connection and the second, 1.5s later, went through — usually a dev server coming back up. If this repeats on every navigation, the server is restarting on its own (crashing and recovering), and that, not the markup, is what needs looking at.',
     });
   }
+  /*
+   * Заморозка — не мелкий шрифт в условиях сессии, а причина, по которой hover, intro и
+   * переходы на этой странице не увидеть вовсе. Живую сессию открывали под конец и проверяли
+   * точечно именно потому, что ответ об этом молчал.
+   */
+  Object.assign(result, motionFacts(session, { revealed }));
   if (timedOut) {
     result.navigationTimedOut = true;
     result.note = `Событие "${waitUntil}" не наступило за ${timeout} мс — проверки идут по тому, что отрисовано.`;

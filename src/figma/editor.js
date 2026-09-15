@@ -266,7 +266,7 @@ async function openFile(fileKey) {
 /* Функции ниже выполняются внутри страницы редактора: из внешней области они ничего не видят. */
 
 const DUMP = async ({ ids, withCss }) => {
-  const out = { nodes: {}, notFound: [], variables: {}, css: {}, motion: {}, motionSupported: true };
+  const out = { nodes: {}, notFound: [], variables: {}, css: {}, motion: {}, motionSupported: true, ancestors: {} };
   const texts = [];
   for (const id of ids) {
     const node = await figma.getNodeByIdAsync(id);
@@ -277,6 +277,14 @@ const DUMP = async ({ ids, withCss }) => {
     const rest = await node.exportAsync({ format: 'JSON_REST_V1' });
     out.nodes[id] = rest;
     texts.push(JSON.stringify(rest));
+
+    /* Родители снятого корня: JSON_REST_V1 их не несёт, а «где лежит этот узел» — первый вопрос,
+       когда ссылка из задачи ведёт не на кадр. От страницы вниз, сама страница включительно. */
+    const chain = [];
+    for (let up = node.parent; up && up.type !== 'DOCUMENT'; up = up.parent) {
+      chain.unshift({ id: up.id, name: up.name, type: up.type });
+    }
+    out.ancestors[id] = chain;
 
     const all = [];
     (function walk(n) {

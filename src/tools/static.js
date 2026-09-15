@@ -26,21 +26,29 @@ export function register(server) {
         url: z.string().optional(),
         html: z.string().optional(),
         strict: z.boolean().optional().describe(d('Показать и то, чего валидатор не знает: современный CSS и новые атрибуты платформы')),
+        ignore: z
+          .object({
+            messages: z.array(z.string()).optional().describe(d('Регулярные выражения по тексту сообщения')),
+            tags: z.array(z.string()).optional().describe(d('Пользовательские теги проекта, например modal')),
+            attributes: z.array(z.string()).optional().describe(d('Атрибуты компонентов, например container')),
+          })
+          .optional()
+          .describe(d('Соглашения проекта, которые валидатор не знает. Отфильтрованное считается отдельно в ignored, а не исчезает')),
       },
     },
-    async ({ sessionId, url, html, strict }) => {
+    async ({ sessionId, url, html, strict, ignore }) => {
       let source = html;
       if (!source && sessionId) source = await getSession(sessionId).page.content();
       if (!source && url) source = await (await fetch(url)).text();
       if (!source) throw new Error('Нужен sessionId, url или html.');
       try {
-        return json({ source: 'vnu', ...(await validateHtmlWithVnu(source, { strict })) });
+        return json({ source: 'vnu', ...(await validateHtmlWithVnu(source, { strict, ignore })) });
       } catch (err) {
         /* У запасного пути разделения нет — говорим об этом, а не делаем вид, что strict сработал. */
         return json({
           source: 'html-validate',
           fallbackReason: err.message,
-          ...(await validateHtmlLocal(source)),
+          ...(await validateHtmlLocal(source, { ignore })),
           ...(strict ? { strictNote: 'Запасной путь html-validate делит сообщения иначе: у него нет разделения на известные ограничения, и strict здесь ничего не меняет.' } : {}),
         });
       }

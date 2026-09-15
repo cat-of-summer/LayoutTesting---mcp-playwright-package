@@ -67,9 +67,12 @@ test('каждая фаза называет свой номер, гейт и с
     if (next) assert.match(tail, new RegExp(`help\\(guide: "${next}"\\)`), `${slug}: не ведёт в ${next}`);
     else {
       assert.match(tail, /последняя фаза/, `${slug}: последняя фаза должна говорить, что она последняя`);
-      assert.ok(
-        !tail.includes('help(guide:'),
-        `${slug}: на последней фазе не должно быть вызова — обход по хвостам ушёл бы на второй круг`,
+      /* Ссылка на саму себя с brief — не продолжение цепочки: обход по хвостам на ней стоит. */
+      const others = [...tail.matchAll(/help\(guide: "([^"]+)"/g)].map((m) => m[1]).filter((name) => name !== slug);
+      assert.deepEqual(
+        others,
+        [],
+        `${slug}: на последней фазе не должно быть вызова другой фазы — обход по хвостам ушёл бы на второй круг`,
       );
     }
   }
@@ -103,7 +106,7 @@ test('слаг не выпускает за пределы каталога', as
 });
 
 /*
- * Сторож единственности. Тема figma у help — входная точка: десять правил и карта разделов.
+ * Сторож единственности. Тема figma у help — входная точка: двенадцать правил и карта разделов.
  * Если она снова начнёт пересказывать фазы, длина выдаст это раньше, чем пересказ разойдётся
  * с регламентом.
  */
@@ -151,4 +154,55 @@ test('промпт figma-layout ведёт в регламент, а не пов
   const block = src.slice(start);
   assert.ok(block.includes('help(guide:'), 'промпт обязан вести в регламент');
   assert.ok(!/^\s*12\./m.test(block), 'двенадцать шагов вернулись в промпт — их место в guide/');
+});
+
+/*
+ * Чек-лист — краткая форма фазы, которую перечитывают перед переходом дальше и из которой
+ * собирается SKILL.md. Фаза без него молча выпадает из скилла, поэтому это не пожелание.
+ */
+test('у каждой фазы есть чек-лист с входом и шагами на обоих языках', async () => {
+  const { checklistOf } = await import('../src/guide.js');
+  for (const lang of LANGS) {
+    for (const slug of PHASES) {
+      const text = await fs.readFile(path.join(ROOT, lang, `${slug}.md`), 'utf8');
+      const checklist = checklistOf(text);
+      assert.ok(checklist, `${lang}/${slug}: нет раздела «## Чек-лист» / «## Checklist»`);
+      const entry = lang === 'en' ? /^ENTRY: \S/m : /^ВХОД: \S/m;
+      const steps = lang === 'en' ? /^STEPS:\n\s+1\. /m : /^ШАГИ:\n\s+1\. /m;
+      assert.match(checklist, entry, `${lang}/${slug}: в чек-листе нет строки ВХОД`);
+      assert.match(checklist, steps, `${lang}/${slug}: в чек-листе нет нумерованных ШАГОВ`);
+      /* ВЫХОД — это гейт, и он берётся из раздела «## Гейт»; вторая копия в чек-листе разъедется. */
+      assert.ok(!/^(ВЫХОД|EXIT):/m.test(checklist), `${lang}/${slug}: ВЫХОД в чек-листе дублирует гейт`);
+    }
+  }
+});
+
+test('краткая форма фазы короче полной и несёт гейт и следующую фазу', async () => {
+  for (const slug of PHASES) {
+    const section = await read(slug);
+    assert.ok(section.brief, `${slug}: нет краткой формы`);
+    assert.ok(section.brief.length < section.text.length, `${slug}: краткая форма не короче полной`);
+    assert.match(section.brief, /^ВЫХОД: \S/m, `${slug}: в краткой форме нет ВЫХОДа из гейта`);
+    assert.match(section.brief, /Фаза \d+ из/, `${slug}: в краткой форме нет хвоста цепочки`);
+    assert.ok(!section.brief.includes('Фаза закрыта, когда:'), `${slug}: гейт в краткой форме продублирован`);
+    assert.ok(!section.brief.includes('brief: true'), `${slug}: краткая форма не должна советовать саму себя`);
+  }
+  /* Справочные разделы краткой формы не имеют: их читают целиком. */
+  for (const slug of ['index', 'rules', 'symptoms']) assert.equal((await read(slug)).brief, null, `${slug}: не фаза`);
+});
+
+test('раздел на другом языке читается явно, кэш не смешивает языки', async () => {
+  const ru = await read('setup', { lang: 'ru' });
+  const en = await read('setup', { lang: 'en' });
+  assert.match(ru.text, /^# Фаза 0/);
+  assert.match(en.text, /^# Phase 0/);
+  assert.equal(en.lang, 'en');
+});
+
+test('status показывает, что регламент на месте', async () => {
+  const { status } = await import('../src/guide.js');
+  const state = await status();
+  assert.equal(state.available, true);
+  assert.equal(state.sections, ORDER.length);
+  assert.equal(state.expected, ORDER.length);
 });

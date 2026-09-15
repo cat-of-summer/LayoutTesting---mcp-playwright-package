@@ -10,6 +10,8 @@
  *
  *   node bin/gen-tools-doc.mjs            # docs/tools.md по-русски
  *   LT_LANG=en node bin/gen-tools-doc.mjs # то же по-английски
+ *
+ * Заодно собирает и проверяет docs/skill/layout-by-figma/SKILL.md — регламент как скилл агента.
  */
 import fs from 'node:fs/promises';
 import path from 'node:path';
@@ -18,6 +20,7 @@ import { createServer } from '../src/server.js';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js';
 import { closeAll } from '../src/browser/pool.js';
+import { SKILL_NAME, buildSkill, checkSkill } from '../src/skill.js';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const lang = (process.env.LT_LANG || 'ru').toLowerCase().startsWith('en') ? 'en' : 'ru';
@@ -131,6 +134,26 @@ const out = path.join(root, 'docs', lang === 'ru' ? 'tools.md' : 'tools.en.md');
 await fs.mkdir(path.dirname(out), { recursive: true });
 await fs.writeFile(out, lines.join('\n'), 'utf8');
 console.log(`${out}: ${tools.length} инструментов, ${lines.join('\n').length} символов`);
+
+/*
+ * SKILL.md — регламент как скилл агента, из тех же guide/, что читает help. Собирается здесь,
+ * а не лежит файлом, чтобы не завести вторую копию правил; и проверяется здесь же, по той же
+ * логике, что и описания инструментов: скилл без frontmatter клиент не подхватит, фаза без
+ * чек-листа в нём молча пропадёт, а ссылка на несуществующий раздел уведёт в тупик. Такая
+ * сборка должна падать. Стенд отдаёт тот же текст по /skill/layout-by-figma/SKILL.md.
+ */
+const skill = await buildSkill(lang);
+const problems = checkSkill(skill);
+if (problems.length) {
+  console.error(`LT_LANG=${lang}: SKILL.md не собрался:`);
+  for (const problem of problems) console.error(`  - ${problem}`);
+  await closeAll();
+  process.exit(1);
+}
+const skillOut = path.join(root, 'docs', 'skill', SKILL_NAME, lang === 'ru' ? 'SKILL.md' : 'SKILL.en.md');
+await fs.mkdir(path.dirname(skillOut), { recursive: true });
+await fs.writeFile(skillOut, skill.text, 'utf8');
+console.log(`${skillOut}: ${skill.text.length} символов`);
 
 await closeAll();
 process.exit(0);

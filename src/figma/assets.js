@@ -20,7 +20,7 @@ import { childNodes } from './snapshot.js';
 import { isIconLike } from './analyze/structure.js';
 import { isVisible, visibleNodes } from './analyze/common.js';
 import { isCropped } from './export.js';
-import { round } from './css.js';
+import { colorCss, round } from './css.js';
 
 const VECTORS = new Set(['VECTOR', 'BOOLEAN_OPERATION', 'STAR', 'POLYGON', 'LINE', 'REGULAR_POLYGON']);
 
@@ -38,6 +38,26 @@ const rotatedCrop = (transform) => {
 };
 
 const imageFill = (node) => (node.fills || []).find((paint) => paint.kind === 'image') || null;
+
+/**
+ * Цвет иконки — первая сплошная заливка или обводка узла либо ближайшего видимого потомка.
+ *
+ * Одноцветная иконка экспортируется с currentColor, и цвет надо задать в CSS обёртки. Значение
+ * лежит на векторе внутри, куда outline на малой глубине не доходит, — поэтому оно вытаскивается
+ * сюда, в инвентарь: там, где решают, что скачивать, видно и чем красить.
+ */
+function iconColor(snapshot, node, depth = 4) {
+  const solid = (paints) => (paints || []).find((paint) => paint.kind === 'solid' && paint.color);
+  const own = solid(node.fills) || solid(node.strokes);
+  if (own) return colorCss(own.color);
+  if (!depth) return null;
+  for (const kid of childNodes(snapshot, node)) {
+    if (!isVisible(kid)) continue;
+    const found = iconColor(snapshot, kid, depth - 1);
+    if (found) return found;
+  }
+  return null;
+}
 const hasGradient = (node) => (node.fills || []).some((paint) => paint.kind !== 'solid' && paint.kind !== 'image');
 const hasBlur = (node) => (node.effects || []).some((effect) => effect.type === 'blur' || effect.type === 'backdrop');
 
@@ -134,6 +154,7 @@ export function assetInventory(snapshot, rootId, { limit = 60 } = {}) {
       kind: entry.kind,
       size: `${round(w)}x${round(h)}`,
       ...(entry.why ? { why: entry.why } : {}),
+      ...(entry.kind === 'svg' ? { color: iconColor(snapshot, node) || undefined } : {}),
       ...(entry.fill?.ref ? { imageRef: entry.fill.ref } : {}),
       ...(entry.fill?.scaleMode ? { scaleMode: entry.fill.scaleMode } : {}),
       ...(by === 'byName' ? { dedup: 'byName' } : {}),
@@ -169,6 +190,7 @@ export function assetInventory(snapshot, rootId, { limit = 60 } = {}) {
 
   const note = [
     'kind: render — догадка, а не факт: Figma не сообщает, что узел не выражается в svg. У каждой такой записи стоит why — проверьте её, прежде чем тратить запрос.',
+    counts.svg ? 'У svg стоит color — цвет заливки вектора: одноцветная иконка приходит с currentColor, и это значение задаётся в CSS обёртки, иначе иконка чёрная.' : null,
     duplicates.length ? 'Дубли сведены по источнику (imageRef, геометрия вектора). После выгрузки авторитет — refs у figma_export: он сводит по содержимому готового файла и может разойтись с этим списком.' : null,
     items.some((item) => item.dedup === 'byName') ? 'У части векторов в снимке нет геометрии, и они сведены по имени с размером: одинаково названные разные иконки такой ключ спутает.' : null,
   ]

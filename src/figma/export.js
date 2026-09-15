@@ -21,7 +21,7 @@ import { DIRS } from '../constants.js';
 import { artifactRef, newRunId, runDir, slug } from '../artifacts.js';
 import { round } from './css.js';
 import { getRestClient } from './rest.js';
-import { addRequests, ensureNodes, safeId, strip, walk } from './snapshot.js';
+import { addRequests, childNodes, ensureNodes, safeId, strip, walk } from './snapshot.js';
 import { groupRefs, refOf } from './url.js';
 
 const exists = (file) =>
@@ -64,6 +64,49 @@ export async function sliceTiles(file, dir, base, { ratio = 2.2, tileRatio = 1.4
 }
 
 /**
+ * Части по дочерним фреймам верхнего уровня: одна часть — одна секция макета.
+ *
+ * Резка по полторы ширины отдаёт 25 кусков на длинный мобильный кадр, и стык секции попадает
+ * посередине куска. Агент прочитал шесть и додумал остальное. Часть, совпадающая с секцией и
+ * подписанная её узлом, читается как оглавление: видно, что это за блок и где он в дереве.
+ */
+export async function sliceByChildren(file, dir, base, snapshot, node, scale) {
+  const { width, height } = await sharp(file).metadata();
+  if (!width || !height || !node?.box) return null;
+  const kids = childNodes(snapshot, node)
+    .filter((kid) => kid.visible !== false && kid.box && kid.box.h >= 8)
+    .sort((a, b) => a.box.y - b.box.y);
+  if (!kids.length) return null;
+  const tiles = [];
+  for (const [index, kid] of kids.entries()) {
+    const top = Math.max(0, Math.min(height - 1, Math.round((kid.box.y - node.box.y) * scale)));
+    const h = Math.min(height - top, Math.max(1, Math.round(kid.box.h * scale)));
+    if (h <= 0) continue;
+    const out = path.join(dir, `${base}.part-${String(index + 1).padStart(2, '0')}.png`);
+    await sharp(file).extract({ left: 0, top, width, height: h }).png().toFile(out);
+    tiles.push({ index: index + 1, top, height: h, out, node: kid.id, name: kid.name });
+  }
+  return tiles.length ? tiles : null;
+}
+
+/** N равных частей с перекрытием — когда секции неизвестны, а число кусков хочется задать. */
+export async function sliceEqual(file, dir, base, count, { overlap = 40 } = {}) {
+  const { width, height } = await sharp(file).metadata();
+  if (!width || !height || count < 2) return null;
+  const tileHeight = Math.ceil(height / count) + overlap;
+  const tiles = [];
+  for (let index = 0; index < count; index += 1) {
+    const top = Math.min(height - 1, Math.max(0, Math.round((height / count) * index) - (index ? overlap : 0)));
+    const h = Math.min(tileHeight, height - top);
+    if (h <= 0) break;
+    const out = path.join(dir, `${base}.part-${String(index + 1).padStart(2, '0')}.png`);
+    await sharp(file).extract({ left: 0, top, width, height: h }).png().toFile(out);
+    tiles.push({ index: index + 1, top, height: h, out });
+  }
+  return tiles;
+}
+
+/**
  * Попробовать редактор, при отказе — REST.
  *
  * viaEditor получает управление первым и возвращает true, если справился. Ошибка редактора
@@ -84,7 +127,7 @@ async function withChannels({ editor, client, state }, viaEditor, viaRest) {
   state.channel = 'rest';
 }
 
-export async function exportRender(refs, { client = getRestClient(), cacheDir = DIRS.figma, editor = null, scale, clip } = {}) {
+export async function exportRender(refs, { client = getRestClient(), cacheDir = DIRS.figma, editor = null, scale, clip, parts = 'auto' } = {}) {
   const runId = newRunId('figma-render');
   const dir = await runDir(runId);
   const requests = { tier1: 0 };
@@ -169,15 +212,33 @@ export async function exportRender(refs, { client = getRestClient(), cacheDir = 
         await fs.copyFile(item.cached, file);
       }
       const meta = await sharp(file).metadata();
-      const entry = { ref, name: item.node.name, scale: item.scale, size: `${meta.width}x${meta.height}`, image: artifactRef(file) };
-      const tiles = await sliceTiles(file, dir, base);
+      const entry = strip({
+        ref,
+        name: item.node.name,
+        scale: item.scale,
+        size: `${meta.width}x${meta.height}`,
+        image: artifactRef(file),
+        ...(clip ? {} : clipHint(item.snapshot, item.id)),
+        ...(clip ? {} : oversizedHint(item.node, meta, item.scale)),
+      });
+      let tiles = null;
+      if (parts === 'children' && !clip) tiles = await sliceByChildren(file, dir, base, item.snapshot, item.node, item.scale);
+      else if (typeof parts === 'number' && !clip) tiles = await sliceEqual(file, dir, base, parts);
+      else tiles = await sliceTiles(file, dir, base);
       if (tiles) {
-        entry.parts = tiles.map((tile) => ({
-          index: tile.index,
-          cssTop: round(tile.top / item.scale),
-          cssHeight: round(tile.height / item.scale),
-          image: artifactRef(tile.out),
-        }));
+        entry.parts = tiles.map((tile) =>
+          strip({
+            index: tile.index,
+            node: tile.node,
+            name: tile.name,
+            cssTop: round(tile.top / item.scale),
+            cssHeight: round(tile.height / item.scale),
+            image: artifactRef(tile.out),
+          }),
+        );
+        if (parts === 'children') entry.partsNote = 'Части нарезаны по дочерним фреймам верхнего уровня: node и name у каждой — это узел секции.';
+      } else if (parts === 'children') {
+        entry.partsNote = 'У узла нет видимых дочерних фреймов, резать по секциям не по чему — отдан один файл.';
       }
       renders.push(entry);
     }
@@ -221,8 +282,78 @@ export function normalizeSvg(svg, { prefix = 'icon' } = {}) {
     svg: out,
     monochrome,
     colors: [...colors],
+    /* Цвет, который ушёл под currentColor: без него в вёрстке иконка наследует цвет текста и
+       становится чёрной. Отдаём его рядом, чтобы color на обёртке брали отсюда, а не «по смыслу». */
+    color: monochrome ? [...colors][0] : null,
     width: width ? Number(width[1]) : null,
     height: height ? Number(height[1]) : null,
+  };
+}
+
+/**
+ * Что из узла видно в макете, если предок его обрезает.
+ *
+ * Рендер делается по узлу и не знает об обрезке родителем: кнопка-вкладка, из которой в макете
+ * торчат 45px, отрисовалась целиком, и смещение за край прочли как небрежность и «исправили».
+ * Здесь считается пересечение box узла с box каждого предка, у которого clips: true; если
+ * пересечение меньше узла — в ответе появляется clipped с видимой частью и стороной обрезки.
+ */
+export function clipHint(snapshot, id) {
+  const node = snapshot?.nodes?.[id];
+  if (!node?.box) return {};
+  let visible = { ...node.box };
+  let by = null;
+  for (let current = snapshot.nodes[node.parent]; current; current = snapshot.nodes[current.parent]) {
+    if (!current.clips || !current.box) continue;
+    const left = Math.max(visible.x, current.box.x);
+    const top = Math.max(visible.y, current.box.y);
+    const right = Math.min(visible.x + visible.w, current.box.x + current.box.w);
+    const bottom = Math.min(visible.y + visible.h, current.box.y + current.box.h);
+    const next = { x: left, y: top, w: Math.max(0, right - left), h: Math.max(0, bottom - top) };
+    if (next.w < visible.w - 0.5 || next.h < visible.h - 0.5) {
+      by = by || { id: current.id, name: current.name };
+      visible = next;
+    }
+  }
+  if (!by) return {};
+  const sides = [];
+  if (visible.x > node.box.x + 0.5) sides.push('left');
+  if (visible.x + visible.w < node.box.x + node.box.w - 0.5) sides.push('right');
+  if (visible.y > node.box.y + 0.5) sides.push('top');
+  if (visible.y + visible.h < node.box.y + node.box.h - 0.5) sides.push('bottom');
+  const hidden = visible.w <= 0 || visible.h <= 0;
+  return {
+    clipped: {
+      by: by.id,
+      byName: by.name,
+      visible: hidden ? 'ничего' : `${round(visible.w)}x${round(visible.h)} из ${round(node.box.w)}x${round(node.box.h)}`,
+      sides,
+      offset: { x: round(visible.x - node.box.x), y: round(visible.y - node.box.y) },
+      note: hidden
+        ? 'В макете узел целиком за краем родителя с clip: рендер сделан без обрезки и показывает то, чего на холсте не видно.'
+        : 'В макете виден не весь узел: родитель обрезает его (clipsContent), а рендер сделан без обрезки. Смещение за край — задумка (вкладка, выезжающий элемент), пока узел не доказал обратное.',
+    },
+  };
+}
+
+/**
+ * Рендер выше или шире рамки узла — содержимое выходит за кадр.
+ *
+ * Мобильный кадр 380×6376 отрисовался высотой 12141: у кадра выключен clipsContent, и дети
+ * лежат ниже его рамки. Без пометки это читается как «кадр такой и есть», а в вёрстке
+ * выясняется, что половина секций в макете стоит за пределами страницы.
+ */
+export function oversizedHint(node, meta, scale) {
+  if (!node?.box || !meta?.width || !meta?.height || !scale) return {};
+  const w = meta.width / scale;
+  const h = meta.height / scale;
+  if (w <= node.box.w * 1.02 && h <= node.box.h * 1.02) return {};
+  return {
+    oversized: {
+      frame: `${round(node.box.w)}x${round(node.box.h)}`,
+      rendered: `${round(w)}x${round(h)}`,
+      note: 'Рендер больше рамки узла: содержимое выходит за кадр (clipsContent выключен). Координаты в figma_inspect по-прежнему от рамки; то, что ниже или правее неё, в макете лежит за пределами кадра.',
+    },
   };
 }
 
@@ -311,6 +442,7 @@ export async function exportSvg(refs, { client = getRestClient(), cacheDir = DIR
         name: node.name,
         size: clean.width ? `${clean.width}x${clean.height}` : undefined,
         monochrome: clean.monochrome,
+        color: clean.color || undefined,
         colors: clean.monochrome ? undefined : clean.colors,
         file: artifactRef(file),
       });
@@ -318,7 +450,19 @@ export async function exportSvg(refs, { client = getRestClient(), cacheDir = DIR
       files.push(entry);
     }
   }
-  return strip({ runId, files, failed, channel: state.channel, editorFallback: state.fallback, requests });
+  const monochrome = files.filter((entry) => entry.monochrome).length;
+  return strip({
+    runId,
+    files,
+    failed,
+    channel: state.channel,
+    editorFallback: state.fallback,
+    requests,
+    /* Самое частое, что теряют после экспорта: currentColor без color на обёртке = чёрная иконка. */
+    note: monochrome
+      ? `${monochrome} иконок одноцветные и приходят с currentColor: у каждой задайте color на обёртке в CSS — значение в поле color записи. Без него иконка наследует цвет текста.`
+      : undefined,
+  });
 }
 
 /**
