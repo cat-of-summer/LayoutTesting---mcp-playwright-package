@@ -67,6 +67,8 @@ recipes:
       - {src: data/package-lock.json,   dest: /var/www/html/package-lock.json,   kind: code, optional: false}
       - {src: data/src,                 dest: /var/www/html/src,                 kind: code, optional: false}
       - {src: data/bin,                 dest: /var/www/html/bin,                 kind: code, optional: false}
+      # Регламент вёрстки: help(guide), lt://guide/…, /skill/…. Без него агент верстает «по наитию».
+      - {src: data/guide,               dest: /var/www/html/guide,               kind: code, optional: false}
       - {src: data/fixtures,            dest: /var/www/html/fixtures,            kind: code}
       - {src: data/baselines,           dest: /var/www/html/baselines,           kind: code}
       - {src: data/matrix.example.json, dest: /var/www/html/matrix.example.json, kind: code}
