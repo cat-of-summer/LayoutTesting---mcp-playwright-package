@@ -518,7 +518,7 @@ export function pathOf(snapshot, nodeId) {
 
 async function syncFile({ fileKey, nodeIds, wholeFile }, ctx) {
   const { refresh, client, cacheDir, now, spent, editor, channel, css } = ctx;
-  /* page, offset, limit в ctx относятся к списку кадров файла (wholeFile) и читаются ниже. */
+  /* page и offset в ctx относятся к списку кадров файла (wholeFile) и читаются ниже. */
   const meta = (await readMeta(fileKey, { cacheDir })) || { fileKey, roots: {} };
   meta.roots ||= {};
   const out = { fileKey };
@@ -607,7 +607,7 @@ async function syncFile({ fileKey, nodeIds, wholeFile }, ctx) {
       out.pageNotFound = `Страницы «${ctx.page}» в файле нет. Есть: ${pages.map((page) => page.name).join(', ')}.`;
     }
     const offset = wantedPage ? Math.max(0, ctx.offset || 0) : 0;
-    const limit = wantedPage ? Math.max(1, ctx.limit || 200) : 100;
+    const limit = wantedPage ? 200 : 100;
     out.pages = selected.map((page) => {
       const slice = page.frames.slice(offset, offset + limit);
       const shown = offset + slice.length;
@@ -730,13 +730,12 @@ export async function syncFigma(
     css = false,
     page = null,
     offset = 0,
-    limit = null,
   } = {},
 ) {
   const spent = { tier1: 0, tier2: 0, tier3: 0 };
   const files = [];
   for (const group of groupRefs(refs)) {
-    files.push(await syncFile(group, { refresh, client, cacheDir, now, spent, editor, channel, css, page, offset, limit }));
+    files.push(await syncFile(group, { refresh, client, cacheDir, now, spent, editor, channel, css, page, offset }));
   }
   return { files, requests: spent };
 }

@@ -240,14 +240,13 @@ export function register(server) {
           .optional()
           .describe(d('auto (по умолчанию) — редактор, если в него есть вход, иначе REST; rest и editor — только этот канал')),
         css: z.boolean().optional().describe(d('Добавить CSS, который считает сама Figma. Только канал редактора, около 13 мс на узел')),
-        page: z.string().optional().describe(d('Для ссылки без node-id: имя или id одной страницы — её кадры целиком, с offset')),
-        offset: z.number().optional().describe(d('Для ссылки без node-id с page: с какого кадра продолжить список')),
-        limit: z.number().optional().describe(d('Для ссылки без node-id с page: сколько кадров показать. По умолчанию 200')),
+        page: z.string().optional().describe(d('Ссылка без node-id: кадры одной страницы по имени или id')),
+        offset: z.number().optional().describe(d('С page: с какого кадра продолжить')),
       },
     },
-    async ({ figma, refresh = false, channel = 'auto', css = false, page, offset = 0, limit }) => {
+    async ({ figma, refresh = false, channel = 'auto', css = false, page, offset = 0 }) => {
       const client = getRestClient();
-      const result = await syncFigma(figma, { refresh, client, editor: editorChannel, channel, css, page, offset, limit });
+      const result = await syncFigma(figma, { refresh, client, editor: editorChannel, channel, css, page, offset });
       /*
        * Указатель на регламент стоит именно здесь, а не в каждом figma_*.
        *
@@ -570,10 +569,7 @@ export function register(server) {
           .enum(['both', 'semantic', 'pixel'])
           .optional()
           .describe(d('both (по умолчанию) — и смысловое, и попиксельное; semantic — только смысловое; pixel — только попиксельное')),
-        sections: z
-          .boolean()
-          .optional()
-          .describe(d('Попиксельно по каждой секции кадра (дочерним узлам верхнего уровня) с поправкой на сдвиг её текстов — сверка картинкой на длинной странице')),
+        sections: z.boolean().optional().describe(d('Попиксельно по каждой секции кадра с поправкой на сдвиг её текстов')),
         tolerance: z.number().optional().describe(d('Допуск смещения в пикселях. По умолчанию 2')),
         threshold: z.number().optional().describe(d('Допустимое расхождение в процентах пикселей')),
         limit: z.number().optional().describe(d('Сколько строк или записей показать')),
@@ -747,10 +743,7 @@ export function register(server) {
           .optional()
           .describe(d('Для render: вырезать прямоугольник в координатах узла')),
         inline: z.boolean().optional().describe(d('Вложить картинку в ответ. По умолчанию только ссылки')),
-        parts: z
-          .union([z.enum(['auto', 'children']), z.number().int().min(2).max(40)])
-          .optional()
-          .describe(d('Для render: auto (по умолчанию) — высокий кадр режется по 1,4 ширины; children — по одной части на дочерний фрейм верхнего уровня, с его node; число — столько равных частей')),
+        parts: z.enum(['auto', 'children']).optional().describe(d('Для render: children режет кадр по дочерним фреймам, по части на секцию')),
       },
     },
     async ({ figma, kind = 'render', scale, clip, inline = false, parts = 'auto' }) => {

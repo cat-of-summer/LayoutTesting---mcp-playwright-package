@@ -39,10 +39,7 @@ export function register(server) {
           .optional()
           .describe(d('Разбирать только эти блоки — шапка и подвал иначе набивают счётчики своими находками')),
         exclude: z.array(z.string()).optional().describe(d('Не разбирать эти блоки')),
-        widths: z
-          .array(z.number().int().min(240).max(4000))
-          .optional()
-          .describe(d('Прогнать по этим ширинам окна и свести в таблицу; окно возвращается к исходному. Список — из widths.suggested у figma_sync')),
+        widths: z.array(z.number()).optional().describe(d('Прогнать по этим ширинам окна сводкой; окно вернётся к исходному')),
       },
     },
     async ({ sessionId, minTarget, contrastRatio, maxItems, categories, include, exclude, widths }) => {

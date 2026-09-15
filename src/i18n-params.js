@@ -15,20 +15,14 @@
 import { LANG } from './i18n.js';
 
 const EN = {
-  'Сколько кадров, до 12. По умолчанию 6': 'How many frames, up to 12. Default 6',
-  'Шаг между кадрами, мс, не меньше 50. По умолчанию 200': 'Step between frames, ms, at least 50. Default 200',
-  'Серия снимков viewport сразу после commit, без стабилизации: стартовая анимация, вспышка контента до JS. Движение на этот переход разрешается само': 'A series of viewport shots right after commit, without stabilization: the intro animation, the flash of content before JS. Motion is allowed for this navigation automatically',
-  'Прогнать по этим ширинам окна и свести в таблицу; окно возвращается к исходному. Список — из widths.suggested у figma_sync': 'Run across these window widths and sum them up in a table; the window is restored afterwards. Take the list from widths.suggested of figma_sync',
-  'Регулярные выражения по тексту сообщения': 'Regular expressions over the message text',
-  'Пользовательские теги проекта, например modal': 'Custom tags of the project, e.g. modal',
-  'Атрибуты компонентов, например container': 'Component attributes, e.g. container',
-  'Соглашения проекта, которые валидатор не знает. Отфильтрованное считается отдельно в ignored, а не исчезает': 'Project conventions the validator does not know. What is filtered is counted separately in ignored rather than vanishing',
-  'Для ссылки без node-id: имя или id одной страницы — её кадры целиком, с offset': 'For a link without a node-id: the name or id of one page — its frames in full, with offset',
-  'Для ссылки без node-id с page: с какого кадра продолжить список': 'For a link without a node-id, with page: which frame to continue the list from',
-  'Для ссылки без node-id с page: сколько кадров показать. По умолчанию 200': 'For a link without a node-id, with page: how many frames to show. Default 200',
-  'Попиксельно по каждой секции кадра (дочерним узлам верхнего уровня) с поправкой на сдвиг её текстов — сверка картинкой на длинной странице': 'Pixel by pixel per section of the frame (its top-level child nodes) with a correction for the shift of its texts — a picture check on a long page',
-  'Для render: auto (по умолчанию) — высокий кадр режется по 1,4 ширины; children — по одной части на дочерний фрейм верхнего уровня, с его node; число — столько равных частей': 'For render: auto (default) cuts a tall frame by 1.4 widths; children — one part per top-level child frame, with its node; a number — that many equal parts',
-  'С guide: только чек-лист и гейт фазы — перечитать перед переходом к следующей': 'With guide: only the checklist and the gate of the phase — to re-read before moving to the next one',
+  'Снять столько кадров viewport (до 12) сразу после commit, шаг 200 мс: стартовая анимация': 'Capture that many viewport frames (up to 12) right after commit, 200 ms apart: the intro animation',
+  'Прогнать по этим ширинам окна сводкой; окно вернётся к исходному': 'Run across these window widths as a summary; the window is restored afterwards',
+  'Регулярные выражения по тексту сообщений — соглашения проекта; отфильтрованное считается отдельно в ignored': 'Regular expressions over message texts — project conventions; what is filtered is counted separately in ignored',
+  'Ссылка без node-id: кадры одной страницы по имени или id': 'A link without a node-id: the frames of one page by name or id',
+  'С page: с какого кадра продолжить': 'With page: which frame to continue from',
+  'Попиксельно по каждой секции кадра с поправкой на сдвиг её текстов': 'Pixel by pixel per section of the frame, corrected by the shift of its texts',
+  'Для render: children режет кадр по дочерним фреймам, по части на секцию': 'For render: children cuts the frame by its child frames, one part per section',
+  'С guide: только чек-лист и гейт фазы': 'With guide: only the checklist and the gate of the phase',
   'auto (по умолчанию) определяет по расширению': 'auto (default) decides by file extension',
   'auto (по умолчанию) поднимает браузер только для страниц, пустых без JS':
     'auto (default) starts a browser only for pages that look empty without JS',

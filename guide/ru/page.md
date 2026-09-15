@@ -21,7 +21,7 @@ figma_compare(кадр, mode: "semantic")          → отдельный про
 figma_compare(кадр, sections: true)            → попиксельно по каждой секции кадра
 layout_audit(widths: [...])                    → скролл, наложения, обрезанный текст, тач-таргеты — на каждой ширине
 interaction_audit                              → в живой сессии
-browser_goto(url, frames: {count, stepMs})     → первые кадры после навигации: intro
+browser_goto(url, frames: 8)                   → первые кадры после навигации: intro
 a11y_axe + a11y_pa11y                          → наборы правил разные, ловят разное
 validate_html
 ```

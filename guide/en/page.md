@@ -21,7 +21,7 @@ figma_compare(frame, mode: "semantic")         → a separate run per frame
 figma_compare(frame, sections: true)           → pixel per section of the frame
 layout_audit(widths: [...])                    → scroll, overlaps, clipped text, tap targets — at every width
 interaction_audit                              → in the live session
-browser_goto(url, frames: {count, stepMs})     → the first frames after navigation: the intro
+browser_goto(url, frames: 8)                   → the first frames after navigation: the intro
 a11y_axe + a11y_pa11y                          → different rule sets, they catch different things
 validate_html
 ```

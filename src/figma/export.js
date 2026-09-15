@@ -89,23 +89,6 @@ export async function sliceByChildren(file, dir, base, snapshot, node, scale) {
   return tiles.length ? tiles : null;
 }
 
-/** N равных частей с перекрытием — когда секции неизвестны, а число кусков хочется задать. */
-export async function sliceEqual(file, dir, base, count, { overlap = 40 } = {}) {
-  const { width, height } = await sharp(file).metadata();
-  if (!width || !height || count < 2) return null;
-  const tileHeight = Math.ceil(height / count) + overlap;
-  const tiles = [];
-  for (let index = 0; index < count; index += 1) {
-    const top = Math.min(height - 1, Math.max(0, Math.round((height / count) * index) - (index ? overlap : 0)));
-    const h = Math.min(tileHeight, height - top);
-    if (h <= 0) break;
-    const out = path.join(dir, `${base}.part-${String(index + 1).padStart(2, '0')}.png`);
-    await sharp(file).extract({ left: 0, top, width, height: h }).png().toFile(out);
-    tiles.push({ index: index + 1, top, height: h, out });
-  }
-  return tiles;
-}
-
 /**
  * Попробовать редактор, при отказе — REST.
  *
@@ -221,10 +204,10 @@ export async function exportRender(refs, { client = getRestClient(), cacheDir = 
         ...(clip ? {} : clipHint(item.snapshot, item.id)),
         ...(clip ? {} : oversizedHint(item.node, meta, item.scale)),
       });
-      let tiles = null;
-      if (parts === 'children' && !clip) tiles = await sliceByChildren(file, dir, base, item.snapshot, item.node, item.scale);
-      else if (typeof parts === 'number' && !clip) tiles = await sliceEqual(file, dir, base, parts);
-      else tiles = await sliceTiles(file, dir, base);
+      const tiles =
+        parts === 'children' && !clip
+          ? await sliceByChildren(file, dir, base, item.snapshot, item.node, item.scale)
+          : await sliceTiles(file, dir, base);
       if (tiles) {
         entry.parts = tiles.map((tile) =>
           strip({
