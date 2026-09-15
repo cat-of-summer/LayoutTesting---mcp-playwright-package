@@ -177,23 +177,42 @@ export async function checkForUpdate({
      упирается в таймаут, и четыре секунды на старте платятся впустую. */
   if (!enabled) return { current, updateAvailable: null, disabled: true };
 
-  if (!force) {
-    const cached = await readCache(cacheFile, now);
-    if (cached) return { ...cached, current, fromCache: true };
-  }
-
+  /*
+   * В кэше лежит только ответ GitHub: тег и дата релиза. Сравнение с текущим тегом делается
+   * при каждом чтении, а не запоминается. Раньше в кэш уходил готовый результат вместе с
+   * updateAvailable и блоком upgrade, и после обновления стенд ещё шесть часов — пока кэш не
+   * протухнет — сообщал «доступно обновление 0.1.1 → 0.1.1»: тег в .env уже новый, а сравнение
+   * снято против старого. Кэш живёт в томе state/ и пересоздание контейнера переживает, так что
+   * ложное уведомление выживало ровно тот перезапуск, ради которого обновление и делалось.
+   */
   try {
-    const latest = await fetchLatest(fetchImpl);
+    let latest = null;
+    let fromCache = false;
+    if (!force) {
+      const cached = await readCache(cacheFile, now);
+      if (cached?.latest) {
+        latest = { tag: cached.latest, publishedAt: cached.publishedAt, checkedAt: cached.checkedAt };
+        fromCache = true;
+      }
+    }
+    if (!latest) {
+      const fetched = await fetchLatest(fetchImpl);
+      latest = { ...fetched, checkedAt: new Date().toISOString() };
+      await writeCache(cacheFile, { checkedAt: latest.checkedAt, latest: latest.tag, publishedAt: latest.publishedAt });
+    }
+
     /* Сравнивать есть с чем, только если тег закреплён. Плавающий latest и отсутствие тега —
        ответ «неизвестно» с объяснением, что именно закрепить. */
     const base = current.imageTag;
     const known = comparable(base);
     const behind = known && compareVersions(latest.tag, base) > 0;
 
-    const result = {
-      checkedAt: new Date().toISOString(),
+    return {
+      checkedAt: latest.checkedAt,
       latest: latest.tag,
       publishedAt: latest.publishedAt,
+      current,
+      fromCache,
       updateAvailable: known ? behind : null,
       ...(known
         ? {}
@@ -208,8 +227,6 @@ export async function checkForUpdate({
       /* Порядок обновления отдаём и когда сравнить не вышло: он там и нужен — чтобы закрепить тег. */
       ...(behind || !known ? { upgrade: upgradeSteps(latest.tag) } : {}),
     };
-    await writeCache(cacheFile, result);
-    return { ...result, current, fromCache: false };
   } catch (err) {
     /* Недоступность GitHub — не повод для тревоги в отчёте: стенды часто стоят без выхода
        наружу. Говорим «неизвестно» и живём дальше. */

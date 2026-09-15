@@ -193,3 +193,19 @@ test('свежий кэш не ходит в сеть, протухший ход
   await checkForUpdate({ enabled: true, fetchImpl: third.impl, cacheFile: file, now: later });
   assert.equal(third.calls.length, 1, 'через семь часов кэш протух');
 });
+
+/* Кэш лежит в томе и переживает пересоздание контейнера — то самое, которым стенд обновляют.
+   Если в нём запомнить результат сравнения, а не ответ GitHub, обновлённый стенд ещё шесть часов
+   сообщает «доступно обновление 0.1.1 → 0.1.1». */
+test('свежий кэш сравнивается с текущим тегом, а не с тем, при котором был снят', async () => {
+  const file = cacheFile();
+  const stale = await check('ghcr.io/o/a:0.0.7', { cacheFile: file });
+  assert.equal(stale.updateAvailable, true);
+
+  const fresh = await check('ghcr.io/o/a:0.0.8', { cacheFile: file, force: false, fetchImpl: registry('9.9.9').impl });
+  assert.equal(fresh.fromCache, true, 'кэш свежий — в сеть ходить незачем');
+  assert.equal(fresh.latest, '0.0.8');
+  assert.equal(fresh.updateAvailable, false, 'тег в .env уже новый — обновление предлагать нечего');
+  assert.equal(fresh.upgrade, undefined, 'порядок обновления без обновления не нужен');
+  assert.equal(fresh.current.imageTag, '0.0.8');
+});
