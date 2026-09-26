@@ -27,6 +27,7 @@ import { addRequests, ensureNode, ensureNodes, findNode, pathOf, syncFigma } fro
 import { groupRefs, parseFigmaRef, refOf } from '../figma/url.js';
 import { diffSnapshots, fetchVersions, parseMoment, pickVersions, snapshotAt } from '../figma/history.js';
 import { loadProject, projectSummary } from '../figma/project.js';
+import { browserChrome } from '../figma/analyze/common.js';
 import { inferStructure } from '../figma/analyze/structure.js';
 import { findComponents } from '../figma/analyze/components.js';
 import { collectTokens } from '../figma/analyze/tokens.js';
@@ -40,7 +41,8 @@ import {
   readCachedComments,
 } from '../figma/analyze/comments.js';
 import { describeBehavior } from '../figma/analyze/behavior.js';
-import { compareWithDesign } from '../figma/compare.js';
+import { compareWithDesign, probePage } from '../figma/compare.js';
+import { measurePairs, measureSpacing, pageBoxes } from '../figma/spacing.js';
 import { getSession, gotoAndSettle, withSession } from '../browser/pool.js';
 
 /* /v1/me стоит запроса tier 3. figma_status зовут, когда что-то не работает, — то есть подряд. */
@@ -153,22 +155,42 @@ async function commentsOf(fileKey, snapshot, nodeId) {
  */
 const STANDARD_WIDTHS = [320, 375, 768, 1024, 1280, 1440, 1920];
 
+/**
+ * Годится ли снятый узел как экран: только такой задаёт ширину вёрстки.
+ *
+ * Ссылки задачи ведут и на тексты, и на секции-пояснения: раньше в suggested попадали 52, 104,
+ * 154 и 5273 — ширины подписей и холста «Объяснение», и прогон по ним был бессмыслен.
+ */
+export function screenReason(frame) {
+  const w = Number(String(frame.size || '').split('x')[0]);
+  if (!(w > 0)) return 'нет размера';
+  if (frame.type && !['FRAME', 'COMPONENT', 'INSTANCE'].includes(frame.type)) return `не кадр: ${frame.type}`;
+  if (w < 320) return 'уже 320px — элемент, а не экран';
+  if (w > 2560) return 'шире 2560px — холст или секция, а не экран';
+  return null;
+}
+
 export function suggestWidths(result) {
+  const all = (result.files || []).flatMap((file) => file.frames || []);
+  const ignored = all
+    .map((frame) => ({ frame, reason: screenReason(frame) }))
+    .filter(({ reason }) => reason && reason !== 'нет размера')
+    .map(({ frame, reason }) => ({ node: frame.ref, name: frame.name, width: Number(String(frame.size).split('x')[0]), reason }));
   const design = [
     ...new Set(
-      (result.files || [])
-        .flatMap((file) => file.frames || [])
-        .map((frame) => Number(String(frame.size || '').split('x')[0]))
-        .filter((w) => w > 0),
+      all
+        .filter((frame) => !screenReason(frame))
+        .map((frame) => Number(String(frame.size || '').split('x')[0])),
     ),
   ].sort((a, b) => a - b);
-  if (design.length < 2) return {};
+  if (design.length < 2) return ignored.length ? { widths: { design, ignored: ignored.slice(0, 10) } } : {};
   const [min, max] = [design[0], design[design.length - 1]];
   const suggested = [...new Set([...design, ...STANDARD_WIDTHS.filter((w) => w > min && w < max)])].sort((a, b) => a - b);
   return {
     widths: {
       design,
       suggested,
+      ...(ignored.length ? { ignored: ignored.slice(0, 10) } : {}),
       note: t({
         ru: 'Две макетные ширины — не адаптив: вёрстка проверяется и между ними. Передайте suggested в layout_stress (widths) и layout_audit (widths); добавьте ширину на 1px выше каждого своего брейкпоинта.',
         en: 'Two design widths are not adaptivity: the layout is checked between them too. Pass suggested to layout_stress (widths) and layout_audit (widths); add the width 1px above each of your own breakpoints.',
@@ -186,27 +208,73 @@ export function suggestWidths(result) {
  */
 const coverage = new Map();
 
+/*
+ * Экраны, снятые figma_sync: файл → кадр → имя и ширина.
+ *
+ * Десктопный подвал сверили, мобильный — ни разу, и покрытие этого не показало: оно знало только
+ * про кадры, которые уже сравнивали. Теперь каждая сверка перечисляет снятые экраны того же
+ * файла, по которым сверки ещё не было.
+ */
+const screens = new Map();
+
+export function rememberScreens(result) {
+  for (const file of result.files || []) {
+    for (const frame of file.frames || []) {
+      if (!frame.ref || screenReason(frame)) continue;
+      const fileKey = String(frame.ref).split(':')[0];
+      const known = screens.get(fileKey) || new Map();
+      known.set(frame.ref, { name: frame.name, width: Number(String(frame.size).split('x')[0]), breakpoint: frame.breakpoint });
+      screens.set(fileKey, known);
+    }
+  }
+}
+
 const stamp = () => new Date().toISOString().slice(11, 16);
 
-export function noteCoverage(ref, version, { mode = 'both', sections = false } = {}) {
+export function noteCoverage(ref, version, { mode = 'both', sections = false, width = null, frameWidth = null } = {}) {
   const key = `${ref}@${version}`;
-  const entry = coverage.get(key) || { semantic: null, pixel: null, sections: null };
+  const entry = coverage.get(key) || { semantic: null, pixel: null, sections: null, widths: [] };
   if (mode !== 'pixel') entry.semantic = stamp();
   if (mode !== 'semantic') entry.pixel = stamp();
   if (sections) entry.sections = stamp();
+  if (width && !entry.widths.includes(width)) entry.widths.push(width);
   coverage.set(key, entry);
 
   const missing = ['semantic', 'sections'].filter((kind) => !entry[kind]);
   const never = t({ ru: 'не запускался', en: 'not run' });
+  const fileKey = String(ref).split(':')[0];
+  const compared = new Set([...coverage.keys()].map((k) => k.split('@')[0]));
+  const notCompared = [...(screens.get(fileKey) || new Map())]
+    .filter(([screen]) => !compared.has(screen))
+    .map(([screen, info]) => ({ node: screen, name: info.name, width: info.width, ...(info.breakpoint ? { breakpoint: info.breakpoint } : {}) }));
+  const offWidth = width && frameWidth && Math.abs(width - frameWidth) > 2;
   return {
     semantic: entry.semantic || never,
     pixel: entry.pixel || never,
     sections: entry.sections || never,
+    ...(entry.widths.length ? { widths: entry.widths } : {}),
     ...(missing.length
       ? {
           note: t({
             ru: `Для этого кадра ещё не было: ${missing.join(', ')}. Отчёт о готовности пишется после semantic и sections: true — картинка с картинкой по каждой секции; «высота секции совпала» — не критерий.`,
             en: `Not run for this frame yet: ${missing.join(', ')}. A "done" report follows semantic and sections: true — picture against picture per section; "the section height matches" is not a criterion.`,
+          }),
+        }
+      : {}),
+    ...(offWidth
+      ? {
+          widthWarning: t({
+            ru: `Сверка шла в окне ${width}px, а кадр шириной ${frameWidth}px: такая сверка кадр не покрывает. Откройте сессию шириной кадра или передайте url — стенд откроет её сам.`,
+            en: `The comparison ran in a ${width}px window while the frame is ${frameWidth}px wide: such a comparison does not cover the frame. Open a session at the frame width or pass url and the stand will open one itself.`,
+          }),
+        }
+      : {}),
+    ...(notCompared.length
+      ? {
+          notCompared: notCompared.slice(0, 10),
+          notComparedNote: t({
+            ru: `Снятые экраны этого файла, по которым сверки ещё не было: ${notCompared.length}. Отчёт о готовности пишется после сверки каждой ширины макета — мобильный кадр тоже.`,
+            en: `Synced screens of this file that have not been compared yet: ${notCompared.length}. A "done" report follows a comparison at every design width — the mobile frame too.`,
           }),
         }
       : {}),
@@ -336,6 +404,7 @@ export function register(server) {
     async ({ figma, refresh = false, channel = 'auto', css = false, page, offset = 0 }) => {
       const client = getRestClient();
       const result = await syncFigma(figma, { refresh, client, editor: editorChannel, channel, css, page, offset });
+      rememberScreens(result);
       /*
        * Указатель на регламент стоит именно здесь, а не в каждом figma_*.
        *
@@ -454,6 +523,16 @@ export function register(server) {
         ...(requests ? { requests } : {}),
         comments: await commentsOf(fileKey, snapshot, node.id),
       };
+      const chrome = browserChrome(snapshot, node.id);
+      if (chrome) {
+        out.chrome = {
+          ...chrome,
+          note: t({
+            ru: `Похоже на нарисованную строку браузера: страница в браузере начинается под ней. Вычитайте ${round(chrome.height)}px из y узлов потока; fixed-узлы считаются от окна, им вычитать не нужно.`,
+            en: `Looks like a drawn browser bar: in the browser the page starts below it. Subtract ${round(chrome.height)}px from the y of flow nodes; fixed nodes count from the window and need no correction.`,
+          }),
+        };
+      }
 
       /*
        * Разделы собираются по очереди и складываются, пока ответ помещается в потолок.
@@ -644,6 +723,61 @@ export function register(server) {
   );
 
   server.registerTool(
+    'figma_spacing',
+    {
+      title: t({ ru: 'Интервалы между элементами', en: 'Spacing between elements' }),
+      description: t({
+        ru: 'Расстояния между соседними элементами в макете и на странице: по каждому узлу с авто-раскладкой — пара соседей, интервал в макете, на странице, разница и свойство, которое этот интервал задаёт (gap родителя, padding соседей, свободная позиция). Повторяющийся шаг сворачивается: «шаг 40 → 32, ×8». Нужен, когда figma_compare показывает растущий сдвиг, а не одинаковый. pairs — для элементов в разных ветках дерева.',
+        en: 'Distances between neighbouring elements in the design and on the page: for every auto-layout node — the pair of neighbours, the interval in the design, on the page, the difference and the property that sets that interval (the parent gap, neighbour padding, free position). A repeated step collapses: "step 40 → 32, ×8". Needed when figma_compare shows a growing shift rather than a uniform one. pairs is for elements in different branches of the tree.',
+      }),
+      inputSchema: {
+        figma: z.string().describe(d('Узел-контейнер: ссылка figma.com или запись ключ:id')),
+        sessionId: z.string().optional().describe(d('Сессия с открытой страницей: сравнение идёт по ней')),
+        url: z.string().optional().describe(d('Адрес страницы: стенд откроет её сам шириной кадра макета')),
+        selector: z.string().optional().describe(d('Блок на странице, которому соответствует кадр макета')),
+        pairs: z
+          .array(z.object({ node: z.string(), selector: z.string() }))
+          .optional()
+          .describe(d('Явные пары узел ↔ селектор по порядку: расстояния между соседями списка в макете и на странице')),
+        tolerance: z.number().optional().describe(d('Допуск смещения в пикселях. По умолчанию 2')),
+        limit: z.number().optional().describe(d('Сколько строк или записей показать')),
+      },
+    },
+    async ({ figma, sessionId, url, selector, pairs, tolerance = 2, limit = 40 }) => {
+      const client = getRestClient();
+      const { snapshot, node, fileKey } = await ensureNode(figma, { client, editor: editorChannel });
+      const run = async (page) => {
+        const probed = await page.evaluate(probePage, selector ?? null);
+        if (probed.error) throw new Error(probed.error);
+        const spacing = measureSpacing(snapshot, node.id, probed, { tolerance });
+        const out = {
+          node: refOf(fileKey, node.id),
+          measured: spacing.rows.length,
+          off: spacing.off.length,
+          ...(spacing.steps.length ? { steps: spacing.steps } : {}),
+          rows: spacing.off.slice(0, limit),
+          ...(spacing.off.length > limit ? { note: `Показано ${limit} из ${spacing.off.length} расхождений.` } : {}),
+          ...(spacing.rows.some((row) => row.unmeasured)
+            ? { unmeasured: spacing.rows.filter((row) => row.unmeasured).slice(0, 10).map(({ between, nodes }) => ({ between, nodes })) }
+            : {}),
+        };
+        if (pairs?.length) {
+          const found = await page.evaluate(pageBoxes, { root: selector ?? null, selectors: pairs.map((pair) => pair.selector) });
+          out.pairs = measurePairs(snapshot, node.id, pairs.map((pair, i) => ({ ...pair, page: found[i] })));
+        }
+        return out;
+      };
+      if (sessionId) return json(await run(getSession(sessionId).page));
+      if (!url) throw new Error('Нужен sessionId открытой сессии или url страницы.');
+      const width = Math.max(320, Math.round(node.box?.w || 1440));
+      return withSession({ viewport: `${width}x900` }, async (session) => {
+        await gotoAndSettle(session, url);
+        return json(await run(session.page));
+      });
+    },
+  );
+
+  server.registerTool(
     'figma_compare',
     {
       title: t({ ru: 'Сверстано ли как в макете', en: 'Does the build match the design' }),
@@ -683,12 +817,17 @@ export function register(server) {
         ...(threshold ? { threshold } : {}),
         ...(limit ? { limit } : {}),
       };
-      const withCoverage = (result) => ({
+      /* Предупреждать о ширине окна имеет смысл только для экрана: карточку сверяют в любом окне. */
+      const frameWidth = screenReason({ type: node.type, size: `${node.box?.w}x${node.box?.h}` }) ? null : Math.round(node.box.w);
+      const withCoverage = (result, page) => ({
         ...result,
-        coverage: noteCoverage(ref, snapshot.version, { mode, sections }),
+        coverage: noteCoverage(ref, snapshot.version, { mode, sections, width: page.viewportSize()?.width ?? null, frameWidth }),
       });
 
-      if (sessionId) return json(withCoverage(await compareWithDesign({ ...options, page: getSession(sessionId).page })));
+      if (sessionId) {
+        const { page } = getSession(sessionId);
+        return json(withCoverage(await compareWithDesign({ ...options, page }), page));
+      }
       if (!url) throw new Error('Нужен sessionId открытой сессии или url страницы.');
 
       /* Своя сессия открывается шириной кадра: сравнивать десктопный макет с мобильной вёрсткой
@@ -697,7 +836,7 @@ export function register(server) {
       return withSession({ viewport: `${width}x900` }, async (session) => {
         const navigation = await gotoAndSettle(session, url);
         const result = await compareWithDesign({ ...options, page: session.page });
-        return json({ ...withCoverage(result), navigation });
+        return json({ ...withCoverage(result, session.page), navigation });
       });
     },
   );
@@ -960,12 +1099,19 @@ export function register(server) {
           .optional()
           .describe(d('Для render: вырезать прямоугольник в координатах узла')),
         inline: z.boolean().optional().describe(d('Вложить картинку в ответ. По умолчанию только ссылки')),
-        parts: z.enum(['auto', 'children']).optional().describe(d('Для render: children режет кадр по дочерним фреймам, по части на секцию')),
+        parts: z
+          .enum(['auto', 'children', 'tiles'])
+          .optional()
+          .describe(d('Для render: children режет кадр по дочерним фреймам, по части на секцию; tiles рисует каждый дочерний узел отдельно плюс контакт-лист с подписями id — для страницы Figma включается сам')),
+        geometry: z
+          .enum(['render', 'fill'])
+          .optional()
+          .describe(d('Для svg: fill — контур по геометрии заливки, без обводки и ровно по узлу: для clip-path и масок')),
       },
     },
-    async ({ figma, kind = 'render', scale, clip, inline = false, parts = 'auto' }) => {
+    async ({ figma, kind = 'render', scale, clip, inline = false, parts = 'auto', geometry = 'render' }) => {
       const options = { client: getRestClient(), editor: editorChannel };
-      if (kind === 'svg') return json(await exportSvg(figma, options));
+      if (kind === 'svg') return json(await exportSvg(figma, { ...options, geometry }));
       if (kind === 'image') return json(await exportImages(figma, { ...options, scales: scale ? [scale] : [1, 2] }));
 
       if (clip && figma.length !== 1) throw new Error('clip относится к одному узлу: передайте ровно одну ссылку.');
@@ -975,7 +1121,9 @@ export function register(server) {
         /* Не больше трёх картинок: части высокого кадра по отдельности читаются, а десяток разом
            занимает контекст целиком. Остальное — по ссылкам. */
         const files = result.renders
-          .flatMap((render) => (render.parts ? render.parts.map((part) => part.image.path) : render.image ? [render.image.path] : []))
+          .flatMap((render) =>
+            render.sheet ? [render.sheet.path] : render.parts ? render.parts.map((part) => part.image.path) : render.image ? [render.image.path] : [],
+          )
           .slice(0, 3);
         for (const file of files) {
           const img = await inlineImage(file, 900);

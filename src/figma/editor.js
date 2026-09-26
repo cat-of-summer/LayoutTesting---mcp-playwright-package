@@ -65,6 +65,8 @@ async function stateExists() {
 let current = null;
 let idleTimer = null;
 let queue = Promise.resolve();
+/** Сколько операций с файлом ждут или идут: по нему отказывают сверх FIGMA.editorQueueMax. */
+let pending = 0;
 let status = { state: 'idle' };
 
 function setStatus(state, reason = null) {
@@ -452,6 +454,46 @@ const RENDER = async (items) => {
   return JSON.stringify(out);
 };
 
+/**
+ * Геометрия заливки узла и его потомков — без обводки.
+ *
+ * SVG_STRING рисует обводку, и у вектора с обводкой снаружи путь съезжает на её толщину, а файл
+ * выходит больше узла. Для clip-path нужен контур заливки ровно по узлу. Узел при этом не
+ * клонируется и не меняется: читается только fillGeometry.
+ */
+const GEOMETRY = async (ids) => {
+  const out = {};
+  for (const id of ids) {
+    try {
+      const root = await figma.getNodeByIdAsync(id);
+      if (!root || !root.absoluteTransform) {
+        out[id] = { error: 'узел не найден' };
+        continue;
+      }
+      const [[, , rx], [, , ry]] = root.absoluteTransform;
+      const shapes = [];
+      const visit = (node) => {
+        if (node.visible === false) return;
+        if (Array.isArray(node.fillGeometry) && node.fillGeometry.length) {
+          const [[a, c, e], [b, d, f]] = node.absoluteTransform;
+          const solid = Array.isArray(node.fills) ? node.fills.find((p) => p.type === 'SOLID' && p.visible !== false) : null;
+          shapes.push({
+            matrix: [a, b, c, d, e - rx, f - ry],
+            paths: node.fillGeometry.map((g) => ({ d: g.data, rule: g.windingRule })),
+            color: solid ? { r: solid.color.r, g: solid.color.g, b: solid.color.b, a: solid.opacity ?? 1 } : null,
+          });
+        }
+        if ('children' in node) for (const kid of node.children) visit(kid);
+      };
+      visit(root);
+      out[id] = { w: root.width, h: root.height, shapes };
+    } catch (err) {
+      out[id] = { error: String((err && err.message) || err) };
+    }
+  }
+  return JSON.stringify(out);
+};
+
 const IMAGES = async (refs) => {
   const toBase64 = (bytes) => {
     let binary = '';
@@ -483,14 +525,60 @@ const PAGES = async () => {
   );
 };
 
+/**
+ * Обещание с дедлайном: по истечении — ошибка с кодом timeout, само обещание не отменяется.
+ * Plugin API оборвать нельзя, поэтому вызывающий сам решает, что делать с зависшей вкладкой.
+ */
+export function withDeadline(promise, ms) {
+  if (!ms) return promise;
+  let timer = null;
+  const expired = new Promise((_, reject) => {
+    timer = setTimeout(() => reject(Object.assign(new Error(`не уложилось в ${ms} мс`), { code: 'timeout' })), ms);
+  });
+  return Promise.race([promise, expired]).finally(() => clearTimeout(timer));
+}
+
+/**
+ * Очередь к редактору с потолком: запрос сверх max получает отказ сразу, а не висит за
+ * чужими до тайм-аута клиента. Статус канала при этом не портится — редактор исправен, он
+ * занят. В режиме auto снимок на отказ уходит в REST, как и на любую другую ошибку канала.
+ */
+export async function admitted(job, { max = FIGMA.editorQueueMax, run = exclusive } = {}) {
+  if (max && pending >= max) {
+    throw new EditorUnavailable(
+      `Канал редактора занят: в очереди ${pending} операций. Повторите позже или вызывайте инструменты Figma по одному, а не пачкой параллельно.`,
+      'busy',
+    );
+  }
+  pending += 1;
+  try {
+    return await run(job);
+  } finally {
+    pending -= 1;
+  }
+}
+
+/**
+ * Операция с файлом в редакторе.
+ *
+ * Зависшую операцию Plugin API оборвать нельзя, поэтому по FIGMA.editorJobMs закрывается вся
+ * вкладка: следующая операция откроет файл заново, а не встанет за мёртвой.
+ */
 async function inFile(fileKey, fn, arg) {
-  return exclusive(async () => {
+  return admitted(async () => {
     const page = await openFile(fileKey);
     scheduleIdle();
     try {
-      return JSON.parse(await page.evaluate(fn, arg));
+      return JSON.parse(await withDeadline(page.evaluate(fn, arg), FIGMA.editorJobMs));
     } catch (err) {
       if (err instanceof EditorUnavailable) throw err;
+      if (err.code === 'timeout') {
+        await closeEditor('timeout');
+        throw fail(
+          'error',
+          `Plugin API в редакторе не ответил за ${Math.round(FIGMA.editorJobMs / 1000)} с: вкладка закрыта, следующий вызов откроет файл заново.`,
+        );
+      }
       throw fail('error', `Plugin API в редакторе отказал: ${err.message}`);
     }
   });
@@ -498,6 +586,7 @@ async function inFile(fileKey, fn, arg) {
 
 export const editorDump = (fileKey, ids, { css = false } = {}) => inFile(fileKey, DUMP, { ids, withCss: css });
 export const editorRender = (fileKey, items) => inFile(fileKey, RENDER, items);
+export const editorGeometry = (fileKey, ids) => inFile(fileKey, GEOMETRY, ids);
 export const editorImages = (fileKey, refs) => inFile(fileKey, IMAGES, refs);
 export const editorPages = (fileKey) => inFile(fileKey, PAGES, null);
 
@@ -685,6 +774,7 @@ export const editorChannel = {
   usable: editorUsable,
   dump: editorDump,
   render: editorRender,
+  geometry: editorGeometry,
   images: editorImages,
   pages: editorPages,
 };

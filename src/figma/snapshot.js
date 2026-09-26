@@ -761,6 +761,30 @@ export async function syncFigma(
   return { files, requests: spent };
 }
 
+/**
+ * Снятия, которые идут прямо сейчас: ключ — файл и набор узлов.
+ *
+ * Параллельные вызовы по одному узлу (агент шлёт пачку figma_inspect) раньше снимали его
+ * каждый заново: столько же выгрузок в редакторе или запросов tier 1, а в памяти — столько же
+ * копий одного дерева. Второй и следующие теперь ждут первое снятие.
+ */
+const inflight = new Map();
+
+function syncOnce(fileKey, ids, options) {
+  const key = `${options.cacheDir}|${fileKey}|${[...ids].sort().join(',')}`;
+  let job = inflight.get(key);
+  if (!job) {
+    job = syncFigma(
+      ids.map((id) => refOf(fileKey, id)),
+      options,
+    ).finally(() => inflight.delete(key));
+    inflight.set(key, job);
+    return job;
+  }
+  /* Подсевший вызов ничего не потратил: счётчик запросов принадлежит первому. */
+  return job.then(() => ({ requests: null }));
+}
+
 /** Узлы одного файла из кэша, недостающие — одним снятием. */
 export async function ensureNodes(fileKey, nodeIds, { client = getRestClient(), cacheDir = DIRS.figma, editor = null } = {}) {
   const found = new Map();
@@ -772,10 +796,7 @@ export async function ensureNodes(fileKey, nodeIds, { client = getRestClient(), 
   }
   let requests = null;
   if (missing.length) {
-    ({ requests } = await syncFigma(
-      missing.map((id) => refOf(fileKey, id)),
-      { client, cacheDir, editor },
-    ));
+    ({ requests } = await syncOnce(fileKey, missing, { client, cacheDir, editor }));
     for (const id of missing) {
       const hit = await findNode(fileKey, id, { cacheDir });
       if (!hit) throw new Error(`Узел ${id} не найден в файле ${fileKey}: неверный id, либо узел удалён из макета.`);

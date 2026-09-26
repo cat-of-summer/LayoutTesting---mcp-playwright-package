@@ -14,11 +14,12 @@ STEPS:
   6. Structure from the tree; subtract nested container offsets on both axes.
   7. Build: no px derived from the frame width, no cover instead of coordinates, state ≠ data.
   8. computed_styles → the edit arrived; if not — matched_rules.
-  9. figma_compare mode: semantic — every difference explained or fixed (not "tolerance").
+  9. figma_compare mode: semantic — every difference explained or fixed (not "tolerance"); stepDrift or a growing shift — figma_spacing.
   10. figma_compare sections: true (or pixel by selector) — picture against picture per section.
   11. layout_stress(widths from figma_sync.widths.suggested).
   12. Live session: hover every interactive element, interaction_audit; silent is empty.
-  13. Repeat 9–10 after the fixes; register block → checks.
+  13. States: modals and menus — layout_audit with states; forms — form_audit; whatever exists in several states (the header with the menu open) — browser_act with anchors, moved is empty.
+  14. Repeat 9–10 after the fixes, on every frame of the block; coverage without notCompared; register block → checks.
 
 ## 10.1 Capture the specification — down to the leaves
 
@@ -157,7 +158,13 @@ against picture. The order is strict:
 2. `sections: true` — pixel by pixel per section of the frame (or `mode: "pixel"` with
    `selector`); the `diff` of every section looked at;
 3. only then the block is done. `coverage` in the answer shows what has not run for this frame
-   yet.
+   yet, `notCompared` — which synced frames have not been compared at all (the mobile one too),
+   and `widthWarning` — that the session window is not the frame width.
+
+> **The mobile frame was not compared.** The desktop footer was compared (1.63% difference) and the
+> checkpoint was reported. The mobile one was never opened: there the page was 115px taller than
+> the design — a link step of 32 instead of 40 and 20px instead of 60 between the social block and
+> "Privacy".
 
 > `pixel` never ran: the semantic report gave a long list of offsets, they were explained by text
 > wrapping, and "once the semantics converge, then the pixels". In the end not one section was
@@ -170,7 +177,7 @@ Read **both** sections of the `semantic` report:
 - **`paint`** — background, borders and their color, **line weight and length**, radii,
   decoration size. A class of differences the texts do not show.
 
-Four reading rules:
+Five reading rules:
 
 1. `shiftedBlock` over N elements is **one** finding. Fix the height of the block above, not
    twenty elements. But "the block is −50px" does not cancel the small offsets inside it — those
@@ -178,7 +185,12 @@ Four reading rules:
 2. A difference up to 1px and font rendering differences are not defects.
 3. **The report is truncated.** "Showing 6 of 135" means 129 were not checked. How to read the rest
    is in `note`.
-4. `unmatched` splits into two buckets, and they call for different work. `shifted` — the node is
+4. `stepDrift` — consecutive elements have a different step: "40 in the design, 32 on the page".
+   That is one fix of the spacing between them, not N shifts. Which property sets the interval in
+   the design (the parent gap or the item padding) — `figma_spacing` on the container node; it
+   also measures intervals between blocks that share no growing shift: "60 in the design, 20 on
+   the page".
+5. `unmatched` splits into two buckets, and they call for different work. `shifted` — the node is
    on the page, and `off` shows the offset remaining beyond the correction already applied: that is
    work. `notFound` — the node is nowhere; the check cannot tell the reason apart because it walks
    elements: a pseudo-element, the inside of an SVG, or genuinely not built.
@@ -238,6 +250,25 @@ the modal (open, close by the backdrop, close by Esc), the form (submit, see the
 see a validation error), the menu, dropdowns, tabs. Hover **every** element that has a hover — in
 the live session, by eye on a screenshot.
 
+**States that are not on the page at check time.** An audit sees what is open right now: a modal
+close button of 15×15 and menu items are invisible to it while closed. Every modal and menu —
+`layout_audit` with `states: [{name, steps}]`, steps of the same shape as `browser_act`.
+
+**Forms — `form_audit`.** An empty submit, one invalid value per field, fixing after an error, a
+valid submit — from a clean page, typed key by key. It catches what lives between the end points:
+a mask that never sends `input` (the error never clears), an error that jitters while being fixed,
+an error that overlaps its neighbour, and a form the error stretches.
+
+**What lives in several states stays in place.** The header with the menu open and closed, a
+sticky and a plain bar: `browser_act` with `anchors` — the answer carries `anchors.moved`.
+Comparing with the frame does not help here: the menu frame may be drawn with its own shift.
+
+> **Three bugs shipped between the end points.** With the menu open the header sat 60px to the
+> left: the modal container had an inline width. The phone mask swallowed `beforeinput` and never
+> sent `input` — the field error never cleared for a correctly typed number. The checkbox error
+> vanished, reappeared and vanished again while being fixed. The form was checked by an empty and
+> a full submit, the menu — by a screenshot of it open.
+
 > **The case only a measurement shows.** In an accordion `grid-template-rows` ran for 1000ms while
 > `min-height` switched instantly: the row jumped to full height in the very first frame, and the
 > text then spent a second spreading out inside an already empty box. On a static screenshot none
@@ -260,7 +291,9 @@ Repeat 10.5 (both steps) after all the fixes.
 
 10.4–10.8 are done for the desktop and the mobile node; `unresolved` is empty; differences are
 either fixed or written down with a justification and the node; every section is compared pixel
-by pixel; every element's hover has been looked at in the live session. A block whose interaction
+by pixel on every frame, `coverage` has no `notCompared`; every element's hover has been looked
+at in the live session; modals and menus passed `layout_audit` with `states`, forms passed
+`form_audit` with no findings, elements in several states — `anchors` with no `moved`. A block whose interaction
 has not been clicked through does not count as finished, however exactly it matches the design.
 
 Keep a register: block → which checks it passed. Otherwise it becomes "I think I checked it".

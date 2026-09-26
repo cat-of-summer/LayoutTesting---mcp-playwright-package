@@ -10,7 +10,7 @@ STEPS:
   2. figma_status — editor.state and rest.configured; rest: false → action: token yourself, no question; editor.state: needs_human → the editor.handoff.url link to the human; issuing failed → ask the human.
   3. dev server on 0.0.0.0 → browser_goto http://host.docker.internal:<port> answers 200.
   4. browser_open a second time with animations: "allow" — the live session; keep both to the end.
-  5. README, CLAUDE.md, bundler config — how assets are wired, what the CSS framework does to p and h1..h6.
+  5. README, CLAUDE.md, bundler config — how assets are wired, what the CSS framework does to p and h1..h6; a dictionary of its utilities: tap area, icons, visibility.
 
 ## 0.1 The stand and access
 
@@ -71,7 +71,9 @@ Read `README.md`, `CLAUDE.md`, the bundler config. Find out:
 
 - how the template wires up assets, icons and fonts — a plugin, aliases, a convention;
 - which components must not be touched because they are shared across projects;
-- what the project's CSS framework does to base elements.
+- what the project's CSS framework does to base elements;
+- **the framework dictionary**: which of its utilities handle the tap area, icon masks, visibility,
+  the grid. Write it down briefly — the UI kit is checked against it in phase 3.
 
 > Why. The framework styled `p` and `h1..h6` directly through element selectors. A `font-size` on
 > the parent did not inherit — it lost to the element rule. Half an hour spent on "why 17px

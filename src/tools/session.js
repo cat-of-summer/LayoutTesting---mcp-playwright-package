@@ -20,10 +20,10 @@ import {
   takeNavigationSince,
 } from '../browser/pool.js';
 import { captureFrames } from '../browser/frames.js';
+import { ACTIONS, perform } from '../browser/act.js';
+import { diffBoxes, settleBoxes } from '../browser/boxes.js';
 import { profileKey } from '../browser/profile.js';
 import { evaluateOnPage } from '../browser/evaluate.js';
-import { resolveInRoot } from '../paths.js';
-import { stat } from 'node:fs/promises';
 import { addInjection, clearInjections, listInjections, removeInjection } from '../browser/inject.js';
 import { addRoute, clearRoutes, listRecorded, listRoutes } from '../browser/routes.js';
 import { cappedText, json, profileSchema } from './shared.js';
@@ -41,15 +41,23 @@ export function register(server) {
         ru: 'Создаёт сессию браузера с заданными условиями просмотра и, если передан url, сразу переходит на страницу. Возвращает sessionId для остальных инструментов.',
         en: "Creates a browser session with the given viewing conditions and, if a url is passed, navigates to it right away. Returns a sessionId used by every other session-based tool. Viewing conditions cover engine, viewport, dark mode, RTL, zoom, forced colors, DPR, locale and access (basic auth, headers, host mapping).",
       }),
-      inputSchema: { url: z.string().optional(), ...profileSchema },
+      inputSchema: {
+        url: z.string().optional(),
+        ...profileSchema,
+        keepAlive: z
+          .boolean()
+          .optional()
+          .describe(d('Не закрывать сессию по простою: для долгой вёрстки, когда между проверками пишется код. Предельный возраст — LT_SESSION_KEEPALIVE_MAX_MS, 8 часов')),
+      },
     },
-    async ({ url, ...profile }) => {
-      const session = await createSession(profile);
+    async ({ url, keepAlive, ...profile }) => {
+      const session = await createSession(profile, { keepAlive });
       const result = {
         sessionId: session.id,
         profileKey: session.key,
         profile: session.profile,
         unsupported: session.unsupported,
+        ...(session.keepAlive ? { keepAlive: true } : {}),
       };
       if (url) result.navigation = await gotoAndSettle(session, url);
       /* Без адреса заморозка всё равно задана сессией — сказать о ней сразу, а не на первом переходе. */
@@ -102,17 +110,17 @@ export function register(server) {
     {
       title: t({ ru: 'Действие на странице', en: "Act on the page" }),
       description: t({
-        ru: 'Клик, ввод текста, нажатие клавиши, наведение, прокрутка, выбор в списке, ожидание селектора, выбор файлов и ответ на alert с confirm. Нужен, когда проверяемое состояние возникает только после действия: раскрытое меню, открытая вкладка, заполненная форма, страница после логина. Готовые селекторы удобно брать из page_snapshot.',
-        en: "Click, type, press a key, hover, scroll, select an option, wait for a selector, pick files for upload or decide what to do with alert and confirm. Needed when the state you want to check only appears after an action: an expanded menu, an opened tab, a filled form, a page behind a login. Ready-to-use selectors come from page_snapshot.",
+        ru: 'Клик, ввод текста, нажатие клавиши, наведение, прокрутка, выбор в списке, ожидание селектора, выбор файлов и ответ на alert с confirm. Нужен, когда проверяемое состояние возникает только после действия: раскрытое меню, открытая вкладка, заполненная форма, страница после логина. type вводит посимвольно, как с клавиатуры, — на это реагируют маски ввода. С anchors ответ говорит, какие элементы сдвинулись после действия, хотя не должны. Готовые селекторы удобно брать из page_snapshot.',
+        en: "Click, type, press a key, hover, scroll, select an option, wait for a selector, pick files for upload or decide what to do with alert and confirm. Needed when the state you want to check only appears after an action: an expanded menu, an opened tab, a filled form, a page behind a login. type enters text key by key, like a keyboard, which input masks react to. With anchors the answer says which elements shifted after the action although they should not. Ready-to-use selectors come from page_snapshot.",
       }),
       inputSchema: {
         sessionId: z.string(),
-        action: z.enum(['click', 'fill', 'press', 'hover', 'scroll', 'wait', 'select', 'upload', 'dialog']),
+        action: z.enum(ACTIONS),
         selector: z.string().optional().describe(d('Не нужен для scroll, для dialog и для press с кликом по координатам')),
         value: z
           .string()
           .optional()
-          .describe(d('Текст для fill, клавиша для press, значение для select, accept | dismiss | текст ответа для dialog')),
+          .describe(d('Текст для fill и type, клавиша для press, значение для select, accept | dismiss | текст ответа для dialog')),
         files: z
           .array(z.string())
           .optional()
@@ -124,61 +132,33 @@ export function register(server) {
           .boolean()
           .optional()
           .describe(d('Кликнуть, не дожидаясь кликабельности: элемент под pointer-events: none иначе ждёт весь таймаут')),
+        anchors: z
+          .array(z.string())
+          .optional()
+          .describe(d('Селекторы элементов, которые обязаны остаться на месте: их боксы снимаются до и после действия, в ответе anchors.moved — что сдвинулось. Шапка при открытом меню, липкая панель, кнопка закрытия')),
+        settle: z
+          .number()
+          .optional()
+          .describe(d('Сколько ждать, пока якоря затихнут после действия, мс. По умолчанию 1500')),
       },
     },
-    async ({ sessionId, action, selector, value, files, x = 0, y = 0, timeout, force }) => {
+    async ({ sessionId, anchors, settle, ...step }) => {
       const session = getSession(sessionId);
-      const { page } = session;
-      const wait = timeout === undefined ? {} : { timeout };
+      if (!anchors?.length) return done(session, await perform(session, step));
 
-      /*
-       * Диалог — не действие над элементом, а настройка сессии: политика применяется к
-       * следующему alert, confirm или prompt, в том числе на уже открытой странице. Текст
-       * диалогов пишется в журнал всегда и читается через page_logs с kind: dialogs.
-       */
-      if (action === 'dialog') {
-        const wanted = String(value ?? 'dismiss');
-        session.dialogPolicy =
-          wanted === 'dismiss'
-            ? { action: 'dismiss', promptText: null }
-            : { action: 'accept', promptText: wanted === 'accept' ? null : wanted };
-        return json({ ok: true, action, dialogPolicy: session.dialogPolicy });
-      }
-
-      /*
-       * Клавиша и клик по координатам обходятся без селектора: Escape закрывают на уровне
-       * страницы, а по координатам кликают там, где подходящего узла в DOM просто нет.
-       * Раньше press без селектора уходил в locator('undefined') и падал по таймауту через
-       * полминуты — по такой ошибке не понять, что не так с вызовом.
-       */
-      if (!selector && action !== 'scroll') {
-        if (action === 'press') {
-          await page.keyboard.press(value ?? 'Enter');
-          return done(session, { action, key: value ?? 'Enter' });
-        }
-        if (action === 'click') {
-          if (!x && !y) throw new Error('Для click без selector нужны координаты x и y.');
-          await page.mouse.click(x, y);
-          return done(session, { action, at: { x, y } });
-        }
-        throw new Error(`Для действия ${action} нужен selector.`);
-      }
-
-      const target = selector ? page.locator(selector).first() : null;
-      const pressed = { ...wait, ...(force ? { force: true } : {}) };
-
-      switch (action) {
-        case 'click': await target.click(pressed); break;
-        case 'fill': await target.fill(value ?? '', wait); break;
-        case 'press': await target.press(value ?? 'Enter', wait); break;
-        case 'hover': await target.hover(pressed); break;
-        case 'select': await target.selectOption(value ?? '', wait); break;
-        case 'scroll': await page.evaluate(([sx, sy]) => window.scrollBy(sx, sy), [x, y]); break;
-        case 'wait': await target.waitFor({ state: 'visible', ...wait }); break;
-        case 'upload': return done(session, { action, selector, ...(await upload(page, target, files, wait, pressed)) });
-        default: throw new Error(`Неизвестное действие: ${action}`);
-      }
-      return done(session, { action, selector });
+      /* Якоря снимаются после того, как страница затихла и до, и после: иначе в «до» попадёт
+         хвост прошлого перехода, а в «после» — середина анимации открытия. */
+      const { boxes: before } = await settleBoxes(session.page, anchors, { timeout: settle ?? 1500 });
+      const payload = await perform(session, step);
+      const { boxes: after, settled } = await settleBoxes(session.page, anchors, { timeout: settle ?? 1500 });
+      const diff = diffBoxes(before, after);
+      return done(session, {
+        ...payload,
+        anchors: {
+          ...diff,
+          ...(settled ? {} : { note: 'Якоря не затихли за отведённое время: замер «после» может попасть на середину анимации. Увеличьте settle.' }),
+        },
+      });
     },
   );
 
@@ -420,39 +400,4 @@ function done(session, payload) {
   });
 }
 
-/**
- * Выбор файлов.
- *
- * Два разных пути, и оба нужны. Скрытый input[type=file] за стилизованным label — самый
- * частый случай, и setInputFiles работает с ним прямо, не требуя видимости. Всё остальное —
- * кнопка, скрепка, зона перетаскивания — открывает системный диалог выбора, и его ловим
- * событием: без этого путь «клик по скрепке → выбор файла» проверить нечем.
- */
-async function upload(page, target, files, wait, pressed) {
-  if (!files || !files.length) {
-    throw new Error('Для upload нужен files — пути к файлам относительно рабочего каталога стенда.');
-  }
-
-  const picked = [];
-  for (const name of files) {
-    const abs = resolveInRoot(name);
-    const info = await stat(abs).catch(() => null);
-    if (!info || !info.isFile()) throw new Error(`Файла ${name} нет в рабочем каталоге стенда.`);
-    picked.push({ path: name, abs, bytes: info.size });
-  }
-  const paths = picked.map((f) => f.abs);
-
-  const isFileInput = await target
-    .evaluate((el) => el instanceof HTMLInputElement && el.type === 'file')
-    .catch(() => false);
-
-  if (isFileInput) {
-    await target.setInputFiles(paths, wait);
-    return { via: 'input', files: picked.map(({ path, bytes }) => ({ path, bytes })) };
-  }
-
-  const [chooser] = await Promise.all([page.waitForEvent('filechooser', wait), target.click(pressed)]);
-  await chooser.setFiles(paths);
-  return { via: 'filechooser', files: picked.map(({ path, bytes }) => ({ path, bytes })) };
-}
 

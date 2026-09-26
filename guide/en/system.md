@@ -10,6 +10,16 @@ STEPS:
   2. figma_components(all frames) — clusters with modifiers, drift, parallels (fixed heights).
   3. figma_breakpoints(frames of one screen) — what changes between widths, a ready clamp().
   4. Variables and the UI kit exist; no value from figma_tokens reached CSS without a node.
+  5. The UI kit is checked against the framework dictionary (phase 0): an icon button uses its tap-area utility, an icon uses a mask, hidden content uses the visibility utility.
+
+## The framework dictionary
+
+The project framework already solves part of the UI kit: the tap area of an icon button, an icon
+mask, visually hidden content. Your own CSS next to its utility is a second implementation that
+drifts away from the first.
+
+> **The utility was not applied.** The framework had a tap-area utility for icon buttons. The
+> modal close button was built at 15×15, the burger at 20×20, and both had a tap area below 24px.
 
 ## 3.1 Tokens
 

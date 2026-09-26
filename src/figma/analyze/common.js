@@ -11,6 +11,33 @@ import { childNodes } from '../snapshot.js';
 export const isVisible = (node) => node.visible !== false;
 
 /** Видимые узлы поддерева в порядке обхода (родитель раньше детей). */
+/**
+ * Нарисованная строка браузера в начале кадра.
+ *
+ * Дизайнер кладёт в кадр страницы прямоугольник на всю ширину у верхнего края — «адресную
+ * строку» 1440×60. Страница в браузере начинается с нуля, а в макете — с 60, и все координаты
+ * потока расходятся на эту высоту; агент вычитал её руками. Признаки: прямой потомок кадра у
+ * самого верха, на всю ширину, высота до 100px, без детей и без текста, закреплён (fixed) или
+ * просто лежит первым пустым слоем.
+ */
+export function browserChrome(snapshot, rootId) {
+  const root = snapshot.nodes[rootId];
+  if (!root?.box || !root.children?.length || root.box.w < 320) return null;
+  for (const id of root.children) {
+    const node = snapshot.nodes[id];
+    if (!node?.box || node.visible === false) continue;
+    const top = Math.abs(node.box.y - root.box.y) <= 1;
+    const full = node.box.w >= root.box.w * 0.98 && Math.abs(node.box.x - root.box.x) <= 1;
+    const thin = node.box.h >= 20 && node.box.h <= 100;
+    const empty = !node.children?.length && node.type !== 'TEXT';
+    const shape = ['RECTANGLE', 'FRAME', 'VECTOR'].includes(node.type);
+    if (top && full && thin && empty && shape) {
+      return { node: node.id, name: node.name, height: node.box.h, fixed: node.scrollBehavior === 'FIXED' || undefined };
+    }
+  }
+  return null;
+}
+
 export function visibleNodes(snapshot, rootId) {
   const out = [];
   const visit = (node, depth) => {

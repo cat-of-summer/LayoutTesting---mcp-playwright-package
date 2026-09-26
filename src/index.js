@@ -48,6 +48,8 @@ async function startHttp() {
   // Каталоги нужны сразу: nginx отдаёт artifacts/ и без первого прогона отвечал бы 404.
   await ensureDirs();
   const port = Number(arg('port', CONFIG.mcpPort));
+  /* Стенд в контейнере: журнал вызовов нужен, чтобы после падения было видно, что шло. */
+  process.env.LT_CALL_LOG ??= '1';
   /**
    * Сессия MCP -> транспорт и подпись набора, под которым она открыта. Браузеры переживают
    * переподключение агента.
@@ -176,6 +178,14 @@ async function startHttp() {
   };
   process.on('SIGTERM', shutdown);
   process.on('SIGINT', shutdown);
+  /* Необработанный отказ в одном вызове не должен ронять стенд со всеми сессиями всех агентов:
+     раньше процесс умирал молча, а клиент видел 502 и «session expired». */
+  process.on('unhandledRejection', (reason) => {
+    process.stderr.write(`[mcp] необработанный отказ: ${reason?.stack || reason}\n`);
+  });
+  process.on('uncaughtException', (err) => {
+    process.stderr.write(`[mcp] необработанное исключение: ${err?.stack || err}\n`);
+  });
 }
 
 const transport = arg('transport', 'http');

@@ -9,6 +9,26 @@ import { z } from 'zod';
 import { d } from '../i18n-params.js';
 import { t } from '../i18n.js';
 import { BROWSERS, VIEWPORTS } from '../config.js';
+import { ACTIONS } from '../browser/act.js';
+
+/** Шаг действия — тот же набор, что у browser_act: аудит в состояниях и form_audit. */
+export const stepSchema = z.object({
+  action: z.enum(ACTIONS),
+  selector: z.string().optional(),
+  value: z.string().optional(),
+  x: z.number().optional(),
+  y: z.number().optional(),
+  timeout: z.number().optional(),
+  force: z.boolean().optional(),
+});
+
+/** Состояние страницы: имя и шаги, которые его создают. */
+export const statesSchema = z
+  .array(z.object({ name: z.string().optional(), steps: z.array(stepSchema) }))
+  .optional()
+  .describe(
+    d('Проверить ещё и в этих состояниях: шаги browser_act, после которых открыта модалка, меню, выпадающий список. Между состояниями страница перезагружается'),
+  );
 
 /** Расширения, которые нет смысла отдавать как utf8. */
 export const IMAGE_MIME = {

@@ -1,0 +1,32 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<title>Меню и модалка</title>
+<style>
+  body { margin: 0; font: 16px/1.4 sans-serif; }
+  .hbar { display: flex; justify-content: space-between; align-items: center; height: 60px; padding: 0 20px; background: #eee; }
+  .hbar__burger { width: 32px; height: 32px; padding: 0; border: 0; background: #333; }
+  /* Открытое меню: шапка внутри контейнера модалки с отступом — кнопка уезжает на 60px. */
+  body.menu-open .hbar { margin: 0 60px; }
+  .modal { display: none; position: fixed; inset: 20%; background: #fff; border: 1px solid #999; padding: 20px; }
+  body.modal-open .modal { display: block; }
+  .modal__close { position: absolute; top: 8px; right: 8px; width: 15px; height: 15px; padding: 0; border: 0; background: #c00; }
+  main { padding: 20px; }
+</style>
+</head>
+<body>
+<header class="hbar">
+  <a class="hbar__logo" href="/">Логотип</a>
+  <button class="hbar__burger" aria-label="Меню" onclick="document.body.classList.toggle('menu-open')"></button>
+</header>
+<main>
+  <p>Текст страницы.</p>
+  <button id="open-modal" style="height:40px" onclick="document.body.classList.add('modal-open')">Открыть окно</button>
+</main>
+<div class="modal" role="dialog">
+  <button class="modal__close" aria-label="Закрыть" onclick="document.body.classList.remove('modal-open')"></button>
+  <p>Содержимое окна.</p>
+</div>
+</body>
+</html>

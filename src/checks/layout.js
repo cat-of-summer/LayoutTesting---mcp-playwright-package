@@ -4,7 +4,17 @@
  */
 
 function collectLayoutIssues(options) {
-  const { minTarget, contrastRatio, maxItems, categories, include, exclude, frozen } = options;
+  const { minTarget, contrastRatio, maxItems: shownMax, categories, include, exclude, frozen } = options;
+  /*
+   * Потолок сбора и потолок показа — разные числа.
+   *
+   * Раньше сбор останавливался на maxItems, и счётчик считался по обрезанному списку: в сводке
+   * по ширинам, где maxItems равен 10, мобильная страница с 26 мелкими тач-таргетами получала
+   * tinyTargets: 10 — ровно столько же, сколько десктоп. Масштаб беды пропадал. Теперь собирается
+   * до COLLECT_CAP, счётчик честный, а в ответ идёт первые shownMax.
+   */
+  const COLLECT_CAP = 500;
+  const maxItems = Math.max(shownMax, COLLECT_CAP);
 
   const cssPath = (el) => {
     if (!el || el.nodeType !== 1) return '';
@@ -667,6 +677,12 @@ function collectLayoutIssues(options) {
   );
   counts.boxOverflow -= clippedOverflow;
   if (clippedOverflow) counts.boxOverflowClipped = clippedOverflow;
+  const countsCapped = Object.entries(issues)
+    .filter(([, v]) => Array.isArray(v) && v.length >= COLLECT_CAP)
+    .map(([k]) => k);
+  for (const [key, value] of Object.entries(issues)) {
+    if (Array.isArray(value) && value.length > shownMax) issues[key] = value.slice(0, shownMax);
+  }
 
   /*
    * Движение на странице.
@@ -724,6 +740,7 @@ function collectLayoutIssues(options) {
       .filter(([k]) => k !== 'boxOverflowClipped')
       .reduce((a, [, b]) => a + b, 0),
     counts,
+    ...(countsCapped.length ? { countsCapped: `Сбор остановлен на ${COLLECT_CAP}: ${countsCapped.join(', ')} — настоящее число больше.` } : {}),
     ...(motion ? { motion } : {}),
     ...(wanted ? { categories: [...wanted] } : {}),
     /* Сужение показываем в ответе: иначе пустой отчёт по опечатке в селекторе не отличить

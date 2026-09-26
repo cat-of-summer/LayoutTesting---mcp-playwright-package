@@ -21,7 +21,6 @@ const EN = {
   'Ссылка без node-id: кадры одной страницы по имени или id': 'A link without a node-id: the frames of one page by name or id',
   'С page: с какого кадра продолжить': 'With page: which frame to continue from',
   'Попиксельно по каждой секции кадра с поправкой на сдвиг её текстов': 'Pixel by pixel per section of the frame, corrected by the shift of its texts',
-  'Для render: children режет кадр по дочерним фреймам, по части на секцию': 'For render: children cuts the frame by its child frames, one part per section',
   'С guide: только чек-лист и гейт фазы': 'With guide: only the checklist and the gate of the phase',
   'auto (по умолчанию) определяет по расширению': 'auto (default) decides by file extension',
   'auto (по умолчанию) поднимает браузер только для страниц, пустых без JS':
@@ -220,8 +219,8 @@ const EN = {
     'A User-Agent string of your own: some sites answer a headless browser with 403',
   'Не нужен для scroll, для dialog и для press с кликом по координатам':
     'Not required for scroll, for dialog, and for press or a click by coordinates',
-  'Текст для fill, клавиша для press, значение для select, accept | dismiss | текст ответа для dialog':
-    'Text for fill, key for press, option value for select, accept | dismiss | reply text for dialog',
+  'Текст для fill и type, клавиша для press, значение для select, accept | dismiss | текст ответа для dialog':
+    'Text for fill and type, key for press, option value for select, accept | dismiss | reply text for dialog',
   'Для upload: пути к файлам относительно рабочего каталога стенда':
     'For upload: file paths relative to the stand working directory',
   'Смещение прокрутки по горизонтали; для click без селектора — координата':
@@ -325,6 +324,19 @@ const EN = {
   'both (по умолчанию) — и смысловое, и попиксельное; semantic — только смысловое; pixel — только попиксельное':
     'both (default) — semantic and pixel; semantic — semantic only; pixel — pixel only',
   'Допуск смещения в пикселях. По умолчанию 2': 'Offset tolerance in pixels. Default 2',
+  'Не закрывать сессию по простою: для долгой вёрстки, когда между проверками пишется код. Предельный возраст — LT_SESSION_KEEPALIVE_MAX_MS, 8 часов': 'Do not close the session when idle: for long layout work, when code is written between checks. Maximum age is LT_SESSION_KEEPALIVE_MAX_MS, 8 hours',
+  'Селекторы элементов, которые обязаны остаться на месте: их боксы снимаются до и после действия, в ответе anchors.moved — что сдвинулось. Шапка при открытом меню, липкая панель, кнопка закрытия': 'Selectors of elements that must stay in place: their boxes are measured before and after the action, anchors.moved in the answer lists what shifted. A header with the menu open, a sticky bar, a close button',
+  'Сколько ждать, пока якоря затихнут после действия, мс. По умолчанию 1500': 'How long to wait for the anchors to settle after the action, ms. Default 1500',
+  'Проверить ещё и в этих состояниях: шаги browser_act, после которых открыта модалка, меню, выпадающий список. Между состояниями страница перезагружается': 'Also check in these states: browser_act steps after which a modal, a menu or a dropdown is open. The page is reloaded between states',
+  'Какие формы проверять. По умолчанию form': 'Which forms to check. Default form',
+  'Шаги browser_act, после которых форма видна: открыть модалку, развернуть блок': 'browser_act steps after which the form is visible: open a modal, expand a block',
+  'Свои годные значения: селектор или name поля → значение. Остальное стенд подставит по типу поля': 'Your own valid values: field selector or name → value. The stand fills the rest by field type',
+  'intercept — запрос отправки перехватить и ответить 200 (по умолчанию), real — пустить на сервер, none — не отправлять годную форму': 'intercept — intercept the submit request and answer 200 (default), real — let it reach the server, none — do not submit the valid form',
+  'Сколько форм обойти. По умолчанию 5': 'How many forms to go through. Default 5',
+  'Узел-контейнер: ссылка figma.com или запись ключ:id': 'Container node: a figma.com link or a key:id entry',
+  'Явные пары узел ↔ селектор по порядку: расстояния между соседями списка в макете и на странице': 'Explicit node ↔ selector pairs in order: distances between neighbours of the list in the design and on the page',
+  'Для render: children режет кадр по дочерним фреймам, по части на секцию; tiles рисует каждый дочерний узел отдельно плюс контакт-лист с подписями id — для страницы Figma включается сам': 'For render: children cuts the frame by its child frames, one part per section; tiles renders every child node separately plus a contact sheet labelled with ids — switched on automatically for a Figma page',
+  'Для svg: fill — контур по геометрии заливки, без обводки и ровно по узлу: для clip-path и масок': 'For svg: fill — an outline from the fill geometry, without the stroke and exactly the size of the node: for clip-path and masks',
 };
 
 /**

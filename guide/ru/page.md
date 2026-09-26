@@ -7,8 +7,8 @@
 ВХОД: все блоки прошли гейт фазы 10 в обоих кадрах.
 ШАГИ:
   1. audit — сводка по всем проверкам.
-  2. figma_compare(кадр страницы) — на каждый кадр: semantic и sections: true; coverage без пробелов.
-  3. layout_audit(widths: из figma_sync.widths.suggested) — скролл, наложения, обрезки, тач-таргеты на каждой ширине.
+  2. figma_compare(кадр страницы) — на каждый кадр: semantic и sections: true; coverage без пробелов и без notCompared.
+  3. layout_audit(widths: из figma_sync.widths.suggested, states: модалки и меню) — скролл, наложения, обрезки, тач-таргеты на каждой ширине и в каждом состоянии.
   4. interaction_audit в живой сессии; browser_goto с frames — стартовая анимация.
   5. a11y_axe + a11y_pa11y; validate_html (ignore — только для соглашений библиотек).
   6. Отчёт «готово» — только после 2 и 4.
@@ -19,7 +19,8 @@
 audit                                          → самый дешёвый первый шаг, сводка по всем проверкам
 figma_compare(кадр, mode: "semantic")          → отдельный прогон на каждый кадр
 figma_compare(кадр, sections: true)            → попиксельно по каждой секции кадра
-layout_audit(widths: [...])                    → скролл, наложения, обрезанный текст, тач-таргеты — на каждой ширине
+layout_audit(widths: [...], states: [...])     → скролл, наложения, обрезанный текст, тач-таргеты — на каждой ширине и в открытых модалках и меню
+form_audit                                     → формы: ошибки, исправление, отправка
 interaction_audit                              → в живой сессии
 browser_goto(url, frames: 8)                   → первые кадры после навигации: intro
 a11y_axe + a11y_pa11y                          → наборы правил разные, ловят разное
@@ -72,6 +73,6 @@ CSS — в поле `css`, новые атрибуты платформы (`popo
 ## Гейт страницы
 
 Ноль находок по `documentOverflow`, `overlaps`, `clippedText`, `brokenImages`,
-`imagesWithoutDimensions`, `tinyTargets` на каждой ширине; пустой `silent` у
-`interaction_audit`; `coverage` у `figma_compare` каждого кадра без пробелов; intro просмотрен
-по кадрам. Остальное — с обоснованием.
+`imagesWithoutDimensions`, `tinyTargets` на каждой ширине и в каждом состоянии (`states`); пустой
+`silent` у `interaction_audit`; `form_audit` без находок; `coverage` у `figma_compare` каждого
+кадра без пробелов и без `notCompared`; intro просмотрен по кадрам. Остальное — с обоснованием.

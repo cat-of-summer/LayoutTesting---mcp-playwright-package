@@ -27,12 +27,13 @@ const EVICTED_KEEP = 50;
 
 const REASONS = {
   idle: 'простой дольше LT_SESSION_IDLE_MS',
-  maxAge: 'достигнут предельный возраст LT_SESSION_MAX_AGE_MS',
+  maxAge: 'достигнут предельный возраст LT_SESSION_MAX_AGE_MS (с keepAlive — LT_SESSION_KEEPALIVE_MAX_MS)',
   lru: 'вытеснена под новую сессию, достигнут потолок LT_MAX_SESSIONS',
   crashed: 'страница упала',
   contextClosed: 'контекст браузера закрыт снаружи',
   disconnected: 'браузер отключился',
   closed: 'закрыта через browser_close',
+  timeout: 'операция внутри сессии зависла и была оборвана',
 };
 
 /**
@@ -274,6 +275,9 @@ function sessionGone(id) {
   if (past.needsAuth) {
     parts.push('Доступ (auth и заголовки) передайте заново — в журнале он не хранится.');
   }
+  if (past.reason === 'idle') {
+    parts.push('Для долгой работы, когда между проверками пишется код, открывайте сессию с keepAlive: true — простой её не закроет.');
+  }
   return new Error(parts.join(' '));
 }
 
@@ -317,11 +321,12 @@ async function sweep() {
   const now = Date.now();
   for (const session of [...sessions.values()]) {
     if (session.owned) continue;
-    if (CONFIG.sessionIdleMs && now - session.lastUsedMs >= CONFIG.sessionIdleMs) {
+    if (!session.keepAlive && CONFIG.sessionIdleMs && now - session.lastUsedMs >= CONFIG.sessionIdleMs) {
       await closeSession(session.id, 'idle');
       continue;
     }
-    if (CONFIG.sessionMaxAgeMs && now - session.createdMs >= CONFIG.sessionMaxAgeMs) {
+    const maxAge = session.keepAlive ? CONFIG.sessionKeepAliveMaxMs : CONFIG.sessionMaxAgeMs;
+    if (maxAge && now - session.createdMs >= maxAge) {
       await closeSession(session.id, 'maxAge');
     }
   }
@@ -339,7 +344,7 @@ function startSweeper() {
   sweeper.unref?.();
 }
 
-export async function createSession(profileInput = {}, { owned = null } = {}) {
+export async function createSession(profileInput = {}, { owned = null, keepAlive = false } = {}) {
   await makeRoom();
   const profile = normalizeProfile(profileInput);
   const browserKey = browserCacheKey(profile.browser, profile.hostMap);
@@ -383,8 +388,10 @@ export async function createSession(profileInput = {}, { owned = null } = {}) {
     createdAt: new Date(now).toISOString(),
     createdMs: now,
     lastUsedMs: now,
-    reopen,
+    reopen: keepAlive ? { ...reopen, keepAlive: true } : reopen,
     needsAuth,
+    /** Простой не закрывает сессию, возраст ограничен LT_SESSION_KEEPALIVE_MAX_MS. */
+    keepAlive: Boolean(keepAlive),
   };
   /*
    * Страница падает и отдельно от браузера: тогда сессия числится живой, но мертва по сути.

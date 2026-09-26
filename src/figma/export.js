@@ -110,6 +110,71 @@ async function withChannels({ editor, client, state }, viaEditor, viaRest) {
   state.channel = 'rest';
 }
 
+/** Подпись плитки контакт-листа: SVG поверх картинки, шрифт стенда. */
+const escapeXml = (value) => String(value).replace(/[<>&"]/g, (ch) => ({ '<': '&lt;', '>': '&gt;', '&': '&amp;', '"': '&quot;' })[ch]);
+
+/**
+ * Контакт-лист: миниатюры плиток сеткой, у каждой подпись «id имя».
+ *
+ * Страница Figma — россыпь секций по холсту, а не колонка: целиком при scale 0.5 она выходит
+ * 7928×3862 и нечитаема, а резка полосами режет секции поперёк. Лист показывает, что где лежит,
+ * а сами плитки — в полном размере рядом.
+ */
+export async function contactSheet(tiles, out, { thumb = 360, columns = 4, label = 28 } = {}) {
+  const cells = [];
+  for (const tile of tiles) {
+    const image = await sharp(tile.file).resize({ width: thumb, height: thumb, fit: 'inside' }).png().toBuffer();
+    const meta = await sharp(image).metadata();
+    cells.push({ image, w: meta.width, h: meta.height, text: `${tile.id} ${tile.name || ''}`.slice(0, 48) });
+  }
+  const rows = Math.ceil(cells.length / columns);
+  const cellH = thumb + label;
+  const width = columns * (thumb + 8) + 8;
+  const height = rows * (cellH + 8) + 8;
+  const composites = [];
+  cells.forEach((cell, i) => {
+    const left = 8 + (i % columns) * (thumb + 8);
+    const top = 8 + Math.floor(i / columns) * (cellH + 8);
+    composites.push({ input: cell.image, left, top: top + label });
+    const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="${thumb}" height="${label}"><rect width="100%" height="100%" fill="#222"/><text x="6" y="${label - 9}" font-family="sans-serif" font-size="14" fill="#fff">${escapeXml(cell.text)}</text></svg>`;
+    composites.push({ input: Buffer.from(svg), left, top });
+  });
+  await sharp({ create: { width, height, channels: 3, background: '#f0f0f0' } }).composite(composites).png().toFile(out);
+  return out;
+}
+
+/**
+ * Узел, который рисуется плиткой: страница целиком или явный parts: tiles.
+ * Каждый видимый дочерний узел — отдельный рендер со своим масштабом, плюс контакт-лист.
+ */
+async function renderTiles(group, id, found, options, dir) {
+  const { snapshot, node } = found.get(id);
+  const kids = childNodes(snapshot, node).filter((kid) => kid.visible !== false && kid.box && kid.box.w >= 8 && kid.box.h >= 8);
+  const ref = refOf(group.fileKey, id);
+  if (!kids.length) return { entry: strip({ ref, name: node.name, error: 'У узла нет видимых дочерних узлов — рисовать плиткой нечего.' }) };
+  const inner = await exportRender(
+    kids.map((kid) => refOf(group.fileKey, kid.id)),
+    { ...options, parts: 'auto', clip: null },
+  );
+  const tiles = inner.renders.filter((render) => render.image).map((render) => ({
+    id: String(render.ref).split(':').slice(1).join(':'),
+    name: render.name,
+    file: render.image.path,
+  }));
+  const sheet = tiles.length ? await contactSheet(tiles, path.join(dir, `${slug(node.name) || 'page'}-${safeId(id)}.sheet.png`)) : null;
+  return {
+    entry: strip({
+      ref,
+      name: node.name,
+      type: node.type,
+      ...(sheet ? { sheet: artifactRef(sheet) } : {}),
+      tiles: inner.renders,
+      tilesNote: 'Узел нарисован плиткой: каждый дочерний узел отдельно в своём масштабе, sheet — контакт-лист с подписями id и имени.',
+    }),
+    inner,
+  };
+}
+
 export async function exportRender(refs, { client = getRestClient(), cacheDir = DIRS.figma, editor = null, scale, clip, parts = 'auto' } = {}) {
   const runId = newRunId('figma-render');
   const dir = await runDir(runId);
@@ -121,6 +186,20 @@ export async function exportRender(refs, { client = getRestClient(), cacheDir = 
     if (!group.nodeIds.length) throw new Error('Для render нужны узлы: ссылка с node-id или запись ключ:id.');
     const { found, requests: spent } = await ensureNodes(group.fileKey, group.nodeIds, { client, cacheDir, editor });
     addRequests(requests, spent);
+
+    /* Страница Figma (CANVAS) — всегда плиткой: целиком она нечитаема и режется поперёк секций. */
+    const tiled = group.nodeIds.filter((id) => !clip && (parts === 'tiles' || found.get(id).node.type === 'CANVAS'));
+    for (const id of tiled) {
+      const { entry, inner } = await renderTiles(group, id, found, { client, cacheDir, editor, scale }, dir);
+      if (inner) {
+        addRequests(requests, inner.requests);
+        state.channel ??= inner.channel;
+        state.fallback ??= inner.editorFallback;
+      }
+      renders.push(entry);
+    }
+    group.nodeIds = group.nodeIds.filter((id) => !tiled.includes(id));
+    if (!group.nodeIds.length) continue;
 
     const plan = group.nodeIds.map((id) => {
       const { snapshot, node } = found.get(id);
@@ -368,7 +447,54 @@ export function hiddenHint(snapshot, id) {
   return undefined;
 }
 
-export async function exportSvg(refs, { client = getRestClient(), cacheDir = DIRS.figma, editor = null } = {}) {
+/**
+ * SVG из геометрии заливки: {w, h, shapes: [{matrix, paths: [{d, rule}], color}]}.
+ * Координаты путей — в системе узла, matrix переводит их в систему корня.
+ */
+export function svgFromGeometry({ w, h, shapes }) {
+  const hex = (c) =>
+    c ? `#${[c.r, c.g, c.b].map((v) => Math.round(v * 255).toString(16).padStart(2, '0')).join('')}` : '#000000';
+  const body = shapes
+    .flatMap((shape) => {
+      const [a, b, c, d, e, f] = shape.matrix.map((v) => round(v, 4));
+      const identity = a === 1 && b === 0 && c === 0 && d === 1;
+      const transform = identity ? (e || f ? ` transform="translate(${e} ${f})"` : '') : ` transform="matrix(${a} ${b} ${c} ${d} ${e} ${f})"`;
+      const opacity = shape.color && shape.color.a < 1 ? ` fill-opacity="${round(shape.color.a, 3)}"` : '';
+      return shape.paths.map(
+        (p) => `<path d="${p.d}"${p.rule === 'EVENODD' ? ' fill-rule="evenodd"' : ''} fill="${hex(shape.color)}"${opacity}${transform}/>`,
+      );
+    })
+    .join('');
+  const W = round(w, 3);
+  const H = round(h, 3);
+  return `<svg xmlns="http://www.w3.org/2000/svg" width="${W}" height="${H}" viewBox="0 0 ${W} ${H}" fill="none">${body}</svg>`;
+}
+
+/** Геометрия из ответа REST с geometry=paths: у каждого узла fillGeometry и рамка. */
+export function geometryFromRest(document) {
+  const root = document.absoluteBoundingBox || { x: 0, y: 0, width: 0, height: 0 };
+  const shapes = [];
+  const visit = (node) => {
+    if (node.visible === false) return;
+    if (node.fillGeometry?.length && node.absoluteBoundingBox) {
+      /* REST не отдаёт абсолютную матрицу: смещение берётся по рамке, поворот теряется. */
+      const solid = (node.fills || []).find((p) => p.type === 'SOLID' && p.visible !== false);
+      const rt = node.relativeTransform;
+      const rotated = rt && (Math.abs(rt[0][1]) > 1e-6 || Math.abs(rt[1][0]) > 1e-6);
+      shapes.push({
+        matrix: [1, 0, 0, 1, node.absoluteBoundingBox.x - root.x, node.absoluteBoundingBox.y - root.y],
+        paths: node.fillGeometry.map((g) => ({ d: g.path, rule: g.windingRule })),
+        color: solid ? { ...solid.color, a: solid.opacity ?? solid.color?.a ?? 1 } : null,
+        ...(rotated ? { rotated: true } : {}),
+      });
+    }
+    for (const kid of node.children || []) visit(kid);
+  };
+  visit(document);
+  return { w: root.width, h: root.height, shapes };
+}
+
+export async function exportSvg(refs, { client = getRestClient(), cacheDir = DIRS.figma, editor = null, geometry = 'render' } = {}) {
   const runId = newRunId('figma-svg');
   const dir = await runDir(runId);
   const requests = { tier1: 0 };
@@ -384,7 +510,28 @@ export async function exportSvg(refs, { client = getRestClient(), cacheDir = DIR
     addRequests(requests, spent);
 
     const sources = {};
-    await withChannels(
+    if (geometry === 'fill') {
+      await withChannels(
+        { editor, client, state },
+        async () => {
+          const res = await editor.geometry(group.fileKey, group.nodeIds);
+          for (const id of group.nodeIds) {
+            sources[id] = res[id]?.shapes?.length ? { svg: svgFromGeometry(res[id]) } : { error: res[id]?.error || 'у узла нет геометрии заливки' };
+          }
+        },
+        async () => {
+          const res = await client.fileNodes(group.fileKey, group.nodeIds, { geometry: true });
+          requests.tier1 += 1;
+          for (const id of group.nodeIds) {
+            const doc = res.nodes?.[id]?.document;
+            const geo = doc ? geometryFromRest(doc) : null;
+            sources[id] = geo?.shapes.length
+              ? { svg: svgFromGeometry(geo), ...(geo.shapes.some((s) => s.rotated) ? { rotated: true } : {}) }
+              : { error: 'у узла нет геометрии заливки' };
+          }
+        },
+      );
+    } else await withChannels(
       { editor, client, state },
       async () => {
         const res = await editor.render(group.fileKey, group.nodeIds.map((id) => ({ id, format: 'svg' })));
@@ -427,6 +574,10 @@ export async function exportSvg(refs, { client = getRestClient(), cacheDir = DIR
         monochrome: clean.monochrome,
         color: clean.color || undefined,
         colors: clean.monochrome ? undefined : clean.colors,
+        ...(geometry === 'fill' ? { geometry: 'fill' } : {}),
+        ...(sources[id].rotated
+          ? { geometryNote: 'Часть узлов повёрнута, а REST не отдаёт их абсолютную матрицу: поворот потерян. Канал редактора такое рисует верно.' }
+          : {}),
         file: artifactRef(file),
       });
       byHash.set(hash, entry);

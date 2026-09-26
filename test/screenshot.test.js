@@ -316,7 +316,8 @@ test('layout_audit не раздувается на странице с инла
 
     const audit = await layoutAudit(session.page, { maxItems: 5 });
 
-    assert.equal(audit.counts.imagesWithoutDimensions, 5, 'категория должна подчиняться maxItems');
+    assert.equal(audit.counts.imagesWithoutDimensions, 30, 'счётчик честный: все тридцать');
+    assert.equal(audit.issues.imagesWithoutDimensions.length, 5, 'подробности подчиняются maxItems');
     for (const item of audit.issues.imagesWithoutDimensions) {
       assert.ok(item.src.length < 80, `адрес не обрезан: ${item.src.slice(0, 80)}`);
       assert.match(item.src, /^data:image\/png;base64,…\(\d+ КБ\)$/);

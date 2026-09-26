@@ -69,6 +69,15 @@ export const FIGMA = {
   /** auto — канал редактора включается, когда есть чем войти; off — только REST. */
   editor: (process.env.FIGMA_EDITOR || 'auto').toLowerCase(),
   editorIdleMs: Number(process.env.FIGMA_EDITOR_IDLE_MS || 10 * 60 * 1000),
+  /*
+   * Потолок одной операции в редакторе и длина очереди к нему.
+   *
+   * Без них зависший вызов Plugin API держал очередь бесконечно: шесть параллельных запросов
+   * уходили в фон по тайм-ауту клиента, а следующие ждали за ними молча. Теперь зависшая
+   * операция через editorJobMs закрывает вкладку, а лишний запрос сразу слышит «занято».
+   */
+  editorJobMs: Number(process.env.FIGMA_EDITOR_JOB_MS || 120 * 1000),
+  editorQueueMax: Number(process.env.FIGMA_EDITOR_QUEUE_MAX || 3),
   /** Имя сохранённого состояния browser_storage, если вход уже сделан руками. */
   storageState: process.env.FIGMA_STORAGE_STATE || '',
   autoIssueToken: process.env.FIGMA_TOKEN_AUTOISSUE !== '0',

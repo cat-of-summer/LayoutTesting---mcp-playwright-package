@@ -55,6 +55,9 @@ export const CONFIG = {
   maxSessions: Number(process.env.LT_MAX_SESSIONS || 8),
   sessionIdleMs: Number(process.env.LT_SESSION_IDLE_MS || 15 * 60 * 1000),
   sessionMaxAgeMs: Number(process.env.LT_SESSION_MAX_AGE_MS || 60 * 60 * 1000),
+  /* Сессия с keepAlive: простой её не закрывает, а предельный возраст длиннее рабочего дня
+     вёрстки. Пока агент пишет код, он не трогает браузер по полчаса и больше. */
+  sessionKeepAliveMaxMs: Number(process.env.LT_SESSION_KEEPALIVE_MAX_MS || 8 * 60 * 60 * 1000),
   sessionSweepMs: Number(process.env.LT_SESSION_SWEEP_MS || 60 * 1000),
   defaultTimeout: Number(process.env.DEFAULT_TIMEOUT || 30000),
   /** Порог расхождения визуальной регрессии в процентах пикселей. */

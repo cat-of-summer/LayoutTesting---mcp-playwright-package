@@ -7,8 +7,8 @@ Once every block is done — a run across the page, on every design frame and at
 ENTRY: every block passed the phase 10 gate in both frames.
 STEPS:
   1. audit — a summary of every check.
-  2. figma_compare(page frame) — per frame: semantic and sections: true; coverage without gaps.
-  3. layout_audit(widths: from figma_sync.widths.suggested) — scroll, overlaps, clipping, tap targets at every width.
+  2. figma_compare(page frame) — per frame: semantic and sections: true; coverage without gaps and without notCompared.
+  3. layout_audit(widths: from figma_sync.widths.suggested, states: modals and menus) — scroll, overlaps, clipping, tap targets at every width and in every state.
   4. interaction_audit in the live session; browser_goto with frames — the intro animation.
   5. a11y_axe + a11y_pa11y; validate_html (ignore — only for library conventions).
   6. The "done" report — only after 2 and 4.
@@ -19,7 +19,8 @@ STEPS:
 audit                                          → the cheapest first step, a summary of every check
 figma_compare(frame, mode: "semantic")         → a separate run per frame
 figma_compare(frame, sections: true)           → pixel per section of the frame
-layout_audit(widths: [...])                    → scroll, overlaps, clipped text, tap targets — at every width
+layout_audit(widths: [...], states: [...])     → scroll, overlaps, clipped text, tap targets — at every width and in open modals and menus
+form_audit                                     → forms: errors, fixing, submission
 interaction_audit                              → in the live session
 browser_goto(url, frames: 8)                   → the first frames after navigation: the intro
 a11y_axe + a11y_pa11y                          → different rule sets, they catch different things
@@ -75,6 +76,6 @@ human. The agent has no right to change brand colors.
 ## Gate
 
 Zero findings in `documentOverflow`, `overlaps`, `clippedText`, `brokenImages`,
-`imagesWithoutDimensions`, `tinyTargets` at every width; an empty `silent` from
-`interaction_audit`; `coverage` of `figma_compare` for every frame without gaps; the intro looked
-at frame by frame. Everything else with a justification.
+`imagesWithoutDimensions`, `tinyTargets` at every width and in every state (`states`); an empty
+`silent` from `interaction_audit`; `form_audit` with no findings; `coverage` of `figma_compare`
+for every frame without gaps and without `notCompared`; the intro looked at frame by frame. Everything else with a justification.

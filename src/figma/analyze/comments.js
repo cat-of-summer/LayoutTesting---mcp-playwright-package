@@ -175,6 +175,73 @@ export function resolveAnchor(comment, frames) {
   };
 }
 
+/** Имя без хвостов копии: «Footer copy 2», «Главная (копия)» → «footer», «главная». */
+const baseName = (name) =>
+  String(name || '')
+    .toLowerCase()
+    .replace(/\(?\s*(copy|копия)\s*\d*\s*\)?/g, '')
+    .replace(/\s+\d+$/, '')
+    .trim();
+
+/** Набор текстов поддерева — отпечаток, по которому копия узнаёт оригинал. */
+function textPrint(snapshot, rootId, max = 60) {
+  const out = new Set();
+  for (const { node } of visibleNodes(snapshot, rootId)) {
+    if (node.type === 'TEXT' && node.text?.chars?.trim()) out.add(node.text.chars.trim().toLowerCase().replace(/\s+/g, ' '));
+    if (out.size >= max) break;
+  }
+  return out;
+}
+
+const similar = (a, b) => {
+  if (!a.size && !b.size) return 1;
+  let common = 0;
+  for (const item of a) if (b.has(item)) common += 1;
+  return common / Math.max(a.size, b.size);
+};
+
+/** Путь индексов от предка к узлу: по нему находится тот же узел в оригинале. */
+function indexPath(snapshot, fromId, toId) {
+  const route = [];
+  for (let id = toId; id && id !== fromId; id = snapshot.nodes[id]?.parent) {
+    const parent = snapshot.nodes[snapshot.nodes[id]?.parent];
+    if (!parent) return null;
+    route.unshift(parent.children.indexOf(id));
+  }
+  return route;
+}
+
+/**
+ * Комментарий на копии кадра — к оригиналу.
+ *
+ * Дизайнер оставил замечания на копии макета (узлы 588:*), а не на рабочих кадрах, и запрос по
+ * рабочему кадру их не показывал: у копии свои id. Здесь среди предков элемента комментария
+ * ищется узел с тем же именем (без «copy» и номеров) и почти тем же набором текстов, что у
+ * запрошенного, и элемент переносится в оригинал тем же путём по дереву.
+ */
+export function copyTarget(snapshot, anchorNode, lineage, frames, wanted) {
+  for (const target of wanted) {
+    const host = frames.find((frame) => frame.snapshot.nodes[target]);
+    if (!host) continue;
+    const original = host.snapshot.nodes[target];
+    const print = textPrint(host.snapshot, target);
+    for (const candidate of lineage) {
+      const node = snapshot.nodes[candidate];
+      if (!node || candidate === target || baseName(node.name) !== baseName(original.name)) continue;
+      if (similar(textPrint(snapshot, candidate), print) < 0.7) continue;
+      const route = indexPath(snapshot, candidate, anchorNode) || [];
+      let mapped = target;
+      for (const index of route) {
+        const next = host.snapshot.nodes[mapped]?.children?.[index];
+        if (!next) break;
+        mapped = next;
+      }
+      return { target, copy: candidate, mapped, snapshot: host.snapshot };
+    }
+  }
+  return null;
+}
+
 /** Совместимость: только сама привязка. */
 export const anchorOf = (comment, frames) => resolveAnchor(comment, frames).anchor;
 
@@ -212,10 +279,28 @@ export function buildThreads(comments, frames, { resolved = false, targets = nul
     const thread = replies.get(comment.id) || [];
     if ((since || until) && ![comment, ...thread].some((item) => inRange(item.created_at))) continue;
 
-    const { anchor, lineage, snapshot, unresolvedFrame } = resolveAnchor(comment, frames);
+    const resolvedAnchor = resolveAnchor(comment, frames);
+    const { lineage, unresolvedFrame } = resolvedAnchor;
+    let { anchor, snapshot } = resolvedAnchor;
     let relation = null;
     if (wanted) {
-      const target = wanted.find((id) => lineage.includes(id));
+      let target = wanted.find((id) => lineage.includes(id));
+      if (!target && snapshot && anchor?.node) {
+        const copy = copyTarget(snapshot, anchor.node, lineage, frames, wanted);
+        if (copy) {
+          target = copy.target;
+          const mappedNode = copy.snapshot.nodes[copy.mapped];
+          anchor = {
+            ...anchor,
+            node: copy.mapped,
+            name: clip(mappedNode?.name, 40),
+            path: pathOf(copy.snapshot, copy.mapped),
+            fromCopy: { node: resolvedAnchor.anchor.node, copy: copy.copy },
+            ...(copy.snapshot.fileKey ? { url: urlOf(copy.snapshot.fileKey, copy.mapped) } : {}),
+          };
+          snapshot = copy.snapshot;
+        }
+      }
       if (!target) {
         if (unresolvedFrame && blind) unresolvedFrames.add(unresolvedFrame);
         continue;

@@ -254,7 +254,8 @@ test('намеренные клипы не съедают потолок у на
 
   assert.equal(res.counts.boxOverflow, 1, `настоящий вылет потерян: ${JSON.stringify(res.counts)}`);
   assert.equal(res.issues.boxOverflow[0].clipped, false, 'настоящий вылет стоит первым');
-  assert.equal(res.counts.boxOverflowClipped, 2, 'у клипов свой потолок, а не общий');
+  assert.equal(res.counts.boxOverflowClipped, 6, 'клипы считаются честно, все шесть');
+  assert.equal(res.issues.boxOverflow.length, 2, 'а показывается не больше maxItems');
 });
 
 test('на замороженной странице с движением ответ несёт motion, на живой — нет', options, async () => {

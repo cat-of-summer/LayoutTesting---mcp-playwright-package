@@ -1,6 +1,6 @@
 # Rules and prohibitions
 
-If this guide is reduced to one page, this is the page: twelve rules and nine prohibitions.
+If this guide is reduced to one page, this is the page: thirteen rules and ten prohibitions.
 
 All of them come from cases where breaking them cost rework. Next to each one is what it actually
 cost.
@@ -96,6 +96,15 @@ behaviour is not tuned to the height. Whatever the agent decided on its own (the
 intentionally absent, the element is not a link) is stated in the report: a silent decision is
 indistinguishable from a forgotten one.
 
+## 13. Transitions are checked, not end points
+
+An empty form showed errors, a full one showed "Thank you", the menu opened — and none of that
+catches what lies between: an error that does not clear after the fix, an error that jitters, a
+header that stands elsewhere with the menu open. Forms — `form_audit`, open states —
+`layout_audit` with `states`, whatever must stay in place — `browser_act` with `anchors`.
+
+*Three of the four bugs of one checkpoint lived in transitions.*
+
 ## Prohibitions
 
 Phrased as "do not do X, because Y" — the things that should stop the hand.
@@ -117,3 +126,5 @@ Phrased as "do not do X, because Y" — the things that should stop the hand.
   minimum between them. Two points are not adaptivity.
 - **A "done" report is never written without a pixel check of every section and without a live
   session.** `coverage` in the `figma_compare` answer shows what has not happened.
+- **A "done" report is never written after comparing a single width.** Desktop compared means
+  mobile not compared; `coverage.notCompared` names such frames.

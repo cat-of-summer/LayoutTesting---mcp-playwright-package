@@ -13,6 +13,37 @@ import { CallToolRequestSchema, ListToolsRequestSchema } from '@modelcontextprot
 import { getProfile, saveEphemeralProfile } from './browser/profiles.js';
 
 /**
+ * Строка журнала на каждый вызов: имя, длительность, куча до и после.
+ *
+ * Стенд падал по нехватке памяти, и в журнале контейнера не было ни одного следа того, какой
+ * вызов её съел, — только трасса V8. Значения аргументов не пишутся: там бывают доступы и
+ * заголовки. Включён по умолчанию в HTTP-режиме стенда (index.js), LT_CALL_LOG=0 выключает,
+ * LT_CALL_LOG=1 включает и в stdio.
+ */
+const callLogOn = () => process.env.LT_CALL_LOG === '1';
+const heapMb = () => Math.round(process.memoryUsage().heapUsed / 1048576);
+
+export async function logged(request, call, write = (line) => process.stderr.write(line), on = callLogOn()) {
+  if (!on) return call();
+  const name = request?.params?.name ?? '?';
+  const keys = Object.keys(request?.params?.arguments ?? {}).join(',');
+  const started = Date.now();
+  const before = heapMb();
+  write(`[call] ${name}(${keys}) начат, куча ${before} МБ\n`);
+  let outcome = 'ok';
+  try {
+    const result = await call();
+    if (result?.isError) outcome = 'ошибка';
+    return result;
+  } catch (err) {
+    outcome = `отказ: ${String(err?.message ?? err).slice(0, 120)}`;
+    throw err;
+  } finally {
+    write(`[call] ${name} ${outcome}, ${Date.now() - started} мс, куча ${before} → ${heapMb()} МБ\n`);
+  }
+}
+
+/**
  * Инструменты, у которых полный набор условий просмотра сменился на короткий.
  * Всё, что уехало из их схемы, перечислено ниже.
  */
@@ -200,7 +231,7 @@ export function installProtocolPatches(mcp) {
 
   if (originalCall) {
     server.setRequestHandler(CallToolRequestSchema, (request, extra) =>
-      foldLegacyConditions(request, extra, originalCall),
+      logged(request, () => foldLegacyConditions(request, extra, originalCall)),
     );
   }
 

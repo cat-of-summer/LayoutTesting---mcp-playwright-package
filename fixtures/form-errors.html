@@ -1,0 +1,102 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<title>Формы с ошибками</title>
+<style>
+  body { font: 16px/1.4 sans-serif; margin: 20px; }
+  form { width: 360px; padding: 16px; border: 1px solid #ccc; margin-bottom: 24px; }
+  .field { margin-bottom: 12px; }
+  .field input { display: block; width: 100%; height: 32px; box-sizing: border-box; }
+  .err { display: block; color: #c00; font-size: 13px; }
+  /* Ошибка поля подписки наезжает на подпись чекбокса под ним. */
+  .sub .err { margin-bottom: -22px; }
+  .sub label { display: block; }
+  button { height: 36px; }
+</style>
+</head>
+<body>
+<!-- Форма обратной связи: маска телефона гасит beforeinput и не шлёт input, ошибка чекбокса дёргается. -->
+<form id="feedback" novalidate>
+  <div class="field"><label for="name">Имя</label><input id="name" name="name" required></div>
+  <div class="field"><label for="phone">Телефон</label><input id="phone" name="phone" type="tel" required minlength="18"></div>
+  <div class="field agree"><label><input id="agree" name="agree" type="checkbox" required> Согласен на обработку</label></div>
+  <button type="submit">Отправить</button>
+</form>
+
+<!-- Подписка: ошибка email наезжает на подпись чекбокса. -->
+<form id="subscribe" class="sub" novalidate>
+  <input id="email" name="email" type="email" required>
+  <label><input id="terms" name="terms" type="checkbox"> Согласен с условиями</label>
+  <button type="submit">Подписаться</button>
+</form>
+
+<script>
+  const wrapOf = (input) => input.closest('.field') || input.parentElement;
+  function setError(input, text) {
+    const wrap = wrapOf(input);
+    let err = wrap.querySelector(`.err[data-for="${input.id}"]`);
+    if (!text) {
+      err?.remove();
+      input.removeAttribute('aria-invalid');
+      return;
+    }
+    if (!err) {
+      err = document.createElement('span');
+      err.className = 'err';
+      err.dataset.for = input.id;
+      /* Ошибка ставится сразу после поля — в подписке это до подписи чекбокса. */
+      input.insertAdjacentElement(input.type === 'checkbox' ? 'afterend' : 'afterend', err);
+      if (input.type === 'checkbox') wrap.appendChild(err);
+    }
+    err.textContent = text;
+    input.setAttribute('aria-invalid', 'true');
+  }
+  function check(input) {
+    if (input.type === 'checkbox') return input.required && !input.checked ? 'Нужно согласие' : '';
+    if (input.required && !input.value) return 'Заполните поле';
+    if (input.type === 'email' && !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(input.value)) return 'Введите email';
+    if (input.minLength > 0 && input.value.length < input.minLength) return 'Слишком коротко';
+    return '';
+  }
+  for (const form of document.forms) {
+    form.addEventListener('submit', async (event) => {
+      event.preventDefault();
+      let ok = true;
+      for (const input of form.querySelectorAll('input')) {
+        const text = check(input);
+        setError(input, text);
+        if (text) ok = false;
+      }
+      if (ok) await fetch('/submit', { method: 'POST', body: new FormData(form) });
+    });
+    for (const input of form.querySelectorAll('input:not([type=checkbox])')) {
+      input.addEventListener('input', () => {
+        if (input.getAttribute('aria-invalid')) setError(input, check(input));
+      });
+    }
+  }
+
+  /* Маска телефона: гасит ввод и пишет значение сама — события input при этом нет. */
+  const phone = document.getElementById('phone');
+  phone.addEventListener('beforeinput', (event) => {
+    if (event.inputType !== 'insertText') return;
+    event.preventDefault();
+    const digits = (phone.value.replace(/\D/g, '').replace(/^7/, '') + event.data.replace(/\D/g, '')).slice(0, 10);
+    const d = digits.padEnd(10, '_');
+    phone.value = `+7 (${d.slice(0, 3)}) ${d.slice(3, 6)}-${d.slice(6, 8)}-${d.slice(8, 10)}`.replace(/_+.*$/, '');
+  });
+
+  /* Чекбокс согласия: ошибка снимается, возвращается на кадр и снимается снова. */
+  const agree = document.getElementById('agree');
+  agree.addEventListener('change', () => {
+    if (!agree.getAttribute('aria-invalid')) return;
+    setError(agree, '');
+    requestAnimationFrame(() => {
+      setError(agree, 'Нужно согласие');
+      requestAnimationFrame(() => requestAnimationFrame(() => setError(agree, check(agree))));
+    });
+  });
+</script>
+</body>
+</html>

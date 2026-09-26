@@ -17,14 +17,14 @@ import { artifactRef, newRunId, runDir, slug } from '../artifacts.js';
 import { takeScreenshot } from '../checks/visual.js';
 import { colorCss, round } from './css.js';
 import { t } from '../i18n.js';
-import { clip, contains, deltaE, parseColor, SAME_COLOR, visibleNodes } from './analyze/common.js';
+import { browserChrome, clip, contains, deltaE, parseColor, SAME_COLOR, visibleNodes } from './analyze/common.js';
 import { exportRender } from './export.js';
 import { orderedChildren } from './inspect.js';
 
 const norm = (value) => String(value || '').replace(/\s+/g, ' ').trim().toLowerCase();
 
 /** Что видно на странице: тексты с их геометрией и типографикой, картинки с адресами. */
-function probePage(rootSelector) {
+export function probePage(rootSelector) {
   const root = rootSelector ? document.querySelector(rootSelector) : document.body;
   if (!root) return { error: `на странице нет элемента ${rootSelector}` };
 
@@ -57,6 +57,16 @@ function probePage(rootSelector) {
     const style = getComputedStyle(el);
     const rect = el.getBoundingClientRect();
     if (!rect.width || !rect.height || style.visibility === 'hidden' || style.display === 'none') return;
+    /*
+     * Спрятанное для глаз, но не для скринридера: .visually-hidden, sr-only. Бокс у такого есть —
+     * 1×1 с clip, — и раньше его подпись занимала место видимого заголовка с тем же текстом, а
+     * бокс уходил в сверку краски, где подбирался «сдвинутым» к чужому узлу.
+     */
+    const clipped =
+      /rect\(\s*0(px)?[\s,]+0(px)?[\s,]+0(px)?[\s,]+0(px)?\s*\)/.test(style.clip) ||
+      /inset\(\s*50%/.test(style.clipPath) ||
+      (rect.width <= 1 && rect.height <= 1);
+    if (clipped) return;
     const box = { x: rect.x - origin.x, y: rect.y - origin.y, w: rect.width, h: rect.height };
 
     const own = Array.from(el.childNodes)
@@ -119,10 +129,15 @@ function probePage(rootSelector) {
 
 export function designItems(snapshot, rootId) {
   const root = snapshot.nodes[rootId];
-  const origin = root.box || { x: 0, y: 0 };
+  /* Нарисованная строка браузера — не часть страницы: поток начинается под ней. */
+  const chrome = browserChrome(snapshot, rootId);
+  const lift = chrome?.height ?? 0;
+  const origin = root.box ? { x: root.box.x, y: root.box.y + lift } : { x: 0, y: 0 };
   const items = [];
   for (const { node } of visibleNodes(snapshot, rootId)) {
-    if (!node.box) continue;
+    if (!node.box || node.id === chrome?.node) continue;
+    /* Закреплённое (fixed) живёт в координатах окна, а не потока: вычитать из него строку нельзя. */
+    if (lift && node.scrollBehavior === 'FIXED') continue;
     const box = { x: node.box.x - origin.x, y: node.box.y - origin.y, w: node.box.w, h: node.box.h };
     if (node.type === 'TEXT' && node.text?.chars?.trim()) {
       const style = node.text.style || {};
@@ -147,7 +162,7 @@ export function designItems(snapshot, rootId) {
       if (paint) items.push({ kind: 'box', id: node.id, name: node.name, type: node.type, box, paint });
     }
   }
-  return { size: { w: root.box?.w, h: root.box?.h }, items };
+  return { size: { w: root.box?.w, h: root.box?.h - lift }, items, ...(chrome ? { chrome } : {}) };
 }
 
 /** Фигуры, которые в вёрстке становятся SVG: их краска сверяется файлом иконки, а не CSS. */
@@ -215,6 +230,9 @@ const colorDiff = (design, pageValue) => {
  * ближайшему тексту. Так серая линия под заголовком находится рядом со своим заголовком, где бы
  * он ни оказался.
  */
+/** Насколько далеко узел с краской может «уехать», чтобы его ещё считали тем же узлом, px. */
+const SHIFT_RADIUS = 240;
+
 export function comparePaint(design, page, { tolerance = 2 } = {}) {
   const { pairs } = pairTexts(design.items, page.items);
   const anchors = pairs.map((pair) => ({
@@ -236,6 +254,8 @@ export function comparePaint(design, page, { tolerance = 2 } = {}) {
   const boxes = page.items.filter((item) => item.kind === 'box');
   const findings = [];
   const unmatched = [];
+  /** Узлы страницы, уже сопоставленные по месту: во втором проходе их не берут. */
+  const used = new Set();
   let matched = 0;
 
   for (const item of design.items.filter((entry) => entry.kind === 'box')) {
@@ -323,10 +343,12 @@ export function comparePaint(design, page, { tolerance = 2 } = {}) {
 
     if (!hit) {
       /* at нужен второму проходу: без предсказанного места некуда мерить смещение. */
-      unmatched.push({ node: item.id, name: clip(item.name || '', 30), size: `${round(item.box.w)}x${round(item.box.h)}`, at, type: item.type });
+      const paintKind = item.paint.background ? 'background' : item.paint.stroke ? 'stroke' : null;
+      unmatched.push({ node: item.id, name: clip(item.name || '', 30), size: `${round(item.box.w)}x${round(item.box.h)}`, at, type: item.type, paintKind });
       continue;
     }
     matched += 1;
+    used.add(hit.box);
     if (Object.keys(diffs).length) {
       findings.push({ node: item.id, name: clip(item.name || '', 30), selector: hit.box.selector, diffs });
     }
@@ -350,14 +372,22 @@ export function comparePaint(design, page, { tolerance = 2 } = {}) {
     const size = { w: entry.at.w, h: entry.at.h };
     let best = null;
     for (const box of boxes) {
+      /* Уже занятый узлом по месту — не кандидат: иначе поле подписки «сдвигалось» к соседу того
+         же размера, стоящему ровно на своём месте. */
+      if (used.has(box)) continue;
       const r = box.box;
       if (Math.abs(r.w - size.w) > Math.max(tolerance, 4) || Math.abs(r.h - size.h) > Math.max(tolerance, 4)) continue;
+      /* Краска того же рода: фон ищется среди фонов, рамка — среди рамок. */
+      if (entry.paintKind === 'background' && !box.paint.background && !box.paint.backgroundImage) continue;
+      if (entry.paintKind === 'stroke' && !box.paint.borders.some(Boolean)) continue;
       const dx = r.x - entry.at.x;
       const dy = r.y - entry.at.y;
       const dist = Math.hypot(dx, dy);
+      /* Дальше SHIFT_RADIUS — это уже не «тот же узел уехал», а случайный узел того же размера. */
+      if (dist > SHIFT_RADIUS) continue;
       if (!best || dist < best.dist) best = { dist, dx, dy, box };
     }
-    const { at, type, ...rest } = entry;
+    const { at, type, paintKind, ...rest } = entry;
     if (best) shifted.push({ ...rest, selector: best.box.selector, off: { x: round(best.dx), y: round(best.dy) } });
     else notFound.push({ ...rest, ...(type ? { type } : {}) });
   }
@@ -386,7 +416,7 @@ export function comparePaint(design, page, { tolerance = 2 } = {}) {
 const byReadingOrder = (a, b) => a.box.y - b.box.y || a.box.x - b.box.x;
 
 /** Сопоставление по тексту с учётом повторов — как между брейкпоинтами. */
-function pairTexts(design, page) {
+export function pairTexts(design, page) {
   const group = (items) => {
     const map = new Map();
     for (const item of items.filter((entry) => entry.kind === 'text')) {
@@ -446,6 +476,67 @@ function styleDiff(design, page) {
   return out;
 }
 
+/**
+ * Разный шаг: у элементов подряд в одной колонке сдвиг растёт на одно и то же число.
+ *
+ * Навигация подвала на мобильном: в макете шаг ссылок 40, на странице 32. Сверка давала
+ * «−8, −16, −24 … −60» у каждой ссылки, а причина — одна: не тот отступ между пунктами. Здесь
+ * такие серии ищутся явно: соседи по колонке (одна левая граница в макете), шаг в макете
+ * постоянный, шаг на странице постоянный, и они различаются.
+ */
+export function findStepDrift(pairs, { tolerance = 2, minRun = 3 } = {}) {
+  const columns = new Map();
+  for (const pair of pairs) {
+    const key = Math.round(pair.design.box.x / 4);
+    columns.set(key, [...(columns.get(key) || []), pair]);
+  }
+  const out = [];
+  for (const list of columns.values()) {
+    if (list.length < minRun) continue;
+    list.sort((a, b) => a.design.box.y - b.design.box.y);
+    let run = [list[0]];
+    const flush = () => {
+      if (run.length >= minRun) {
+        const designStep = round(run[1].design.box.y - run[0].design.box.y);
+        const pageStep = round(run[1].page.box.y - run[0].page.box.y);
+        if (Math.abs(designStep - pageStep) > tolerance / 2) {
+          const delta = round(pageStep - designStep);
+          out.push({
+            stepDrift: `${run.length} элементов подряд: шаг в макете ${designStep}px, на странице ${pageStep}px`,
+            hint: `Сдвиг копится на ${delta}px с каждым элементом: чинится отступ между ними (gap, margin, padding пункта), а не положение каждого.`,
+            designStep,
+            pageStep,
+            delta,
+            sample: run.slice(0, 3).map((pair) => ({ text: clip(pair.design.text, 40), node: pair.design.id, selector: pair.page.selector })),
+            nodes: run.map((pair) => pair.design.id),
+            severity: Math.abs(delta) * run.length,
+          });
+        }
+      }
+    };
+    for (let i = 1; i < list.length; i += 1) {
+      const prev = list[i - 1];
+      const cur = list[i];
+      const designStep = cur.design.box.y - prev.design.box.y;
+      const pageStep = cur.page.box.y - prev.page.box.y;
+      if (run.length >= 2) {
+        const first = run[1].design.box.y - run[0].design.box.y;
+        const firstPage = run[1].page.box.y - run[0].page.box.y;
+        if (Math.abs(designStep - first) <= 1 && Math.abs(pageStep - firstPage) <= 1) {
+          run.push(cur);
+          continue;
+        }
+        flush();
+        run = [prev, cur];
+        continue;
+      }
+      run.push(cur);
+    }
+    flush();
+  }
+  return out;
+}
+
 export function compareGeometry(design, page, { tolerance = 2 } = {}) {
   const { pairs, onlyDesign, onlyPage } = pairTexts(design.items, page.items);
   const findings = [];
@@ -470,6 +561,22 @@ export function compareGeometry(design, page, { tolerance = 2 } = {}) {
     });
   }
 
+  /* Разный шаг в колонке — одна находка до общего сдвига: иначе растущий сдвиг частями
+     попадал бы в корзины shiftedBlock и выглядел бы как несколько разных сдвигов блока. */
+  const swallowed = new Set();
+  const byNode = new Map(findings.map((finding) => [finding.node, finding]));
+  const drifts = findStepDrift(pairs, { tolerance });
+  for (const drift of drifts) {
+    for (const node of drift.nodes) {
+      const finding = byNode.get(node);
+      if (!finding?.shift?.y) continue;
+      delete finding.shift.y;
+      finding.stepDrift = drift.pageStep - drift.designStep;
+      if (!Object.keys(finding.shift).length && !finding.styles) swallowed.add(finding);
+    }
+  }
+  const stepFindings = drifts.map(({ nodes, ...drift }) => drift);
+
   /*
    * Общий сдвиг блока — одна находка, а не двадцать.
    *
@@ -484,7 +591,6 @@ export function compareGeometry(design, page, { tolerance = 2 } = {}) {
     shifted.set(bucket, [...(shifted.get(bucket) || []), finding]);
   }
   const grouped = [];
-  const swallowed = new Set();
   for (const [bucket, list] of shifted) {
     if (list.length < 3) continue;
     grouped.push({
@@ -503,7 +609,7 @@ export function compareGeometry(design, page, { tolerance = 2 } = {}) {
   }
 
   const rest = findings.filter((finding) => !swallowed.has(finding));
-  const all = [...grouped, ...rest].sort((a, b) => b.severity - a.severity);
+  const all = [...stepFindings, ...grouped, ...rest].sort((a, b) => b.severity - a.severity);
   return {
     matched: pairs.length,
     findings: all,
@@ -572,7 +678,19 @@ export async function compareWithDesign({
   const name = slug(snapshot.nodes[rootId].name || 'frame') || 'frame';
 
   const design = designItems(snapshot, rootId);
-  const out = { runId, ref: figmaRef, frame: design.size };
+  const out = {
+    runId,
+    ref: figmaRef,
+    frame: design.size,
+    ...(design.chrome
+      ? {
+          chromeNote: t({
+            ru: `В начале кадра нарисована строка браузера «${design.chrome.name}» (${design.chrome.node}) высотой ${round(design.chrome.height)}px: координаты макета считаются от её низа, а закреплённые (fixed) узлы из смысловой сверки исключены.`,
+            en: `A browser bar «${design.chrome.name}» (${design.chrome.node}) ${round(design.chrome.height)}px tall is drawn at the top of the frame: design coordinates count from its bottom, and pinned (fixed) nodes are left out of the semantic comparison.`,
+          }),
+        }
+      : {}),
+  };
 
   /* Секциям нужны пары текстов для сдвига — то есть тот же обход страницы, что и semantic. */
   let probed = null;

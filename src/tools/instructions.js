@@ -164,10 +164,13 @@ const HINTS = [
   {
     groups: ['layout'],
     ru: `- «выдержит ли длинный текст», «что будет, если контента больше» — layout_stress; «работает ли
-  слайдер, аккордеон, кнопка», «честная ли анимация» — interaction_audit в сессии с animations: "allow";`,
+  слайдер, аккордеон, кнопка», «честная ли анимация» — interaction_audit в сессии с animations: "allow";
+  «проверь формы», «ошибки валидации» — form_audit; «не съезжает ли шапка при открытом меню» — browser_act
+  с anchors;`,
     en: `- "will it survive a long title", "what if there is more content" — layout_stress; "does the slider,
   the accordion, the button actually work", "is the animation honest" — interaction_audit in a session
-  with animations: "allow";`,
+  with animations: "allow"; "check the forms", "validation errors" — form_audit; "does the header shift
+  when the menu opens" — browser_act with anchors;`,
   },
   {
     groups: ['media'],
