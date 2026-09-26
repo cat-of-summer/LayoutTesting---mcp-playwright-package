@@ -27,7 +27,7 @@ export const statesSchema = z
   .array(z.object({ name: z.string().optional(), steps: z.array(stepSchema) }))
   .optional()
   .describe(
-    d('Проверить ещё и в этих состояниях: шаги browser_act, после которых открыта модалка, меню, выпадающий список. Между состояниями страница перезагружается'),
+    d('Шаги browser_act, открывающие модалку или меню: проверить и там'),
   );
 
 /** Расширения, которые нет смысла отдавать как utf8. */

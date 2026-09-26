@@ -24,8 +24,8 @@ export function register(server) {
     {
       title: t({ ru: 'Эвристики вёрстки', en: "Layout heuristics" }),
       description: t({
-        ru: 'Ищет горизонтальный скролл, вылеты за viewport, наложения элементов, обрезанный текст, текст под непрозрачным слоем, мёртвый z-index (задан на position: static), битые картинки, картинки без размеров, мелкие тач-таргеты и низкий контраст. Со states проверяет и открытые модалки, меню, списки — в закрытом виде их содержимое не видно.',
-        en: "Finds horizontal scroll, elements past the viewport, overlapping content, clipped text, text under an opaque layer, dead z-index (set on position: static), broken images, images without dimensions, small tap targets and low contrast. With states it also checks open modals, menus and dropdowns, whose content is invisible while closed. The first thing to run when the complaint sounds like \"the layout is broken\".",
+        ru: 'Ищет горизонтальный скролл, вылеты за viewport, наложения элементов, обрезанный текст, текст под непрозрачным слоем, мёртвый z-index (задан на position: static), битые картинки, картинки без размеров, мелкие тач-таргеты и низкий контраст. Со states — и в открытых модалках и меню.',
+        en: "Finds horizontal scroll, elements past the viewport, overlapping content, clipped text, text under an opaque layer, dead z-index (set on position: static), broken images, images without dimensions, small tap targets and low contrast. With states — in open modals and menus too. The first thing to run when the complaint sounds like \"the layout is broken\".",
       }),
       inputSchema: {
         sessionId: z.string(),
@@ -68,25 +68,25 @@ export function register(server) {
     {
       title: t({ ru: 'Аудит форм', en: 'Form audit' }),
       description: t({
-        ru: 'Прогоняет формы по сценариям: пустая отправка, по одному негодному значению на поле, исправление после ошибки, годная отправка. Ввод посимвольный, как с клавиатуры, — так видно маски ввода. После каждого шага: у помеченного поля есть видимый текст ошибки, исправленное поле ошибку снимает, ничего не наложилось и не обрезалось, высота формы; при исправлении — не дёргается ли соседнее по кадрам. Отправка по умолчанию перехвачена и на сервер не уходит.',
-        en: 'Runs forms through scenarios: empty submit, one invalid value per field, fixing a field after an error, valid submit. Input goes key by key, like a keyboard, so input masks are exercised. After every step: a flagged field has visible error text, a fixed field clears its error, nothing overlaps or gets clipped, the form height; while fixing, whether a neighbour jitters frame by frame. Submission is intercepted by default and never reaches the server.',
+        ru: 'Формы по сценариям — пусто, негодное значение, исправление после ошибки, годное — с вводом по клавише: видна ли ошибка, снимается ли, не дёргается ли, не наезжает ли. Отправка перехвачена.',
+        en: 'Forms through scenarios — empty, an invalid value, fixing after an error, valid — typed key by key: is the error visible, does it clear, does it jitter or overlap. Submission is intercepted.',
       }),
       inputSchema: {
         sessionId: z.string(),
-        selector: z.string().optional().describe(d('Какие формы проверять. По умолчанию form')),
+        selector: z.string().optional().describe(d('Какие формы (form)')),
         open: z
           .array(stepSchema)
           .optional()
-          .describe(d('Шаги browser_act, после которых форма видна: открыть модалку, развернуть блок')),
+          .describe(d('Шаги browser_act, открывающие форму')),
         values: z
           .record(z.string())
           .optional()
-          .describe(d('Свои годные значения: селектор или name поля → значение. Остальное стенд подставит по типу поля')),
+          .describe(d('Годные значения: селектор или name → значение')),
         submit: z
           .enum(['intercept', 'real', 'none'])
           .optional()
-          .describe(d('intercept — запрос отправки перехватить и ответить 200 (по умолчанию), real — пустить на сервер, none — не отправлять годную форму')),
-        maxForms: z.number().optional().describe(d('Сколько форм обойти. По умолчанию 5')),
+          .describe(d('intercept — перехватить (по умолчанию), real — на сервер, none — не отправлять')),
+        maxForms: z.number().optional().describe(d('Сколько форм (5)')),
       },
     },
     async ({ sessionId, selector, open, values, submit, maxForms }) => {

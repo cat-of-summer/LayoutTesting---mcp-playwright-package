@@ -727,8 +727,8 @@ export function register(server) {
     {
       title: t({ ru: 'Интервалы между элементами', en: 'Spacing between elements' }),
       description: t({
-        ru: 'Расстояния между соседними элементами в макете и на странице: по каждому узлу с авто-раскладкой — пара соседей, интервал в макете, на странице, разница и свойство, которое этот интервал задаёт (gap родителя, padding соседей, свободная позиция). Повторяющийся шаг сворачивается: «шаг 40 → 32, ×8». Нужен, когда figma_compare показывает растущий сдвиг, а не одинаковый. pairs — для элементов в разных ветках дерева.',
-        en: 'Distances between neighbouring elements in the design and on the page: for every auto-layout node — the pair of neighbours, the interval in the design, on the page, the difference and the property that sets that interval (the parent gap, neighbour padding, free position). A repeated step collapses: "step 40 → 32, ×8". Needed when figma_compare shows a growing shift rather than a uniform one. pairs is for elements in different branches of the tree.',
+        ru: 'Интервалы между соседями: в макете, на странице и какое свойство их задаёт (gap, padding). Для растущего сдвига и stepDrift из figma_compare; узлы без текста — через pairs.',
+        en: 'Intervals between neighbours: in the design, on the page and which property sets them (gap, padding). For a growing shift and stepDrift from figma_compare; nodes without text — via pairs.',
       }),
       inputSchema: {
         figma: z.string().describe(d('Узел-контейнер: ссылка figma.com или запись ключ:id')),
@@ -738,7 +738,7 @@ export function register(server) {
         pairs: z
           .array(z.object({ node: z.string(), selector: z.string() }))
           .optional()
-          .describe(d('Явные пары узел ↔ селектор по порядку: расстояния между соседями списка в макете и на странице')),
+          .describe(d('Пары узел ↔ селектор: расстояния между соседями списка')),
         tolerance: z.number().optional().describe(d('Допуск смещения в пикселях. По умолчанию 2')),
         limit: z.number().optional().describe(d('Сколько строк или записей показать')),
       },
@@ -1079,8 +1079,8 @@ export function register(server) {
     {
       title: t({ ru: 'Выгрузка из макета', en: 'Export from the design' }),
       description: t({
-        ru: 'Файлы из макета в артефакты с постоянными ссылками: render — PNG узла, высокие кадры режутся на читаемые части; svg — иконки с currentColor; image — растровые заливки, кадрированные как в макете.',
-        en: 'Files from the design into artifacts with permanent links: render — a PNG of a node, tall frames cut into readable parts; svg — icons with currentColor; image — raster fills cropped as in the design.',
+        ru: 'Файлы из макета в артефакты с постоянными ссылками: render — PNG узла, высокие кадры режутся на читаемые части, страница Figma — плиткой; svg — иконки с currentColor или контур заливки; image — растровые заливки, кадрированные как в макете.',
+        en: 'Files from the design into artifacts with permanent links: render — a PNG of a node, tall frames cut into readable parts, a Figma page as tiles; svg — icons with currentColor or a fill outline; image — raster fills cropped as in the design.',
       }),
       inputSchema: {
         figma: refsSchema,
@@ -1102,11 +1102,11 @@ export function register(server) {
         parts: z
           .enum(['auto', 'children', 'tiles'])
           .optional()
-          .describe(d('Для render: children режет кадр по дочерним фреймам, по части на секцию; tiles рисует каждый дочерний узел отдельно плюс контакт-лист с подписями id — для страницы Figma включается сам')),
+          .describe(d('Для render: children — по секциям, tiles — каждый потомок отдельно и контакт-лист')),
         geometry: z
           .enum(['render', 'fill'])
           .optional()
-          .describe(d('Для svg: fill — контур по геометрии заливки, без обводки и ровно по узлу: для clip-path и масок')),
+          .describe(d('Для svg: fill — контур заливки без обводки')),
       },
     },
     async ({ figma, kind = 'render', scale, clip, inline = false, parts = 'auto', geometry = 'render' }) => {

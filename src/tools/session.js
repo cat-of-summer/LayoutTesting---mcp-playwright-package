@@ -47,7 +47,7 @@ export function register(server) {
         keepAlive: z
           .boolean()
           .optional()
-          .describe(d('Не закрывать сессию по простою: для долгой вёрстки, когда между проверками пишется код. Предельный возраст — LT_SESSION_KEEPALIVE_MAX_MS, 8 часов')),
+          .describe(d('Не закрывать по простою')),
       },
     },
     async ({ url, keepAlive, ...profile }) => {
@@ -110,8 +110,8 @@ export function register(server) {
     {
       title: t({ ru: 'Действие на странице', en: "Act on the page" }),
       description: t({
-        ru: 'Клик, ввод текста, нажатие клавиши, наведение, прокрутка, выбор в списке, ожидание селектора, выбор файлов и ответ на alert с confirm. Нужен, когда проверяемое состояние возникает только после действия: раскрытое меню, открытая вкладка, заполненная форма, страница после логина. type вводит посимвольно, как с клавиатуры, — на это реагируют маски ввода. С anchors ответ говорит, какие элементы сдвинулись после действия, хотя не должны. Готовые селекторы удобно брать из page_snapshot.',
-        en: "Click, type, press a key, hover, scroll, select an option, wait for a selector, pick files for upload or decide what to do with alert and confirm. Needed when the state you want to check only appears after an action: an expanded menu, an opened tab, a filled form, a page behind a login. type enters text key by key, like a keyboard, which input masks react to. With anchors the answer says which elements shifted after the action although they should not. Ready-to-use selectors come from page_snapshot.",
+        ru: 'Клик, ввод текста, нажатие клавиши, наведение, прокрутка, выбор в списке, ожидание селектора, выбор файлов и ответ на alert с confirm. Нужен, когда проверяемое состояние возникает только после действия: раскрытое меню, открытая вкладка, заполненная форма, страница после логина. type — ввод по клавише, для масок; anchors — что сдвинулось после действия. Готовые селекторы удобно брать из page_snapshot.',
+        en: "Click, type, press a key, hover, scroll, select an option, wait for a selector, pick files for upload or decide what to do with alert and confirm. Needed when the state you want to check only appears after an action: an expanded menu, an opened tab, a filled form, a page behind a login. type — key-by-key input, for masks; anchors — what shifted after the action. Ready-to-use selectors come from page_snapshot.",
       }),
       inputSchema: {
         sessionId: z.string(),
@@ -135,11 +135,11 @@ export function register(server) {
         anchors: z
           .array(z.string())
           .optional()
-          .describe(d('Селекторы элементов, которые обязаны остаться на месте: их боксы снимаются до и после действия, в ответе anchors.moved — что сдвинулось. Шапка при открытом меню, липкая панель, кнопка закрытия')),
+          .describe(d('Что должно остаться на месте: сдвиг — в anchors.moved')),
         settle: z
           .number()
           .optional()
-          .describe(d('Сколько ждать, пока якоря затихнут после действия, мс. По умолчанию 1500')),
+          .describe(d('Ждать затихания якорей, мс (1500)')),
       },
     },
     async ({ sessionId, anchors, settle, ...step }) => {
