@@ -8,7 +8,7 @@ ENTRY: the frame map is confirmed.
 STEPS:
   1. figma_structure(frame, depth: 2..4) — a markup-shaped tree, the overlay/decor/background/reparented notes.
   2. figma_spec(node) → text — full texts (the outline cuts them with an ellipsis).
-  3. figma_comments(frames) — requirements from comments and annotations; no REST — a blocker, a question to the human.
+  3. figma_comments(frames) — requirements from comments and annotations, including comments on elements inside the frame; no REST — figma_status action: token first, failing that — a blocker, a question to the human.
   4. figma_behavior(frames) — links; every notSynced → figma_sync and take it apart.
   5. A list of standard elements with their purpose; everything undescribed → unconfirmed and a question.
 
@@ -42,11 +42,18 @@ figma_spec(node) → the text section
 ```
 figma_comments(frames)   → requirements that are not in the design itself
 figma_behavior(frames)   → what is wired to what, with durations and easing
+figma_history(node)      → what changed in the design over a period (since the last handoff), field by field with diff: true
 ```
 
 **Comments are read before building.** They are the only channel where requirements like "JS
 hover animation here, like on the reference site" or "we are not doing this block yet" live. The
-tool works through REST only; a missing token is a blocker to ask the human about, not a given.
+tool works through REST only; a missing token → `figma_status` with `action: token`, and only if
+issuing fails is it a blocker to ask the human about.
+
+A comment placed on a button belongs to the button, not to the whole frame: `figma_comments` on a
+frame or a block returns the comments on its descendants too (`on: descendant`, a path and a link to
+the element). `figma_inspect` and `figma_spec` show a `comments` digest for the node — if it is not
+zero, read the threads with `figma_comments` on that node before building the block.
 
 > On one landing page `figma_comments` was never called — the hover of three blocks was invented,
 > while a comment pointed at a reference on a finished site. On another, "fix the spacing" and "a

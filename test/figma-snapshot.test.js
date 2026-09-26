@@ -364,3 +364,40 @@ test('масштаб рендера подбирается под читаему
   assert.equal(autoScale(768), 1.5);
   assert.equal(autoScale(1440), 1);
 });
+
+test('гиперссылки текста доходят до снимка и до mode: text', async () => {
+  const { textItems } = await import('../src/figma/inspect.js');
+  const raw = {
+    id: '5:1',
+    type: 'FRAME',
+    name: 'Объяснение',
+    absoluteBoundingBox: { x: 0, y: 0, width: 400, height: 100 },
+    children: [
+      {
+        id: '5:2',
+        type: 'TEXT',
+        name: 'Подпись',
+        characters: 'Анимация как тут',
+        absoluteBoundingBox: { x: 0, y: 0, width: 200, height: 20 },
+        style: { fontFamily: 'Inter', fontSize: 14, fontWeight: 400 },
+        characterStyleOverrides: [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 1],
+        styleOverrideTable: { 1: { textDecoration: 'UNDERLINE', hyperlink: { type: 'URL', url: 'https://example.com/anim' } } },
+      },
+      {
+        id: '5:3',
+        type: 'TEXT',
+        name: 'Весь текст ссылкой',
+        characters: 'См. экран',
+        absoluteBoundingBox: { x: 0, y: 40, width: 200, height: 20 },
+        style: { fontFamily: 'Inter', fontSize: 14, fontWeight: 400, hyperlink: { type: 'NODE', nodeID: '9:9' } },
+      },
+    ],
+  };
+  const snapshot = { fileKey: 'KEY', root: '5:1', nodes: normalizeRestTree(raw, {}) };
+  assert.deepEqual(snapshot.nodes['5:2'].text.runs[0].link, { url: 'https://example.com/anim' });
+  assert.equal(snapshot.nodes['5:2'].text.runs[0].text, 'тут');
+  assert.deepEqual(snapshot.nodes['5:3'].text.link, { node: '9:9' });
+  const items = textItems(snapshot, '5:1');
+  assert.deepEqual(items.find((item) => item.id === '5:2').runs[0].link, { url: 'https://example.com/anim' });
+  assert.deepEqual(items.find((item) => item.id === '5:3').link, { node: '9:9' });
+});

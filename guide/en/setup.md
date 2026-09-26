@@ -7,7 +7,7 @@ The stand, reaching the project, Figma access, two sessions and the project's ow
 ENTRY: the design frame links and the project path are known.
 STEPS:
   1. stand_info — version, exposed groups, guide.available: true (otherwise tell the human).
-  2. figma_status — editor.state and rest.configured; rest: false → action: token; still no → ask the human.
+  2. figma_status — editor.state and rest.configured; rest: false → action: token yourself, no question; editor.state: needs_human → the editor.handoff.url link to the human; issuing failed → ask the human.
   3. dev server on 0.0.0.0 → browser_goto http://host.docker.internal:<port> answers 200.
   4. browser_open a second time with animations: "allow" — the live session; keep both to the end.
   5. README, CLAUDE.md, bundler config — how assets are wired, what the CSS framework does to p and h1..h6.
@@ -25,8 +25,12 @@ build error — tell the human right away instead of quietly working from the bu
 
 **REST is needed before the snapshot, not "when it comes up".** Design comments exist only in
 REST, and half the requirements live there ("JS hover animation here, like on the reference site").
-`rest.configured: false` → `figma_status` with `action: token`; not issued → a question to the
-human. A missing token is a blocker for phase 2, not a skip: on one landing page the comments were
+`rest.configured: false` → `figma_status` with `action: token` — right away, without asking: the
+login and password in the stand .env are set for exactly this, and the token is read-only. Figma
+asked for a captcha, a 2FA code or an email confirmation (`editor.state: needs_human`) — give the
+`editor.handoff.url` link to the human: it shows the live screen of the stand browser, the human
+passes the check personally, the stand saves the login; then `action: token` again. Not issued for
+another reason → a question to the human. A missing token is a blocker for phase 2, not a skip: on one landing page the comments were
 never read, and the hover of three blocks was invented instead of taken from a comment.
 
 ## 0.2 Reaching the project from the stand

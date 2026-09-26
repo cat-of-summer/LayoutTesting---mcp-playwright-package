@@ -91,3 +91,7 @@ export function groupRefs(inputs) {
 
 /** Обратная сторона: короткая запись для ответов инструментов. */
 export const refOf = (fileKey, nodeId) => (nodeId ? `${fileKey}:${nodeId}` : fileKey);
+
+/** Ссылка, которую человек откроет в браузере: запись ключ:id он в Figma не вставит. */
+export const urlOf = (fileKey, nodeId) =>
+  `https://www.figma.com/design/${fileKey}/${nodeId ? `?node-id=${encodeURIComponent(nodeId.replace(/:/g, '-'))}` : ''}`;

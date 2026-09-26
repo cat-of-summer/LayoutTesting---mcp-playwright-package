@@ -9,6 +9,7 @@ import { closeAll } from './browser/pool.js';
 import { ensureDirs } from './artifacts.js';
 import { handleUpload } from './media/upload.js';
 import { handleGuideRoute } from './guide-http.js';
+import { handleHandoffRoute } from './browser/handoff.js';
 
 const arg = (name, fallback) => {
   const hit = process.argv.find((a) => a.startsWith(`--${name}=`));
@@ -91,8 +92,18 @@ async function startHttp() {
       return;
     }
 
+    /* Проверка входа, которую проходит человек: капча, код, подтверждение. Адрес с токеном
+       отдаёт агенту figma_status, агент передаёт его человеку. */
+    if (url.pathname.startsWith('/handoff/')) {
+      await handleHandoffRoute(req, res, url).catch((err) => {
+        process.stderr.write(`[handoff] ошибка: ${err.stack || err.message}\n`);
+        if (!res.headersSent) plain(500, `${err.message}\n`);
+      });
+      return;
+    }
+
     if (url.pathname !== '/mcp' && !url.pathname.startsWith('/mcp/')) {
-      plain(404, 'Есть только /mcp, /mcp/<группы>, /upload, /health, /skill/layout-by-figma/SKILL.md и /guide/<ru|en>/<раздел>.md\n');
+      plain(404, 'Есть только /mcp, /mcp/<группы>, /upload, /health, /handoff/<токен>, /skill/layout-by-figma/SKILL.md и /guide/<ru|en>/<раздел>.md\n');
       return;
     }
 

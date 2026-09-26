@@ -35,6 +35,8 @@ export const ENDPOINTS = {
   images: { path: '/v1/images/:key', tier: 1, scope: 'file_content:read' },
   imageFills: { path: '/v1/files/:key/images', tier: 2, scope: 'file_content:read' },
   comments: { path: '/v1/files/:key/comments', tier: 2, scope: 'file_comments:read' },
+  /* Проверено по документации 2026-09-26: история версий файла, страницами до 50. */
+  versions: { path: '/v1/files/:key/versions', tier: 2, scope: 'file_versions:read' },
 };
 
 /** Права, которых хватает всем инструментам figma_*: только чтение. */

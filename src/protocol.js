@@ -142,6 +142,7 @@ const READ_ONLY = [
   'figma_tokens',
   'figma_breakpoints',
   'figma_comments',
+  'figma_history',
   'figma_behavior',
 ];
 

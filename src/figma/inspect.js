@@ -262,6 +262,7 @@ export function textItems(snapshot, rootId, { hidden = false } = {}) {
           text: node.text?.chars ?? '',
           font: style.size ? `${round(style.size)}/${style.weight ?? ''}` : undefined,
           color: fill,
+          link: node.text?.link,
           runs: node.text?.runs?.map((run) =>
             strip({
               text: run.text,
@@ -270,6 +271,7 @@ export function textItems(snapshot, rootId, { hidden = false } = {}) {
               italic: run.style?.italic,
               decoration: run.style?.decoration,
               color: run.fills?.[0]?.kind === 'solid' ? colorCss(run.fills[0].color) : undefined,
+              link: run.link,
             }),
           ),
         }),

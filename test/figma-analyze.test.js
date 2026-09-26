@@ -12,7 +12,7 @@ import { findComponents } from '../src/figma/analyze/components.js';
 import { collectTokens } from '../src/figma/analyze/tokens.js';
 import { compareBreakpoints, fluid, sameScreen } from '../src/figma/analyze/breakpoints.js';
 import { describeBehavior } from '../src/figma/analyze/behavior.js';
-import { buildThreads } from '../src/figma/analyze/comments.js';
+import { buildThreads, commentsDigest, missingFrames } from '../src/figma/analyze/comments.js';
 import { loadProject, matchColor, matchRules, normalizeDecl } from '../src/figma/project.js';
 
 const box = (x, y, w, h) => ({ x, y, w, h });
@@ -357,7 +357,90 @@ test('комментарии: треды с ответами, привязка �
   assert.equal(open[0].anchor.node, '1:3');
   assert.match(open[0].anchor.path, /Вакансии \/ card/);
   assert.equal(open[1].anchor.node, '1:21-t', 'комментарий точкой привязан к самому глубокому узлу под ней');
-  assert.equal(open[1].anchor.by, 'точке на холсте');
+  assert.equal(open[1].anchor.by, 'canvas');
 
   assert.equal(buildThreads(comments, frames, { resolved: true }).length, 3);
+});
+
+/*
+ * Так комментарий на элементе приходит из REST на самом деле: node_id — кадр верхнего уровня,
+ * node_offset — смещение от его угла. Кадр '1:1' стоит в (0,0), поэтому смещение совпадает с
+ * абсолютной точкой; второй кадр сдвинут, чтобы смещение не совпадало с холстом.
+ */
+const shifted = snapshotOf(
+  [
+    { id: '2:1', type: 'FRAME', name: 'Контакты', box: box(1000, 0, 400, 400), children: ['2:2'] },
+    ...button('2:2', box(1040, 100, 160, 44), { label: 'Позвонить' }),
+  ],
+  '2:1',
+);
+
+const onElement = [
+  { id: 'e1', created_at: '2026-09-20T10:00:00Z', user: { handle: 'designer' }, message: 'Хирург — жирнее', client_meta: { node_id: '1:1', node_offset: { x: 60, y: 290 } } },
+  { id: 'e2', created_at: '2026-09-21T10:00:00Z', user: { handle: 'designer' }, message: 'Весь второй пункт', client_meta: { node_id: '1:1', node_offset: { x: 25, y: 365 }, region_width: 340, region_height: 70 } },
+  { id: 'e3', created_at: '2026-09-22T10:00:00Z', user: { handle: 'pm' }, message: 'Про список целиком', client_meta: { node_id: '1:1', node_offset: { x: 30, y: 262 }, region_width: 300, region_height: 280 } },
+  { id: 'e4', created_at: '2026-09-23T10:00:00Z', user: { handle: 'pm' }, message: 'Кнопка звонка', client_meta: { node_id: '2:1', node_offset: { x: 70, y: 120 } } },
+  { id: 'e5', created_at: '2026-09-24T10:00:00Z', user: { handle: 'pm' }, message: 'В неснятом кадре', client_meta: { node_id: '9:9', node_offset: { x: 1, y: 1 } } },
+];
+const allFrames = [
+  { snapshot: page, rootId: '1:1', ref: 'KEY:1:1' },
+  { snapshot: shifted, rootId: '2:1', ref: 'KEY:2:1' },
+];
+
+test('комментарий на элементе: кадр + смещение дают сам элемент, а не кадр', () => {
+  const threads = buildThreads(onElement, allFrames);
+  const byId = Object.fromEntries(threads.map((thread) => [thread.id, thread]));
+  assert.equal(byId.e1.anchor.node, '1:21-t', 'точка внутри текста «Хирург» — это текст, а не кадр 1:1');
+  assert.equal(byId.e1.anchor.frame, '1:1');
+  assert.equal(byId.e1.anchor.by, 'element');
+  assert.match(byId.e1.anchor.url, /figma\.com\/design\/KEY\/\?node-id=1-21-t$/);
+  assert.equal(byId.e4.anchor.node, '2:2-t', 'смещение считается от угла своего кадра, а не от начала холста');
+  assert.equal(byId.e2.anchor.node, '1:23', 'регион берёт самый глубокий узел, накрывающий его целиком');
+  assert.equal(byId.e2.anchor.by, 'region');
+  assert.equal(byId.e3.anchor.node, '1:20', 'регион на весь список — это список, а не один пункт');
+  assert.match(byId.e5.anchor.note, /не снят/);
+});
+
+test('запрос родителя показывает комментарии потомков со ссылкой, чужие отбрасывает', () => {
+  const list = buildThreads(onElement, allFrames, { targets: ['1:20'] });
+  assert.deepEqual(list.map((thread) => thread.id), ['e3', 'e2', 'e1'], 'сначала комментарий на самом узле, потом потомки по свежести');
+  assert.equal(list[0].on, 'self');
+  assert.equal(list[1].on, 'descendant');
+  assert.equal(list[2].path, 'Список / item / Хирург', 'путь идёт от запрошенного узла вниз');
+  assert.ok(!list.some((thread) => thread.id === 'e4'), 'комментарий другого кадра сюда не относится');
+  assert.deepEqual(list.unresolvedFrames, ['9:9'], 'неснятый кадр назван, чтобы его можно было снять');
+
+  const item = buildThreads(onElement, allFrames, { targets: ['1:21'] });
+  assert.deepEqual(item.map((thread) => thread.id), ['e1']);
+});
+
+test('комментарий к кадру, известному только как предок снятого узла', () => {
+  /* Снимок редактора: снят сам пункт списка, кадр 1:1 известен лишь предком с рамкой. */
+  const nodes = Object.fromEntries(['1:21', '1:21-t'].map((id) => [id, { ...page.nodes[id] }]));
+  delete nodes['1:21'].parent;
+  const item = {
+    ...page,
+    root: '1:21',
+    nodes,
+    ancestors: [
+      { id: '0:1', name: 'Page 1', type: 'PAGE' },
+      { id: '1:1', name: 'Вакансии', type: 'FRAME', box: box(0, 0, 400, 800) },
+      { id: '1:20', name: 'Список', type: 'FRAME', box: box(20, 260, 360, 300) },
+    ],
+  };
+  const list = buildThreads(onElement, [{ snapshot: item, rootId: '1:21', ref: 'KEY:1:21' }], { targets: ['1:21'] });
+  assert.deepEqual(list.map((thread) => thread.id), ['e1']);
+  assert.equal(list[0].anchor.node, '1:21-t');
+  assert.deepEqual(missingFrames(onElement, [{ snapshot: item, rootId: '1:21' }]), ['2:1', '9:9']);
+  assert.deepEqual(list.unresolvedFrames, [], 'предки известны — чужие неснятые кадры не тревога');
+});
+
+test('сводка для figma_inspect: сколько на узле и под ним, три свежих', () => {
+  const digest = commentsDigest(onElement, allFrames, '1:20', { fetchedAt: '2026-09-25T00:00:00Z' });
+  assert.equal(digest.self, 1);
+  assert.equal(digest.descendants, 2);
+  assert.equal(digest.top.length, 3);
+  assert.equal(digest.framesNotSynced, 1);
+  assert.equal(digest.how, 'figma_comments');
+  assert.deepEqual(commentsDigest([], allFrames, '1:20'), { self: 0, descendants: 0 });
 });

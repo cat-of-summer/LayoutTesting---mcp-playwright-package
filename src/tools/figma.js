@@ -24,13 +24,21 @@ import { cssItems, outlineLines, textItems, unresolvedOf, usedVariables } from '
 import { assetInventory } from '../figma/assets.js';
 import { getRestClient } from '../figma/rest.js';
 import { addRequests, ensureNode, ensureNodes, findNode, pathOf, syncFigma } from '../figma/snapshot.js';
-import { groupRefs, refOf } from '../figma/url.js';
+import { groupRefs, parseFigmaRef, refOf } from '../figma/url.js';
+import { diffSnapshots, fetchVersions, parseMoment, pickVersions, snapshotAt } from '../figma/history.js';
 import { loadProject, projectSummary } from '../figma/project.js';
 import { inferStructure } from '../figma/analyze/structure.js';
 import { findComponents } from '../figma/analyze/components.js';
 import { collectTokens } from '../figma/analyze/tokens.js';
 import { compareBreakpoints } from '../figma/analyze/breakpoints.js';
-import { buildThreads, collectAnnotations, fetchComments } from '../figma/analyze/comments.js';
+import {
+  buildThreads,
+  collectAnnotations,
+  commentsDigest,
+  fetchComments,
+  missingFrames,
+  readCachedComments,
+} from '../figma/analyze/comments.js';
 import { describeBehavior } from '../figma/analyze/behavior.js';
 import { compareWithDesign } from '../figma/compare.js';
 import { getSession, gotoAndSettle, withSession } from '../browser/pool.js';
@@ -81,6 +89,59 @@ async function loadFrames(refs, client) {
     }
   }
   return { frames, requests };
+}
+
+/**
+ * Кадры, в которых стоят комментарии, но которых нет среди снимков запрошенных узлов.
+ *
+ * Комментарий на кнопке Figma хранит как «кадр верхнего уровня + смещение», и чтобы понять, что
+ * он на кнопке внутри запрошенной карточки, нужен снимок этого кадра. Сначала ищем в кэше — это
+ * бесплатно. Докачиваем (одним запросом на файл) только когда по снимкам запрошенных узлов не
+ * видно их предков: снимок REST их не знает, а снимок редактора знает, и тогда чужой кадр
+ * заведомо не наш — тратить на него запрос незачем.
+ */
+const COMMENT_FRAMES_MAX = 20;
+
+async function commentFrames(fileKey, comments, own, { client, resolved = false, requests = null, sync = false } = {}) {
+  const frames = [];
+  let missing = [];
+  for (const id of missingFrames(comments, own, { resolved })) {
+    const hit = await findNode(fileKey, id);
+    if (hit) frames.push({ snapshot: hit.snapshot, rootId: id, ref: refOf(fileKey, id), context: true });
+    else missing.push(id);
+  }
+  const blind = own.some((frame) => !frame.snapshot.ancestors?.length);
+  if (sync && blind && missing.length) {
+    const batch = missing.slice(0, COMMENT_FRAMES_MAX);
+    const result = await syncFigma(
+      batch.map((id) => refOf(fileKey, id)),
+      { client, editor: editorChannel },
+    );
+    if (requests) addRequests(requests, result.requests);
+    for (const id of batch) {
+      const hit = await findNode(fileKey, id);
+      if (hit) frames.push({ snapshot: hit.snapshot, rootId: id, ref: refOf(fileKey, id), context: true });
+    }
+    /* Кадр, удалённый из макета, остаётся в комментариях: это не ошибка, а просто не наш случай. */
+    missing = missing.filter((id) => !frames.some((frame) => frame.rootId === id));
+  } else if (!blind) {
+    missing = [];
+  }
+  return { frames, notSynced: missing.slice(0, 10) };
+}
+
+/**
+ * Комментарии узла для figma_inspect и figma_spec — только из кэша: эти инструменты запросов не
+ * тратят. Списка нет — так и говорим, с тем, чем его получить.
+ */
+async function commentsOf(fileKey, snapshot, nodeId) {
+  const cached = await readCachedComments(fileKey);
+  if (!cached) {
+    return { unknown: true, how: 'figma_comments по этому узлу: список комментариев ещё не загружался' };
+  }
+  const own = [{ snapshot, rootId: nodeId, ref: refOf(fileKey, nodeId) }];
+  const { frames } = await commentFrames(fileKey, cached.comments, own);
+  return commentsDigest(cached.comments, [...own, ...frames], nodeId, { fetchedAt: cached.fetchedAt });
 }
 
 /**
@@ -160,14 +221,14 @@ export function register(server) {
     {
       title: t({ ru: 'Доступ к Figma', en: 'Figma access' }),
       description: t({
-        ru: 'Доступ к Figma: работает ли токен REST и сколько осталось лимита, вошёл ли стенд в редактор, не отстала ли версия API. Секретов не показывает. Первый шаг, если figma_* отказывают; action: login входит в редактор заново или дозавершает вход кодом.',
-        en: 'Figma access: whether the REST token works and how much of the limit is left, whether the stand is logged into the editor, whether the API version fell behind. Never reveals secrets. The first step when figma_* fail; action: login logs into the editor again or finishes a login with a code.',
+        ru: 'Доступ к Figma: работает ли токен REST и сколько осталось лимита, вошёл ли стенд в редактор, не отстала ли версия API. Секретов не показывает. Первый шаг, если figma_* отказывают. Нет токена — action: token, человека не спрашивая; капчу или код при входе проходит человек по ссылке editor.handoff.url.',
+        en: 'Figma access: whether the REST token works and how much of the limit is left, whether the stand is logged into the editor, whether the API version fell behind. Never reveals secrets. The first step when figma_* fail. No token — action: token without asking the human; a captcha or a code at login is passed by the human through the editor.handoff.url link.',
       }),
       inputSchema: {
         action: z
           .enum(['check', 'login', 'logout', 'token'])
           .optional()
-          .describe(d('check (по умолчанию) — проверить; login — войти в редактор заново или дозавершить вход кодом; logout — забыть сохранённый вход; token — выпустить токен REST через настройки аккаунта')),
+          .describe(d('check (по умолчанию) — проверить; login — войти в редактор заново или дозавершить вход кодом; logout — забыть сохранённый вход; token — выпустить токен REST через настройки аккаунта; разрешено заранее, человека не спрашивать')),
         otp: z.string().optional().describe(d('Код двухфакторной аутентификации, если Figma его запросила')),
         refresh: z.boolean().optional().describe(d('Заново спросить Figma, а не взять проверку из кэша на 10 минут')),
       },
@@ -194,8 +255,22 @@ export function register(server) {
 
       const client = getRestClient();
       const auth = await resolveToken();
+      const editor = { ...(await editorStatus()), ...(loginError ? { loginError } : {}) };
       const rest = { configured: Boolean(auth.token), source: auth.source };
       if (auth.expiresAt) rest.expiresAt = auth.expiresAt;
+      if (auth.missingScopes) rest.missingScopes = auth.missingScopes;
+
+      /*
+       * Выпуск токена — штатный шаг, а не вопрос человеку. FIGMA_EMAIL и FIGMA_PASSWORD человек
+       * положил в .env ровно для того, чтобы стенд входил и выпускал токен сам: права только на
+       * чтение, срок 90 дней, прежний отзывается. Нейтральное «можно выпустить» агенты читали как
+       * «спроси сначала» и останавливали работу — поэтому здесь прямая инструкция и машинное next.
+       * К человеку идут, только когда выпуск не удался или запрещён.
+       */
+      const canIssue = FIGMA.autoIssueToken && editor.configured && !process.env.FIGMA_TOKEN?.trim();
+      const issueFailed = lastTokenIssue()?.ok === false;
+      const issueHint =
+        'Выпуск разрешён владельцем стенда заранее: FIGMA_EMAIL и FIGMA_PASSWORD заданы именно для этого. Вызовите figma_status с action: token сейчас, не спрашивая человека: токен только на чтение, на 90 дней, прежний отзывается.';
       if (auth.token) {
         try {
           rest.user = (await whoami(client, refresh)).handle;
@@ -204,11 +279,25 @@ export function register(server) {
           rest.ok = false;
           rest.error = err.message;
         }
+        if (auth.missingScopes && canIssue && !issueFailed) {
+          rest.hint = `Токену не хватает прав ${auth.missingScopes.join(', ')}: стенд перевыпустит его при первом запросе к ним. ${issueHint}`;
+          rest.next = { action: 'token' };
+        }
       } else {
         rest.ok = false;
-        rest.hint = FIGMA.autoIssueToken
-          ? 'Токена нет. Стенд выпустит его сам через настройки аккаунта при первом запросе, которому нужен REST (комментарии, отказ редактора), — или сразу по action: token. Либо задайте FIGMA_TOKEN в .env стенда.'
-          : 'Токена нет, а самостоятельный выпуск выключен (FIGMA_TOKEN_AUTOISSUE=0). Задайте FIGMA_TOKEN в .env стенда. Без токена работает только канал редактора, и без комментариев.';
+        if (!FIGMA.autoIssueToken) {
+          rest.hint = 'Токена нет, а самостоятельный выпуск выключен (FIGMA_TOKEN_AUTOISSUE=0). Задайте FIGMA_TOKEN в .env стенда. Без токена работает только канал редактора, и без комментариев.';
+        } else if (!editor.configured) {
+          rest.hint = 'Токена нет, и выпустить его нечем: не заданы FIGMA_EMAIL и FIGMA_PASSWORD (или сохранённый вход). Задайте их или FIGMA_TOKEN в .env стенда — это делает человек.';
+        } else if (editor.state === 'needs_human') {
+          rest.hint = 'Токена нет: выпуск ждёт проверки входа, которую проходит человек. Передайте ему editor.handoff.url (или спросите код 2FA и вызовите action: login с otp), затем action: token.';
+          rest.next = editor.handoff?.state === 'open' ? { handoff: editor.handoff.url } : { action: 'login' };
+        } else if (issueFailed) {
+          rest.hint = `Токена нет, последний выпуск не удался (lastIssue). Если причина не в проверке входа — это вопрос человеку: FIGMA_TOKEN в .env стенда.`;
+        } else {
+          rest.hint = `Токена нет. ${issueHint}`;
+          rest.next = { action: 'token' };
+        }
       }
       rest.autoIssue = FIGMA.autoIssueToken;
       if (lastTokenIssue()) rest.lastIssue = lastTokenIssue();
@@ -217,7 +306,7 @@ export function register(server) {
 
       return json({
         rest,
-        editor: { ...(await editorStatus()), ...(loginError ? { loginError } : {}) },
+        editor,
         api: await checkFigmaApi(),
         cache: { files: await cachedFiles() },
       });
@@ -296,6 +385,7 @@ export function register(server) {
         channel: snapshot.channel,
         mode,
         ...(requests ? { requests } : {}),
+        comments: await commentsOf(fileKey, snapshot, node.id),
       };
       /* Обрезанный абзац выглядит законченным: сколько текстов ушло с многоточием, говорим прямо. */
       const clippedNote = (stats) =>
@@ -362,6 +452,7 @@ export function register(server) {
         version: snapshot.version,
         channel: snapshot.channel,
         ...(requests ? { requests } : {}),
+        comments: await commentsOf(fileKey, snapshot, node.id),
       };
 
       /*
@@ -621,40 +712,166 @@ export function register(server) {
       }),
       inputSchema: {
         figma: refsSchema,
+        scope: z
+          .enum(['subtree', 'file'])
+          .optional()
+          .describe(d('subtree (по умолчанию) — комментарии на узле и на его потомках, со ссылкой на элемент; file — все комментарии файла')),
         resolved: z.boolean().optional().describe(d('Показывать и закрытые треды. По умолчанию только открытые')),
         refresh: z.boolean().optional().describe(d('Спросить Figma заново, а не взять список из кэша на 5 минут')),
         limit: z.number().optional().describe(d('Сколько строк или записей показать')),
         offset: z.number().optional().describe(d('С какой записи продолжить: значение из подсказки note')),
       },
     },
-    async ({ figma, resolved = false, refresh = false, limit, offset = 0 }) => {
+    async ({ figma, scope = 'subtree', resolved = false, refresh = false, limit, offset = 0 }) => {
       const client = getRestClient();
       const requests = { tier1: 0, tier2: 0, tier3: 0 };
       const frames = [];
       const threads = [];
-      const seen = new Set();
+      const notes = [];
 
       for (const group of groupRefs(figma)) {
+        const own = [];
         if (group.nodeIds.length) {
           const { found, requests: spent } = await ensureNodes(group.fileKey, group.nodeIds, { client, editor: editorChannel });
           addRequests(requests, spent);
           for (const id of group.nodeIds) {
             const { snapshot } = found.get(id);
-            frames.push({ snapshot, rootId: id, ref: refOf(group.fileKey, id) });
+            own.push({ snapshot, rootId: id, ref: refOf(group.fileKey, id) });
           }
         }
-        if (seen.has(group.fileKey)) continue;
-        seen.add(group.fileKey);
+        frames.push(...own);
         const data = await fetchComments(group.fileKey, { client, refresh });
         if (!data.fromCache) requests.tier2 += 1;
-        threads.push(...buildThreads(data.comments, frames, { resolved }));
+
+        const targets = scope === 'subtree' && group.nodeIds.length ? group.nodeIds : null;
+        const context = await commentFrames(group.fileKey, data.comments, own, { client, resolved, requests, sync: Boolean(targets) });
+        if (context.notSynced.length) {
+          notes.push(`Кадры ${context.notSynced.join(', ')} не сняты: комментарии в них не привязаны к элементам. figma_sync по ним.`);
+        }
+        threads.push(...buildThreads(data.comments, [...own, ...context.frames], { resolved, targets }));
       }
 
       return json({
         frames: frames.map((frame) => frame.ref),
+        scope,
         ...(requests.tier1 || requests.tier2 || requests.tier3 ? { requests } : {}),
         ...capped(threads, { limit: limit ?? 30, offset }),
         annotations: collectAnnotations(frames).slice(0, 30),
+        ...(notes.length ? { warnings: notes } : {}),
+      });
+    },
+  );
+
+  server.registerTool(
+    'figma_history',
+    {
+      title: t({ ru: 'История макета', en: 'Design history' }),
+      description: t({
+        ru: 'Что менялось в макете за период: версии файла (автосохранения и именованные — кто и когда), комментарии за период и, с diff, разница узла между началом и концом периода — добавлено, удалено, тексты, размеры, краска, раскладка. Шаг истории — версия, а не отдельное действие: Figma отдельных действий наружу не отдаёт. Только канал REST.',
+        en: 'What changed in the design over a period: file versions (autosaves and named ones — who and when), comments over the period and, with diff, the node difference between the start and the end of the period — added, removed, texts, sizes, paint, layout. The history step is a version, not an individual action: Figma does not expose individual actions. REST channel only.',
+      }),
+      inputSchema: {
+        figma: z.string().describe(d('Файл или узел: ссылка figma.com или запись ключ:id')),
+        since: z.string().optional().describe(d('Начало периода: 2026-09-20 или 2026-09-20T15:30:00Z. По умолчанию семь дней назад')),
+        until: z.string().optional().describe(d('Конец периода в том же виде. По умолчанию сейчас')),
+        diff: z
+          .boolean()
+          .optional()
+          .describe(d('Сравнить узел на начало и конец периода. Нужен узел; стоит два запроса tier 1, у места View/Collab — из двадцати в месяц')),
+        refresh: z.boolean().optional().describe(d('Спросить Figma заново, а не взять список из кэша на 5 минут')),
+        limit: z.number().optional().describe(d('Сколько строк или записей показать')),
+        offset: z.number().optional().describe(d('С какой записи продолжить: значение из подсказки note')),
+      },
+    },
+    async ({ figma, since, until, diff = false, refresh = false, limit, offset = 0 }) => {
+      const { fileKey, nodeId } = parseFigmaRef(figma);
+      if (diff && !nodeId) throw new Error('diff сравнивает узел: нужна ссылка с node-id или запись ключ:id.');
+      const client = getRestClient();
+      const requests = { tier1: 0, tier2: 0, tier3: 0 };
+      const to = parseMoment(until, { end: true });
+      const from = parseMoment(since) ?? (to ?? Date.now()) - 7 * 24 * 60 * 60 * 1000;
+      if (to !== null && to < from) throw new Error('until раньше since.');
+      const period = { since: new Date(from).toISOString(), until: to === null ? null : new Date(to).toISOString() };
+
+      const history = await fetchVersions(fileKey, { since: from, client, refresh });
+      requests.tier2 += history.requests;
+      const versions = history.versions.filter((v) => Date.parse(v.at) >= from && (to === null || Date.parse(v.at) <= to));
+
+      /* Комментарии — те же, что у figma_comments, но за период и вместе с закрытыми: закрытие
+         треда тоже событие. С узлом — только его поддерево. */
+      const data = await fetchComments(fileKey, { client, refresh });
+      if (!data.fromCache) requests.tier2 += 1;
+      const own = [];
+      let nodeMissing = null;
+      if (nodeId) {
+        /* Узла может уже не быть в макете — история как раз и нужна, чтобы узнать, куда он делся. */
+        try {
+          const { found, requests: spent } = await ensureNodes(fileKey, [nodeId], { client, editor: editorChannel });
+          addRequests(requests, spent);
+          own.push({ snapshot: found.get(nodeId).snapshot, rootId: nodeId, ref: refOf(fileKey, nodeId) });
+        } catch (err) {
+          nodeMissing = err.message;
+        }
+      }
+      const context = await commentFrames(fileKey, data.comments, own, { client, resolved: true, requests, sync: Boolean(nodeId) });
+      const comments = buildThreads(data.comments, [...own, ...context.frames], {
+        resolved: true,
+        targets: nodeId ? [nodeId] : null,
+        since: from,
+        until: to,
+      });
+
+      const out = {
+        file: fileKey,
+        ...(nodeId ? { node: refOf(fileKey, nodeId) } : {}),
+        period,
+        ...(nodeMissing ? { nodeMissing: `${nodeMissing} Комментарии узла без его снимка не отобрать; diff покажет, когда он пропал.` } : {}),
+        versions: capped(versions, { limit: limit ?? 30, offset }),
+        comments: capped(comments, { limit: limit ?? 30, offset }),
+        ...(history.truncated
+          ? { versionsTruncated: 'Версий больше, чем прочитано за один вызов: начало периода не достигнуто. Сузьте период.' }
+          : {}),
+      };
+
+      if (diff) {
+        const pick = pickVersions(history.versions, { since: from, until: to });
+        if (!pick.base) {
+          out.diff = { error: 'У файла нет ни одной версии в истории — сравнивать не с чем.' };
+        } else if (!pick.head) {
+          out.diff = { error: 'До конца периода у файла не было ни одной версии.' };
+        } else {
+          const before = await snapshotAt(fileKey, nodeId, pick.base.id, { client });
+          const after = await snapshotAt(fileKey, nodeId, pick.head.id, { client });
+          requests.tier1 += before.requests + after.requests;
+          const head = pick.head.current ? { current: true } : { id: pick.head.id, at: pick.head.at, by: pick.head.by };
+          const base = { id: pick.base.id, at: pick.base.at, by: pick.base.by };
+          if (!before.snapshot || !after.snapshot) {
+            out.diff = {
+              base,
+              head,
+              error: !before.snapshot ? 'На начало периода этого узла в файле не было: он добавлен позже.' : 'На конец периода узла в файле нет: он удалён.',
+            };
+          } else {
+            const changes = diffSnapshots(before.snapshot, after.snapshot, nodeId, { fileKey });
+            out.diff = {
+              base,
+              head,
+              ...(pick.baseIsOldest ? { baseNote: 'Версии на начало периода нет: сравнение идёт с самой ранней известной.' } : {}),
+              added: changes.added.slice(0, 40),
+              removed: changes.removed.slice(0, 40),
+              changed: capped(changes.changed, { limit: limit ?? 60, offset: 0 }),
+            };
+          }
+        }
+      }
+
+      return json({
+        ...out,
+        ...(requests.tier1 || requests.tier2 || requests.tier3 ? { requests } : {}),
+        note: t({
+          ru: 'Шаг истории — версия файла: правки между двумя автосохранениями видны одной разницей, а не по действиям.',
+          en: 'The history step is a file version: edits between two autosaves show up as one difference, not action by action.',
+        }),
       });
     },
   );

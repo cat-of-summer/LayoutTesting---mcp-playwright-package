@@ -253,8 +253,8 @@ export function createRestClient({
     me: () => request('me'),
     file: (key, { depth } = {}) => request('file', { params: { key }, query: { depth } }),
     fileMeta: (key) => request('fileMeta', { params: { key } }),
-    fileNodes: (key, ids, { geometry = false, depth } = {}) =>
-      request('fileNodes', { params: { key }, query: { ids, depth, geometry: geometry ? 'paths' : undefined } }),
+    fileNodes: (key, ids, { geometry = false, depth, version } = {}) =>
+      request('fileNodes', { params: { key }, query: { ids, depth, version, geometry: geometry ? 'paths' : undefined } }),
     images: (key, ids, { format = 'png', scale = 1 } = {}) =>
       request('images', {
         params: { key },
@@ -267,6 +267,8 @@ export function createRestClient({
       }),
     imageFills: (key) => request('imageFills', { params: { key } }),
     comments: (key) => request('comments', { params: { key }, query: { as_md: 'true' } }),
+    versions: (key, { before, pageSize = 50 } = {}) =>
+      request('versions', { params: { key }, query: { before, page_size: pageSize } }),
     budget: summary,
     download,
   };

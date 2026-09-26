@@ -16,7 +16,7 @@
  *   item {sizingH, sizingV: FIXED|HUG|FILL, absolute, grow, min{w,h}, max{w,h}}
  *   fills[], strokes[] — {kind solid|linear|radial|angular|diamond|image, …}
  *   stroke {weight, weights[t,r,b,l], align, dashes}, radius, effects[]
- *   text {chars, autoResize, truncate, maxLines, style, runs[]}
+ *   text {chars, autoResize, truncate, maxLines, style, link, runs[] с link} — link {url} или {node}
  *   component {id, name, set, key, props} у инстанса; {definition: true} у самого компонента
  *   vars — привязки к переменным Figma, styles — имена стилей
  *   interactions, scrollBehavior, overflow, annotations, devStatus, vectorHash
@@ -30,6 +30,13 @@ import { DIRS } from '../constants.js';
 import { round } from './css.js';
 import { getRestClient } from './rest.js';
 import { groupRefs, parseFigmaRef, refOf } from './url.js';
+
+/**
+ * Номер модели снимка. Поднимается, когда в снимок начинают класть то, чего старые не несут:
+ * иначе кэш по неизменной версии файла молча отдавал бы узлы без нового поля — и агент решал бы,
+ * что в макете его нет. 2 — гиперссылки текстов (text.link, runs[].link) и рамки предков корня.
+ */
+export const MODEL = 2;
 
 /** Как часто сверять версию файла. Макет редко меняется посреди разбора, а сверка стоит запроса. */
 const META_TTL_MS = 10 * 60 * 1000;
@@ -163,10 +170,21 @@ export function normalizeTypeStyle(s, { partial = false } = {}) {
   });
 }
 
+/**
+ * Гиперссылка текста: на адрес или на узел того же файла. Дизайнеры прячут в подписях ссылки на
+ * референсы анимаций и эталонные сайты — без этого поля они видны только как подчёркнутый текст.
+ */
+function linkOf(link) {
+  if (!link) return undefined;
+  if (link.url) return { url: link.url };
+  const node = link.nodeID ?? link.nodeId ?? link.value;
+  return node ? { node } : undefined;
+}
+
 function textOf(raw) {
   const chars = raw.characters ?? '';
   const { autoResize, truncate, maxLines, ...style } = normalizeTypeStyle(raw.style) || {};
-  const out = strip({ chars, autoResize: raw.textAutoResize ?? autoResize, truncate, maxLines, style });
+  const out = strip({ chars, autoResize: raw.textAutoResize ?? autoResize, truncate, maxLines, style, link: linkOf(raw.style?.hyperlink) });
 
   /* Смешанное оформление внутри строки: жирное слово, ссылка другим цветом. Без него «один
      текст» из макета превращается в один span, и акцент теряется. */
@@ -194,6 +212,7 @@ function textOf(raw) {
           text: chars.slice(run.start, run.end),
           style: normalizeTypeStyle(table[run.id], { partial: true }),
           fills: paints(table[run.id].fills),
+          link: linkOf(table[run.id].hyperlink),
         }),
       );
     if (styled.length) out.runs = styled;
@@ -459,7 +478,7 @@ export async function findNode(fileKey, nodeId, { cacheDir = DIRS.figma } = {}) 
   const order = meta.roots[nodeId] ? [nodeId, ...roots.filter((id) => id !== nodeId)] : roots;
   for (const rootId of order) {
     const entry = meta.roots[rootId];
-    if (entry.version !== meta.version) continue;
+    if (entry.version !== meta.version || entry.model !== MODEL) continue;
     const snapshot = await readJson(path.join(cacheDir, fileKey, entry.file));
     if (snapshot?.nodes?.[nodeId]) return { snapshot, node: snapshot.nodes[nodeId], fileKey };
   }
@@ -634,7 +653,9 @@ async function syncFile({ fileKey, nodeIds, wholeFile }, ctx) {
     });
   }
 
-  const missing = nodeIds.filter((id) => wantCss || !meta.version || meta.roots[id]?.version !== meta.version);
+  const missing = nodeIds.filter(
+    (id) => wantCss || !meta.version || meta.roots[id]?.version !== meta.version || meta.roots[id]?.model !== MODEL,
+  );
   const hits = nodeIds.filter((id) => !missing.includes(id));
   const notFound = [];
 
@@ -691,7 +712,7 @@ async function syncFile({ fileKey, nodeIds, wholeFile }, ctx) {
       if (fetched.extras) attachExtras(snapshot, fetched.extras);
       const rel = `${meta.version}/${safeId(id)}.json`;
       await writeJson(path.join(cacheDir, fileKey, rel), snapshot);
-      meta.roots[id] = { version: meta.version, file: rel, fetchedAt: meta.checkedAt, channel: fetched.channel };
+      meta.roots[id] = { version: meta.version, model: MODEL, file: rel, fetchedAt: meta.checkedAt, channel: fetched.channel };
     }
   }
 

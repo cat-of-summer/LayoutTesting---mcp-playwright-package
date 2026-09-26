@@ -137,14 +137,22 @@ const HINTS = [
   перед переходом дальше — та же фаза с brief: true. Если help с guide отвечает available: false,
   образ собран без регламента — скажите об этом человеку, а не верстайте по наитию.
   Не начинайте верстать, не пройдя фазу 0: стенд в контейнере не видит localhost хоста, и
-  выясняется это обычно уже посреди работы;`,
+  выясняется это обычно уже посреди работы. Нет токена REST — figma_status с action: token сразу,
+  не спрашивая: логин в .env стенда задан ровно для этого; капчу или код при входе человек проходит
+  по ссылке editor.handoff.url. Скилла layout-by-figma нет среди ваших — предложите человеку
+  положить его в .claude/skills (GET /skill/layout-by-figma/SKILL.md со стенда), чтобы регламент
+  подтягивался сам;`,
     en: `- "build this from the design", "here is a Figma link", "make it like the mockup" — this task
   follows the handbook rather than instinct: help(guide: "index"), then one phase at a time. Each
   phase states the condition under which it is closed and names the next one, so there is no list
   to keep in your head; before moving on, re-read the phase with brief: true. If help with guide
   answers available: false, the image was built without the handbook — tell the human instead of
   building by instinct. Do not start building before phase 0 is done: the stand runs in a container
-  and cannot see the host localhost, and that is usually discovered mid-work;`,
+  and cannot see the host localhost, and that is usually discovered mid-work. No REST token —
+  figma_status with action: token right away, without asking: the login in the stand .env is there
+  for exactly this; a captcha or a code at login is passed by the human via editor.handoff.url. No
+  layout-by-figma skill among yours — offer the human to put it into .claude/skills
+  (GET /skill/layout-by-figma/SKILL.md from the stand) so the handbook loads by itself;`,
   },
   {
     groups: ['figma'],

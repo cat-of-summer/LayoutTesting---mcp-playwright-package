@@ -25,6 +25,7 @@ import fs from 'node:fs/promises';
 import { FIGMA } from '../constants.js';
 import { closeSession, createSession } from '../browser/pool.js';
 import { exportState, statePath } from '../browser/storage.js';
+import { closeHandoff, handoffOpen, handoffStatus, openHandoff } from '../browser/handoff.js';
 import { TOKEN_SCOPES } from './api.js';
 import { loginConfigured, redact, registerTokenIssuer } from './auth.js';
 
@@ -35,6 +36,9 @@ const HEADERS = { 'Accept-Language': 'ru-RU,ru;q=0.9,en;q=0.8' };
 const LOGIN_URL = 'https://www.figma.com/login';
 const FILES_URL = 'https://www.figma.com/files/recent';
 const fileUrl = (fileKey) => `https://www.figma.com/design/${encodeURIComponent(fileKey)}/`;
+
+/** Назначение передачи браузера человеку: одна на канал, вторая проверка заменяет первую. */
+const HANDOFF = 'figma-login';
 
 /** Сколько не повторять вход после сбоя: иначе каждый вызов в режиме auto ждал бы минуту таймаута. */
 const COOLDOWN_MS = 5 * 60 * 1000;
@@ -82,6 +86,8 @@ function scheduleIdle() {
   clearTimeout(idleTimer);
   if (!FIGMA.editorIdleMs) return;
   idleTimer = setTimeout(() => {
+    /* Пока человек проходит проверку во вкладке, закрыть её значит оборвать его на полуслове. */
+    if (handoffOpen(HANDOFF)) return scheduleIdle();
     exclusive(() => closeEditor('idle')).catch(() => {});
   }, FIGMA.editorIdleMs);
   idleTimer.unref?.();
@@ -130,6 +136,7 @@ export async function editorStatus() {
     ...status,
     open: Boolean(current),
     ...(current?.fileKey ? { file: current.fileKey } : {}),
+    ...(handoffStatus(HANDOFF) ? { handoff: handoffStatus(HANDOFF) } : {}),
   };
 }
 
@@ -163,7 +170,47 @@ async function finishLogin() {
   current.awaitingOtp = false;
   await exportState(current.session, editorStateName());
   setStatus('ready');
+  closeHandoff(HANDOFF, 'done');
 }
+
+/**
+ * Проверку, которую Figma устроила при входе, проходит человек — в той же вкладке стенда, через
+ * страницу /handoff/<токен>. Стенд следит за вкладкой сам: ушли со страницы входа — вход
+ * сохраняется, канал снова ready, и агенту остаётся лишь повторить свой вызов.
+ */
+function offerHandoff(page, reason) {
+  const session = current;
+  const handoff = openHandoff({
+    page,
+    purpose: HANDOFF,
+    reason,
+    allowHosts: ['figma.com'],
+    isDone: async (tab) => {
+      const url = new URL(tab.url());
+      if (!/(^|\.)figma\.com$/.test(url.hostname) || url.pathname.startsWith('/login')) return false;
+      /* Со страницы входа уходят и на подтверждение по почте: готово — когда есть меню аккаунта
+         или открыт файл с пользователем. */
+      return tab
+        .evaluate(
+          () =>
+            Boolean(document.querySelector('button[aria-label^="Account dropdown"]')) ||
+            Boolean(window.figma && window.figma.currentUser),
+        )
+        .catch(() => false);
+    },
+    onDone: async () => {
+      if (current !== session) return;
+      current.awaitingOtp = false;
+      await exportState(current.session, editorStateName());
+      setStatus('ready');
+      scheduleIdle();
+    },
+  });
+  return handoff.url;
+}
+
+const HANDOFF_HINT = (url) =>
+  `передайте человеку ссылку ${url} (она же в editor.handoff.url): там живой экран браузера стенда, проверку он проходит сам. Стенд заметит успешный вход и сохранит его; после этого повторите вызов.`;
 
 async function submitOtp(page, otp) {
   const field = page.locator(OTP_FIELD).first();
@@ -171,7 +218,11 @@ async function submitOtp(page, otp) {
   await field.press('Enter');
   const outcome = await loginOutcome(page);
   if (outcome !== 'ok') {
-    throw fail('needs_human', `Figma не приняла код (${outcome}). Запросите у человека свежий код и повторите figma_status с action: login и otp.`);
+    const url = offerHandoff(page, 'Figma не приняла код: введите свежий код на снимке.');
+    throw fail(
+      'needs_human',
+      `Figma не приняла код (${outcome}). Запросите у человека свежий код и повторите figma_status с action: login и otp — либо ${HANDOFF_HINT(url)}`,
+    );
   }
   await finishLogin();
 }
@@ -204,13 +255,29 @@ async function login(page, { otp } = {}) {
   if (outcome === 'otp') {
     current.awaitingOtp = true;
     if (otp) return submitOtp(page, otp);
-    throw fail('needs_human', 'Figma запросила код двухфакторной аутентификации. Спросите код у человека и вызовите figma_status с action: login и otp.');
+    /* Тот же ввод кода бывает двух видов: код из приложения 2FA и код из письма на почту аккаунта
+       («Check your inbox»). Человеку важно знать, где его искать. */
+    const byEmail = await page
+      .evaluate(() => /check your (inbox|email)|sent to your email/i.test(document.body?.innerText || ''))
+      .catch(() => false);
+    const what = byEmail ? 'код из письма, которое Figma отправила на почту аккаунта' : 'код двухфакторной аутентификации';
+    const url = offerHandoff(page, `Figma запросила ${what}: введите его в поле на снимке.`);
+    throw fail(
+      'needs_human',
+      `Figma запросила ${what}. Спросите код у человека и вызовите figma_status с action: login и otp — либо ${HANDOFF_HINT(url)}`,
+    );
+  }
+  if (outcome === 'captcha') {
+    const url = offerHandoff(page, 'Figma показала капчу при входе: пройдите её на снимке.');
+    throw fail('needs_human', `Figma показала капчу при входе. Капчу проходит только человек: ${HANDOFF_HINT(url)}`);
+  }
+  if (outcome === 'verify') {
+    const url = offerHandoff(page, 'Figma просит подтвердить вход по ссылке из письма: вставьте ссылку из письма в поле «Открыть адрес».');
+    throw fail('needs_human', `Figma просит подтвердить вход по ссылке из письма. Ссылку нужно открыть в браузере стенда, а не в своём: ${HANDOFF_HINT(url)}`);
   }
   const manual =
     `Войти можно руками через стенд: browser_open на ${LOGIN_URL} с userAgent десктопного Chrome, пройти проверку, ` +
     `затем browser_storage с action: export и именем ${editorStateName()}, после чего figma_status с action: login.`;
-  if (outcome === 'captcha') throw fail('needs_human', `Figma показала капчу при входе. ${manual}`);
-  if (outcome === 'verify') throw fail('needs_human', `Figma просит подтвердить вход по ссылке из письма. Человеку нужно открыть письмо, после этого — figma_status с action: login.`);
   if (outcome === 'invalid') throw fail('needs_login', 'Figma отклонила FIGMA_EMAIL или FIGMA_PASSWORD. Проверьте их в .env стенда.');
   throw fail('error', `Вход в Figma не завершился за 45 с. ${manual}`);
 }
@@ -279,10 +346,18 @@ const DUMP = async ({ ids, withCss }) => {
     texts.push(JSON.stringify(rest));
 
     /* Родители снятого корня: JSON_REST_V1 их не несёт, а «где лежит этот узел» — первый вопрос,
-       когда ссылка из задачи ведёт не на кадр. От страницы вниз, сама страница включительно. */
+       когда ссылка из задачи ведёт не на кадр. От страницы вниз, сама страница включительно.
+       Рамка предка нужна комментариям: Figma привязывает их к кадру верхнего уровня смещением
+       от его угла, и без рамки кадра не понять, на какой элемент внутри снятого узла они легли. */
     const chain = [];
     for (let up = node.parent; up && up.type !== 'DOCUMENT'; up = up.parent) {
-      chain.unshift({ id: up.id, name: up.name, type: up.type });
+      const rect = up.absoluteBoundingBox;
+      chain.unshift({
+        id: up.id,
+        name: up.name,
+        type: up.type,
+        ...(rect ? { box: { x: rect.x, y: rect.y, w: rect.width, h: rect.height } } : {}),
+      });
     }
     out.ancestors[id] = chain;
 
@@ -454,6 +529,7 @@ export function editorLogin({ otp } = {}) {
 /** Забыть вход. Состояние, которое человек указал сам через FIGMA_STORAGE_STATE, не трогаем. */
 export function editorLogout() {
   return exclusive(async () => {
+    closeHandoff(HANDOFF, 'closed');
     await closeEditor('closed');
     if (!FIGMA.storageState) await fs.rm(statePath(editorStateName()), { force: true });
     setStatus('idle');

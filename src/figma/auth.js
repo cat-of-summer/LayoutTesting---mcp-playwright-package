@@ -17,6 +17,7 @@
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import { DIRS, FIGMA } from '../constants.js';
+import { TOKEN_SCOPES } from './api.js';
 
 export const FIGMA_STATE = path.join(DIRS.state, 'figma');
 export const TOKEN_FILE = path.join(FIGMA_STATE, 'token.json');
@@ -76,11 +77,22 @@ async function issue(previous, file, now) {
   }
 }
 
+/**
+ * Каких прав не хватает выпущенному токену. Инструменту понадобился новый эндпоинт (история
+ * версий — file_versions:read), а токен выпущен раньше: такой перевыпускается при первом же
+ * запросе, как и истекающий. Токен без списка прав выпущен не стендом — о нём судить не берёмся.
+ */
+export function missingScopes(saved, scopes = TOKEN_SCOPES) {
+  if (!Array.isArray(saved?.scopes)) return [];
+  return scopes.filter((scope) => !saved.scopes.includes(scope));
+}
+
 export async function resolveToken({
   issue: allowIssue = false,
   file = TOKEN_FILE,
   now = Date.now(),
   autoIssue = FIGMA.autoIssueToken,
+  scopes = TOKEN_SCOPES,
 } = {}) {
   const env = process.env.FIGMA_TOKEN?.trim();
   if (env) return { token: env, source: 'env' };
@@ -88,12 +100,20 @@ export async function resolveToken({
   const saved = await readIssuedToken({ file });
   const left = saved?.expiresAt ? Date.parse(saved.expiresAt) - now : Infinity;
   const valid = Boolean(saved) && left > 0;
+  const lacking = valid ? missingScopes(saved, scopes) : [];
 
-  if (allowIssue && autoIssue && (!valid || left < RENEW_BEFORE_MS)) {
+  if (allowIssue && autoIssue && (!valid || left < RENEW_BEFORE_MS || lacking.length)) {
     const fresh = await issue(saved, file, now);
     if (fresh) return { token: fresh.token, source: 'issued', expiresAt: fresh.expiresAt, issuedNow: true };
   }
-  if (valid) return { token: saved.token, source: 'issued', ...(saved.expiresAt ? { expiresAt: saved.expiresAt } : {}) };
+  if (valid) {
+    return {
+      token: saved.token,
+      source: 'issued',
+      ...(saved.expiresAt ? { expiresAt: saved.expiresAt } : {}),
+      ...(lacking.length ? { missingScopes: lacking } : {}),
+    };
+  }
   return { token: null, source: null };
 }
 

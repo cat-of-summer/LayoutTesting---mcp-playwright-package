@@ -79,6 +79,25 @@ test('за два дня до срока токен перевыпускаетс
   assert.match(lastTokenIssue().error, /интерфейс Figma изменился/);
 });
 
+test('токен без нужного scope перевыпускается при первом запросе, а не при проверке', async () => {
+  const file = tokenFile();
+  await fs.writeFile(file, JSON.stringify({ ...fresh(), scopes: ['file_content:read', 'file_comments:read'] }));
+  issuer({ ...fresh(), token: 'figd_rescoped_token_value_12345678', scopes: ['file_content:read', 'file_comments:read', 'file_versions:read'] });
+  const scopes = ['file_content:read', 'file_comments:read', 'file_versions:read'];
+
+  const check = await resolveToken({ file, now, autoIssue: true, scopes });
+  assert.deepEqual(check.missingScopes, ['file_versions:read'], 'проверка называет, чего не хватает');
+  assert.equal(calls.length, 0, 'проверка ничего не выпускает');
+
+  const used = await resolveToken({ issue: true, file, now, autoIssue: true, scopes });
+  assert.equal(used.token, 'figd_rescoped_token_value_12345678');
+  assert.equal(calls.length, 1);
+
+  const again = await resolveToken({ issue: true, file, now, autoIssue: true, scopes });
+  assert.equal(again.issuedNow, undefined, 'токену с полным набором прав перевыпуск не нужен');
+  assert.equal(calls.length, 1);
+});
+
 test('истёкший токен не отдаётся, выключенный автовыпуск не выпускает', async () => {
   const file = tokenFile();
   await fs.writeFile(file, JSON.stringify(fresh(-1)));
