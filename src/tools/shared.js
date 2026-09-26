@@ -11,15 +11,15 @@ import { t } from '../i18n.js';
 import { BROWSERS, VIEWPORTS } from '../config.js';
 import { ACTIONS } from '../browser/act.js';
 
-/** Шаг действия — тот же набор, что у browser_act: аудит в состояниях и form_audit. */
+/**
+ * Шаг действия для аудита в состояниях и form_audit: действие, селектор, значение — как у
+ * browser_act. Координаты, таймаут и force сюда не вынесены: каждое поле схемы оплачивается в
+ * манифесте, а открыть модалку или меню можно и без них.
+ */
 export const stepSchema = z.object({
   action: z.enum(ACTIONS),
   selector: z.string().optional(),
   value: z.string().optional(),
-  x: z.number().optional(),
-  y: z.number().optional(),
-  timeout: z.number().optional(),
-  force: z.boolean().optional(),
 });
 
 /** Состояние страницы: имя и шаги, которые его создают. */

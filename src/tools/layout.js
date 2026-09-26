@@ -24,8 +24,8 @@ export function register(server) {
     {
       title: t({ ru: 'Эвристики вёрстки', en: "Layout heuristics" }),
       description: t({
-        ru: 'Ищет горизонтальный скролл, вылеты за viewport, наложения элементов, обрезанный текст, текст под непрозрачным слоем, мёртвый z-index (задан на position: static), битые картинки, картинки без размеров, мелкие тач-таргеты и низкий контраст. Со states — и в открытых модалках и меню.',
-        en: "Finds horizontal scroll, elements past the viewport, overlapping content, clipped text, text under an opaque layer, dead z-index (set on position: static), broken images, images without dimensions, small tap targets and low contrast. With states — in open modals and menus too. The first thing to run when the complaint sounds like \"the layout is broken\".",
+        ru: 'Ищет горизонтальный скролл, вылеты за viewport, наложения элементов, обрезанный текст, текст под непрозрачным слоем, мёртвый z-index (задан на position: static), битые картинки, картинки без размеров, мелкие тач-таргеты и низкий контраст. Со states — и в открытых модалках и меню, чьё содержимое в закрытом виде не видно.',
+        en: "Finds horizontal scroll, elements past the viewport, overlapping content, clipped text, text under an opaque layer, dead z-index (set on position: static), broken images, images without dimensions, small tap targets and low contrast. With states — in open modals and menus too, whose content is invisible while closed. The first thing to run when the complaint sounds like \"the layout is broken\".",
       }),
       inputSchema: {
         sessionId: z.string(),
