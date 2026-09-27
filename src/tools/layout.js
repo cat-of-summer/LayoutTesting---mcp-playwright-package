@@ -229,9 +229,13 @@ export function register(server) {
         maxTargets: z.number().optional().describe(d('Сколько элементов обойти. По умолчанию 30')),
         timeoutMs: z.number().optional().describe(d('Сколько ждать, пока движение уляжется, мс. По умолчанию 1200')),
         maxItems: z.number().optional().describe(d('Сколько находок показывать на сценарий. По умолчанию 20')),
+        ignore: z
+          .array(z.string())
+          .optional()
+          .describe(d('Не считать изменения внутри этих элементов: фоновая анимация, слайдер-автоплей. canvas и video не считаются всегда')),
       },
     },
-    async ({ sessionId, selectors, actions, maxTargets, timeoutMs, maxItems }) => {
+    async ({ sessionId, selectors, actions, maxTargets, timeoutMs, maxItems, ignore }) => {
       const session = getSession(sessionId);
       /*
        * Отказ, а не молчаливый прогон по нулям.
@@ -253,10 +257,12 @@ export function register(server) {
           ...(maxTargets ? { maxTargets } : {}),
           ...(timeoutMs ? { timeoutMs } : {}),
           ...(maxItems ? { maxItems } : {}),
+          ...(ignore?.length ? { ignore } : {}),
         })),
         note:
           'Обработчики, повешенные через addEventListener, из страницы не видны — такие элементы попадают в обход только по ARIA, переходам или onclick. ' +
-          'Время меряется по кадрам, а не по объявленной длительности: то, что не двигается и не гаснет (цвет, тень, фон), даст durationMs: 0 при работающем переходе.',
+          'Время меряется по кадрам, а не по объявленной длительности: то, что не двигается и не гаснет (цвет, тень, фон), даст durationMs: 0 при работающем переходе. ' +
+          'kind: noMotion — DOM ответил, но геометрия не менялась; мутации внутри canvas, video и ignore не считаются.',
       });
     },
   );

@@ -117,6 +117,19 @@ function describe(node, origin, stats) {
   return line;
 }
 
+/* Ошибка разбора называет узел, на котором сломалась: иначе агент видит голое сообщение без места. */
+function atNode(node, fn) {
+  try {
+    return fn();
+  } catch (error) {
+    if (!error.nodeId) {
+      error.nodeId = node.id;
+      error.message = `узел ${node.id} «${node.name ?? ''}»: ${error.message}`;
+    }
+    throw error;
+  }
+}
+
 export function outlineLines(snapshot, rootId, { depth = 6, hidden = false, stats = null } = {}) {
   const root = snapshot.nodes[rootId];
   const origin = root.box || { x: 0, y: 0 };
@@ -124,7 +137,7 @@ export function outlineLines(snapshot, rootId, { depth = 6, hidden = false, stat
   const pad = (level) => '  '.repeat(level);
 
   const visit = (node, level) => {
-    lines.push(`${pad(level)}${describe(node, origin, stats)}`);
+    lines.push(`${pad(level)}${atNode(node, () => describe(node, origin, stats))}`);
     const kids = orderedChildren(snapshot, node, { hidden });
     if (!kids.length) return;
     if (level >= depth) {
@@ -176,7 +189,7 @@ export function cssItems(snapshot, rootId, { depth = 2, hidden = false, stats = 
         name: node.name,
         type: node.type,
         level,
-        css: cssOf(node, parent),
+        css: atNode(node, () => cssOf(node, parent)),
         text: node.type === 'TEXT' ? clipText(node, 120, stats) : undefined,
         runs: node.text?.runs?.length,
         notes: paintNotes(node),

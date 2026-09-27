@@ -8,7 +8,7 @@
 import { z } from 'zod';
 import { d } from '../i18n-params.js';
 import { siteRef } from '../artifacts.js';
-import { createSession, closeSession, getSession, gotoAndSettle } from '../browser/pool.js';
+import { createSession, closeSession, getSession, gotoAndSettle, sessionAt } from '../browser/pool.js';
 import { pageSnapshot } from '../checks/snapshot.js';
 import { CONFIG } from '../config.js';
 import { cappedTail, json, profileCoreSchema, text } from './shared.js';
@@ -149,7 +149,7 @@ export function register(server) {
       }),
       inputSchema: {
         sessionId: z.string().optional().describe(d('Сохранить текущую страницу сессии')),
-        url: z.string().optional().describe(d('Открыть свою одноразовую сессию по адресу и сохранить её')),
+        url: z.string().optional().describe(d('Адрес: без sessionId — своя одноразовая сессия, с sessionId — переход в ней, затем сохранение')),
         siteId: z.string().optional().describe(d('Имя каталога в архиве. По умолчанию берётся из хоста')),
         assets: z.boolean().optional().describe(d('Тянуть ли CSS, картинки и шрифты. По умолчанию да')),
         scripts: z
@@ -168,7 +168,7 @@ export function register(server) {
         note: 'Открывать копию из browser_goto надо по internalUrl: публичного порта внутри контейнера нет.',
       });
 
-      if (sessionId) return done(await savePage(getSession(sessionId), { siteId, assets, scripts, raw }));
+      if (sessionId) return done(await savePage((await sessionAt(sessionId, url)).session, { siteId, assets, scripts, raw }));
       if (!url) throw new Error('Нужен sessionId или url.');
 
       const session = await createSession(resolveConditions(conditions));

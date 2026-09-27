@@ -141,6 +141,7 @@ If you see truncated, do not repeat the same call — follow the offset from the
 - Одновременно не больше ${CONFIG.maxSessions}. На потолке вытесняется та, к которой дольше всех не обращались.
 - Простой дольше ${Math.round(CONFIG.sessionIdleMs / 60000)} минут — сессия закрывается сама. Предельный возраст — ${Math.round(CONFIG.sessionMaxAgeMs / 60000)} минут, даже если её продолжают трогать.
 - Сессии внутренних прогонов (обход, матрица) не вытесняются: за ними следит собственный порядок завершения.
+- browser_open с keepAlive: true — простой сессию не закрывает, а предельный возраст — ${Math.round(CONFIG.sessionKeepAliveMaxMs / 3600000)} ч. Так открывают рабочие сессии, между проверками которых пишется код.
 
 Закрывайте browser_close, закончив со страницей: рассчитывать на автоматику не стоит, она страховка, а не порядок работы.
 
@@ -150,6 +151,7 @@ If you see truncated, do not repeat the same call — follow the offset from the
 - At most ${CONFIG.maxSessions} at a time. At the cap, the least recently used one is evicted.
 - Idle for more than ${Math.round(CONFIG.sessionIdleMs / 60000)} minutes and a session closes itself. The hard age limit is ${Math.round(CONFIG.sessionMaxAgeMs / 60000)} minutes, even if it keeps being used.
 - Sessions of internal runs (crawl, matrix) are never evicted: they are closed by their own teardown.
+- browser_open with keepAlive: true — idle time does not close the session, and the age limit is ${Math.round(CONFIG.sessionKeepAliveMaxMs / 3600000)} h. That is how working sessions with code written between checks are opened.
 
 Call browser_close when you are done with a page: the automatic path is a safety net, not the way of working.
 

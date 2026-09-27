@@ -28,7 +28,27 @@ validate_html
 ```
 
 `figma_compare` opens a session of its own at the frame width — comparing a desktop design with a
-mobile build is meaningless.
+mobile build is meaningless. With `sessionId` and `url` together the comparison navigates the
+session to `url` (`navigation` in the answer); the same address is not reloaded.
+
+What the answer has already taken apart for you — no need to recheck by hand:
+
+- `frame` and `control` on a finding — a button text compared as the design's button frame against
+  the page button; `textBox` — the width of a stretched text layer, the text itself compared by its
+  alignment edge.
+- `lines` — a different number of lines in the design and on the page; `textWrap` names
+  `balance`/`pretty`.
+- `originNote` — the frame does not start at zero (content under an overlaid header): corrected.
+- `scrollbarNote` — the page scrollbar takes width. The stand's own session widens itself by it; in
+  yours — `browser_open` with `scrollbars: "overlay"` (the default in windows under 768px).
+- `shiftedBlock` with `cause: "content"` — different content above the block (`above`): check that,
+  not the spacing.
+- `onlyDesignBlocks` — a design container none of whose texts is on the page: a state opened by an
+  action (`browser_act`), or a question for the human.
+- `contentNote` — the unmatched texts include contacts or addresses: `figma_breakpoints` shows
+  `contentMismatch`, the design frames disagreeing with each other.
+- `sections.sectionHeights` — section heights in the design and on the page, top to bottom: no need
+  to measure with `browser_eval`.
 
 ## The widths between the frames
 

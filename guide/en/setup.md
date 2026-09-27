@@ -9,7 +9,7 @@ STEPS:
   1. stand_info — version, exposed groups, guide.available: true (otherwise tell the human).
   2. figma_status — editor.state and rest.configured; rest: false → action: token yourself, no question; editor.state: needs_human → the editor.handoff.url link to the human; issuing failed → ask the human.
   3. dev server on 0.0.0.0 → browser_goto http://host.docker.internal:<port> answers 200.
-  4. browser_open a second time with animations: "allow" — the live session; keep both to the end.
+  4. browser_open a second time with animations: "allow" — the live session; both with keepAlive: true, kept to the end.
   5. README, CLAUDE.md, bundler config — how assets are wired, what the CSS framework does to p and h1..h6; a dictionary of its utilities: tap area, icons, visibility.
 
 ## 0.1 The stand and access
@@ -60,6 +60,10 @@ So the second session — live, `animations: "allow"` — opens **right away** a
 That is where every hover, the intro animation (`browser_goto` with `frames`), the modals and
 `interaction_audit` are checked.
 
+Both sessions open with `keepAlive: true`. Without it a session closes after 15 minutes idle, and
+code gets written between checks — the mobile session closed between two comparisons, and
+`keepAlive` was learned from the error text.
+
 > How this goes wrong. The live session was opened at the very end and checked in a few spots. In
 > the working session the hover of overlapping elements looked fine; in the live one the hovered
 > element jumped in z-index and the stacking flickered at the border. The hero intro showed its
@@ -82,5 +86,5 @@ Read `README.md`, `CLAUDE.md`, the bundler config. Find out:
 ## Gate
 
 The project page opens through `browser_goto`; REST and the Figma editor are available or their
-absence is agreed with the human; the working and the live sessions are open; it is known where
+absence is agreed with the human; the working and the live sessions are open with `keepAlive: true`; it is known where
 assets go and how they are wired in.

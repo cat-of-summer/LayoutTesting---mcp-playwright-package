@@ -425,6 +425,34 @@ export function getSession(id) {
   return session;
 }
 
+/** Один и тот же ли адрес: без якоря и хвостового слэша. */
+export function sameUrl(a, b) {
+  const norm = (value) => {
+    try {
+      const url = new URL(value);
+      url.hash = '';
+      return url.href.replace(/\/+$/, '');
+    } catch {
+      return String(value || '').replace(/#.*$/, '').replace(/\/+$/, '');
+    }
+  };
+  return norm(a) === norm(b);
+}
+
+/**
+ * Сессия по id и, если передан url, переход на него.
+ *
+ * Раньше при sessionId адрес молча отбрасывался: сверка шла по странице, которая была открыта в
+ * сессии, и отвечала «элемента нет» про чужую страницу. Теперь другой адрес открывается, а
+ * совпадающий не перезагружается: сессию с логином и раскрытыми меню незачем сбрасывать.
+ */
+export async function sessionAt(sessionId, url, options) {
+  const session = getSession(sessionId);
+  if (!url || sameUrl(session.page.url(), url)) return { session, navigation: null };
+  const navigation = await gotoAndSettle(session, url, options);
+  return { session, navigation };
+}
+
 /**
  * Была ли навигация с прошлого обращения — и сразу отметить, что агент об этом узнал.
  *

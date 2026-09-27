@@ -571,6 +571,7 @@ export async function exportSvg(refs, { client = getRestClient(), cacheDir = DIR
         refs: [ref],
         name: node.name,
         size: clean.width ? `${clean.width}x${clean.height}` : undefined,
+        ...(geometry === 'fill' ? {} : svgOffset(node, clean)),
         monochrome: clean.monochrome,
         color: clean.color || undefined,
         colors: clean.monochrome ? undefined : clean.colors,
@@ -643,6 +644,43 @@ export async function cropImageFill(input, box, paint, scale) {
   return pipeline.webp({ quality: 90 }).toBuffer();
 }
 
+/**
+ * Имя файла картинки-заливки. Две заливки одного узла раньше ложились в один файл: вторая
+ * перезаписывала первую, а в ответе было два элемента с одинаковым file. Номер заливки — по
+ * видимым картинкам узла, с единицы.
+ */
+export function imageFileName(node, scale, fill = null) {
+  return `${slug(node.name) || 'image'}-${safeId(node.id)}${fill == null ? '' : `-f${fill + 1}`}@${scale}x.webp`;
+}
+
+/**
+ * На сколько svg больше узла и с какой стороны.
+ *
+ * Figma рисует svg по границам отрисовки: внешний штрих, тень и обводка контуром раздувают его,
+ * и выноска приезжала с полями 2.67px, которые агент пересчитывал вручную. Поля берутся из
+ * absoluteRenderBounds снимка; если их нет, а размер svg отличается от узла, — поровну по краям.
+ * Ставить svg надо в (x − left, y − top) узла.
+ */
+export function svgOffset(node, svg) {
+  if (!node?.box) return {};
+  const box = `${round(node.box.w)}x${round(node.box.h)}`;
+  if (node.render) {
+    const pad = {
+      left: round(node.box.x - node.render.x),
+      top: round(node.box.y - node.render.y),
+      right: round(node.render.x + node.render.w - (node.box.x + node.box.w)),
+      bottom: round(node.render.y + node.render.h - (node.box.y + node.box.h)),
+    };
+    if (Object.values(pad).every((v) => Math.abs(v) < 0.5)) return {};
+    return { box, offset: { ...pad, by: 'renderBounds' } };
+  }
+  if (!svg?.width || !svg?.height) return {};
+  const dx = svg.width - node.box.w;
+  const dy = svg.height - node.box.h;
+  if (Math.abs(dx) < 0.5 && Math.abs(dy) < 0.5) return {};
+  return { box, offset: { left: round(dx / 2), top: round(dy / 2), right: round(dx / 2), bottom: round(dy / 2), by: 'size' } };
+}
+
 export async function exportImages(refs, { client = getRestClient(), cacheDir = DIRS.figma, editor = null, scales = [1, 2] } = {}) {
   const runId = newRunId('figma-images');
   const dir = await runDir(runId);
@@ -664,7 +702,8 @@ export async function exportImages(refs, { client = getRestClient(), cacheDir = 
       const before = targets.length;
       walk(snapshot, id, (node) => {
         if (node.visible === false) return false;
-        for (const paint of node.fills || []) if (paint.kind === 'image' && node.box) targets.push({ node, paint });
+        const own = node.box ? (node.fills || []).filter((paint) => paint.kind === 'image') : [];
+        own.forEach((paint, fill) => targets.push({ node, paint, fill, fills: own.length }));
         return true;
       });
       if (targets.length === before) withoutImages.push(refOf(group.fileKey, id));
@@ -703,7 +742,7 @@ export async function exportImages(refs, { client = getRestClient(), cacheDir = 
       );
     }
 
-    for (const { node, paint } of targets) {
+    for (const { node, paint, fill, fills } of targets) {
       const ref = refOf(group.fileKey, node.id);
       if (!(await exists(original(paint.ref)))) {
         failed.push({ ref, error: `Нет файла заливки ${paint.ref}: ${errors[paint.ref] || 'не выгрузился'}` });
@@ -718,7 +757,7 @@ export async function exportImages(refs, { client = getRestClient(), cacheDir = 
           if (!known.refs.includes(ref)) known.refs.push(ref);
           continue;
         }
-        const file = path.join(dir, `${slug(node.name) || 'image'}-${safeId(node.id)}@${s}x.webp`);
+        const file = path.join(dir, imageFileName(node, s, fills > 1 ? fill : null));
         await fs.writeFile(file, buffer);
         const meta = await sharp(buffer).metadata();
         let note;
@@ -731,6 +770,7 @@ export async function exportImages(refs, { client = getRestClient(), cacheDir = 
           refs: [ref],
           name: node.name,
           scaleMode: paint.scaleMode,
+          ...(fills > 1 ? { fill: fill + 1, fills } : {}),
           scale: s,
           size: `${meta.width}x${meta.height}`,
           source: `${source.width}x${source.height}`,

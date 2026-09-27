@@ -33,8 +33,7 @@ const EN = {
     'A glob (**/analytics/**) or a regular expression written as /…/flags',
   'HTTP basic auth «пользователь:пароль»': 'HTTP basic auth as "user:password"',
   'HTTP basic auth в виде "пользователь:пароль"': 'HTTP basic auth as "user:password"',
-  'HTTP basic auth в виде "пользователь:пароль". Логин в самом URL не нужен — он потом лезет во все ответы':
-    'HTTP basic auth as "user:password". Do not put credentials in the URL itself — they leak into every response afterwards',
+  'HTTP basic auth: "пользователь:пароль" — не в URL, иначе он лезет во все ответы': 'HTTP basic auth: "user:password" — not in the URL, or it leaks into every response',
   'strip (по умолчанию) вырезает скрипты: на копии аналитика стучит в сеть, а роутер SPA подменяет страницу. JSON-LD остаётся в любом случае':
     'strip (default) removes scripts: on a local copy analytics would call home and an SPA router would replace the page. JSON-LD is kept either way',
   'true — только те, что пришлось открывать в браузере': 'true — only pages that had to be opened in a browser',
@@ -60,10 +59,9 @@ const EN = {
   'Для какого агента показывать правила': 'Which user agent to show the rules for',
   'Допуск по размеру в пикселях, по умолчанию 2': 'Size tolerance in pixels, default 2',
   'Допустимое расхождение в процентах пикселей': 'Allowed difference as a percentage of pixels',
-  'Заголовки ко всем запросам: Accept-Language, X-Forwarded-Proto и прочее':
-    'Headers added to every request: Accept-Language, X-Forwarded-Proto and so on',
+  'Заголовки ко всем запросам': 'Headers added to every request',
   'Заголовок карточки': 'Card title',
-  'Заморозить Date и Math.random для стабильных снимков': 'Freeze Date and Math.random for stable screenshots',
+  'Заморозить Date и Math.random': 'Freeze Date and Math.random',
   'Значение для set. Для cookies — JSON: объект или массив куки':
     'Value for set. For cookies — JSON: a cookie object or an array of them',
   'Имя каталога в архиве. По умолчанию берётся из хоста': 'Directory name in the archive. Taken from the host by default',
@@ -71,8 +69,7 @@ const EN = {
   'Имя прогона; используется в именах файлов и эталонов': 'Run name; used in file and baseline names',
   'Имя сохранённого логина из browser_storage — для закрытых разделов':
     'Name of a login saved with browser_storage — for sections behind auth',
-  'Имя сохранённого состояния из browser_storage: сессия откроется уже залогиненной':
-    'Name of a state saved with browser_storage: the session opens already logged in',
+  'Состояние из browser_storage: сессия откроется залогиненной': 'A state from browser_storage: the session opens logged in',
   'Имя эталона': 'Baseline name',
   'Интересующие свойства, например ["z-index","position"]. Без них показываются только конфликты':
     'Properties of interest, e.g. ["z-index","position"]. Without them only conflicts are shown',
@@ -104,8 +101,8 @@ const EN = {
     'Keep only these elements in frame (display: none for the remaining siblings)',
   'Оставить в кадре только это — например блок и его соседа, чтобы показать наложение':
     'Keep only this in frame — for example a block and its neighbour, to show an overlap',
-  'Открыть свою одноразовую сессию по адресу': 'Open a throwaway session at this address',
-  'Открыть свою одноразовую сессию по адресу и сохранить её': 'Open a throwaway session at this address and save it',
+  'Адрес: без sessionId — своя одноразовая сессия, с sessionId — переход в ней': 'An address: without sessionId a throwaway session of its own, with sessionId a navigation in it',
+  'Адрес: без sessionId — своя одноразовая сессия, с sessionId — переход в ней, затем сохранение': 'An address: without sessionId a throwaway session of its own, with sessionId a navigation in it, then the save',
   'Откуда начинать. Нужен для start': 'Where to start. Required for start',
   'Пауза между запросами. По умолчанию 500': 'Pause between requests. Default 500',
   'Перезаписать эталон текущим снимком': 'Overwrite the baseline with the current shot',
@@ -120,8 +117,7 @@ const EN = {
   'По умолчанию true. Отключать только для своих стендов — факт отключения попадёт в отчёт':
     'Default true. Turn it off only for your own environments — the fact that it was off goes into the report',
   'Подключить таблицу стилей по URL': 'Attach a stylesheet by URL',
-  'Подмена разрешения имён: {"www.site.local": "172.20.0.5"} — для стендов за vhost. Только chromium':
-    'Name resolution override: {"www.site.local": "172.20.0.5"} — for environments behind a vhost. Chromium only',
+  'Имя → IP: {"www.site.local": "172.20.0.5"}, стенды за vhost. Только chromium': 'Name → IP: {"www.site.local": "172.20.0.5"}, environments behind a vhost. Chromium only',
   'Подписи вида «Расположение: Горизонтальное»': 'Captions such as "Layout: horizontal"',
   'Подробности только по этим категориям. Счётчики по всем возвращаются всегда':
     'Details for these categories only. Counters for all of them are always returned',
@@ -131,6 +127,7 @@ const EN = {
   'Проверять ли одиночными запросами адреса вне обхода: canonical и hreflang наружу. По умолчанию да':
     'Whether to verify addresses outside the crawl with one-off requests: canonical and hreflang pointing away. Default yes',
   'Псевдолокализация: диакритика и +40% длины строк': 'Pseudo-localization: diacritics and +40% string length',
+  'overlay — полосы прокрутки как на телефоне; auto — так в окне уже 768px': 'overlay — scrollbars as on a phone; auto — so in a window under 768px',
   'Пути относительно рабочего каталога, глоб поддерживается':
     'Paths relative to the working directory; globs are supported',
   'Путь относительно каталога артефактов': 'Path relative to the artifacts directory',
@@ -215,8 +212,7 @@ const EN = {
     'Widths: preset names or WxH. Default ["desktop","mobile"]',
   'allow не глушит движение: переходы и анимации остаются живыми':
     'allow leaves the motion alone: transitions and animations keep running',
-  'Своя строка User-Agent: часть сайтов отдаёт headless-браузеру 403':
-    'A User-Agent string of your own: some sites answer a headless browser with 403',
+  'Свой User-Agent: часть сайтов отдаёт headless 403': 'Own User-Agent: some sites answer headless with 403',
   'Не нужен для scroll, для dialog и для press с кликом по координатам':
     'Not required for scroll, for dialog, and for press or a click by coordinates',
   'Текст для fill и type, клавиша для press, значение для select, accept | dismiss | текст ответа для dialog':
@@ -315,11 +311,13 @@ const EN = {
   'До скольких элементов раздувать список. По умолчанию 12': 'How many items to grow a list to. Default 12',
   'Ширины для прогона. По умолчанию от 320 до 1440': 'Widths to run through. From 320 to 1440 by default',
   'Сколько находок показывать на сценарий. По умолчанию 20': 'How many findings to show per scenario. Default 20',
+  'Не считать изменения внутри этих элементов: фоновая анимация, слайдер-автоплей. canvas и video не считаются всегда':
+    'Ignore changes inside these elements: background animation, an autoplay slider. canvas and video are always ignored',
 
   // figma_compare
   'Сессия с открытой страницей: сравнение идёт по ней': 'A session with the page open: the comparison runs against it',
-  'Адрес страницы: стенд откроет её сам шириной кадра макета':
-    'A page address: the stand opens it itself at the width of the design frame',
+  'Адрес страницы: без sessionId стенд откроет её сам шириной кадра, с sessionId перейдёт на неё в сессии':
+    'A page address: without sessionId the stand opens it itself at the frame width, with sessionId it navigates the session there',
   'Блок на странице, которому соответствует кадр макета': 'The block on the page the design frame corresponds to',
   'both (по умолчанию) — и смысловое, и попиксельное; semantic — только смысловое; pixel — только попиксельное':
     'both (default) — semantic and pixel; semantic — semantic only; pixel — pixel only',

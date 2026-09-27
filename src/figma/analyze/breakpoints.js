@@ -199,6 +199,59 @@ function replacements(onlyBase, onlyOther, widths) {
   return out.slice(0, 10);
 }
 
+/**
+ * Роль текста по содержимому: почта, телефон, адрес, ссылка. По роли сопоставляются тексты,
+ * которые по содержимому не совпали: «ул. Космическая, д. 42» на десктопе и реальный адрес на
+ * мобильном — один и тот же элемент с разным контентом, а не два разных.
+ */
+export function textRole(value) {
+  const text = String(value || '');
+  if (/[\w.+-]+@[\w-]+\.[\w.-]+/.test(text)) return 'email';
+  if ((text.match(/\d/g) || []).length >= 7 && /^[\s+\d()\-–.]+$/.test(text.trim())) return 'phone';
+  if (/(^|\s)(ул\.|улица|просп|пр-т|пер\.|шоссе|наб\.|д\.\s*\d|г\.\s*[А-ЯЁ])/i.test(text) || /\b(street|st\.|ave\.?|road)\b/i.test(text)) return 'address';
+  if (/(https?:\/\/|www\.)\S+/i.test(text)) return 'url';
+  return null;
+}
+
+/**
+ * Макет расходится сам с собой: одни и те же по роли тексты с разным содержимым.
+ *
+ * На «Контактах» десктоп держал заглушки («ул. Космическая, д. 42», 000-00-00), мобильный —
+ * настоящие данные, и почта в меню и подвале была разной; вскрылось это случайно, по
+ * onlyDesign мобильной сверки. Здесь сравниваются наборы значений каждой роли, плюс
+ * несовпавшие тексты в сопоставленных контейнерах — это тот же слот с другим текстом.
+ */
+export function contentMismatch(baseLeaves, otherLeaves, onlyBase, onlyOther, containers) {
+  const out = [];
+  const valuesOf = (list) => {
+    const map = new Map();
+    for (const item of list) {
+      if (item.kind !== 'text') continue;
+      const role = textRole(item.node.text?.chars);
+      if (!role) continue;
+      map.set(role, new Set([...(map.get(role) || []), clip(item.node.text.chars.trim(), 60)]));
+    }
+    return map;
+  };
+  const base = valuesOf(baseLeaves);
+  const other = valuesOf(otherLeaves);
+  for (const role of new Set([...base.keys(), ...other.keys()])) {
+    const a = [...(base.get(role) || [])];
+    const b = [...(other.get(role) || [])];
+    const same = a.length === b.length && a.every((value) => b.map(normText).includes(normText(value)));
+    if (!same || a.length > 1) out.push({ role, base: a, other: b, ...(a.length > 1 || b.length > 1 ? { several: true } : {}) });
+  }
+  const mapped = new Map(containers.map((pair) => [pair.base.node.id, pair.other.node.id]));
+  for (const item of onlyBase) {
+    if (item.kind !== 'text' || textRole(item.node.text?.chars)) continue;
+    const slot = mapped.get(item.node.parent);
+    const twin = slot && onlyOther.find((candidate) => candidate.kind === 'text' && candidate.node.parent === slot);
+    if (twin) out.push({ role: 'text', base: [clip(item.label, 60)], other: [clip(twin.label, 60)], nodes: [item.node.id, twin.node.id] });
+    if (out.length >= 15) break;
+  }
+  return out;
+}
+
 const textKeys = (snapshot, rootId) => new Set(leaves(snapshot, rootId).filter((item) => item.kind === 'text').map((item) => item.key));
 
 /**
@@ -262,6 +315,16 @@ export function compareBreakpoints(frames, { limit = 60 } = {}) {
       onlyBase: onlyBase.slice(0, 15).map((item) => ({ id: item.node.id, kind: item.kind, label: clip(item.label || item.node.name, 40) })),
       onlyOther: onlyOther.slice(0, 15).map((item) => ({ id: item.node.id, kind: item.kind, label: clip(item.label || item.node.name, 40) })),
       replaced: replacements(onlyBase, onlyOther, widths),
+      ...(() => {
+        const mismatch = contentMismatch(baseLeaves, otherLeaves, onlyBase, onlyOther, containers);
+        return mismatch.length
+          ? {
+              contentMismatch: mismatch,
+              contentMismatchNote:
+                'Одинаковые по роли тексты с разным содержимым: контакты, адреса, ссылки, тексты одного слота. Это расхождение макета с самим собой, а не адаптив — какой вариант верный, решает человек; several: в одном кадре несколько разных значений.',
+            }
+          : {};
+      })(),
       order: orderConflicts(matches),
     });
   }

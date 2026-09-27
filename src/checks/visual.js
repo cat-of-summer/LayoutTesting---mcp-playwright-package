@@ -173,12 +173,32 @@ export async function takeScreenshot(page, {
   if (placeholders) await placeholderBrokenMedia(page, { size: placeholderSize });
   if (fullPage && !selector && !clip) await revealAll(page);
 
+  /*
+   * clip задан в координатах страницы, а без fullPage Playwright меряет его от окна и молча
+   * режет по нему: clip высотой 2100 в окне 800 возвращал 800. С fullPage clip абсолютный;
+   * за границу документа он всё же не выходит — такое обрезаем сами и говорим об этом.
+   */
+  let clipNote = null;
+  if (clip && !selector) {
+    const doc = await page.evaluate(() => ({
+      w: Math.max(document.documentElement.scrollWidth, document.body?.scrollWidth || 0),
+      h: Math.max(document.documentElement.scrollHeight, document.body?.scrollHeight || 0),
+      viewH: window.innerHeight,
+    }));
+    const trimmed = trimClip(clip, doc);
+    if (!trimmed) throw new Error(`clip {x: ${clip.x}, y: ${clip.y}} лежит за пределами страницы ${doc.w}×${doc.h}.`);
+    if (trimmed.trimmed) clipNote = `clip обрезан по размеру страницы ${doc.w}×${doc.h}: снято ${trimmed.clip.width}×${trimmed.clip.height} вместо ${clip.width}×${clip.height}.`;
+    clip = trimmed.clip;
+    /* Ниже первого экрана появляющиеся по прокрутке блоки ещё не проявлены. */
+    if (clip.y + clip.height > doc.viewH) await revealAll(page);
+  }
+
   // Снимаем в буфер, а не сразу в файл: перекодировать и уменьшить всё равно нужно
   // здесь же, и лишний проход через диск ничего не даёт.
   const raw = await withIsolated(page, selector, isolate, () =>
     withHidden(page, hide, async () => {
       if (selector) return (await resolveShotTarget(page, selector, timeout)).screenshot(common);
-      if (clip) return page.screenshot({ ...common, clip });
+      if (clip) return page.screenshot({ ...common, fullPage: true, clip });
       return page.screenshot({ ...common, fullPage });
     }),
   );
@@ -201,7 +221,20 @@ export async function takeScreenshot(page, {
     format,
     mimeType: spec.mime,
     bytes: out.length,
+    ...(clipNote ? { clipNote } : {}),
   };
+}
+
+/** clip, урезанный по документу; null — если от него ничего не осталось. */
+export function trimClip(clip, doc) {
+  const x = Math.max(0, clip.x);
+  const y = Math.max(0, clip.y);
+  const right = Math.min(doc.w, clip.x + clip.width);
+  const bottom = Math.min(doc.h, clip.y + clip.height);
+  if (right <= x || bottom <= y) return null;
+  const out = { x, y, width: right - x, height: bottom - y };
+  const trimmed = out.x !== clip.x || out.y !== clip.y || out.width !== clip.width || out.height !== clip.height;
+  return { clip: out, trimmed };
 }
 
 /**

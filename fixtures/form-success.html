@@ -1,0 +1,69 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<title>Формы с экраном «Спасибо»</title>
+<style>
+  body { font: 16px/1.4 sans-serif; margin: 20px; }
+  form { width: 360px; padding: 16px; border: 1px solid #ccc; margin-bottom: 24px; }
+  .field { margin-bottom: 12px; }
+  .field input { display: block; width: 100%; height: 32px; box-sizing: border-box; }
+  .err { display: block; color: #c00; font-size: 13px; }
+  .thanks[hidden] { display: none; }
+  .box--done form { display: none; }
+</style>
+</head>
+<body>
+<!-- Заявка: после успеха форма прячется через класс на обёртке, вместо неё «Спасибо». -->
+<div class="box" id="request-box">
+  <form id="request" novalidate>
+    <div class="field"><label for="name">Имя</label><input id="name" name="name" required></div>
+    <div class="field"><label for="email">Почта</label><input id="email" name="email" type="email" required></div>
+    <button type="submit">Отправить</button>
+  </form>
+  <p class="thanks" hidden>Спасибо! Мы свяжемся с вами.</p>
+</div>
+
+<!-- Подписка: после успеха форма сбрасывается и остаётся на месте, под ней — сообщение. -->
+<form id="subscribe" novalidate>
+  <div class="field"><label for="sub-email">Почта для рассылки</label><input id="sub-email" name="sub-email" type="email" required></div>
+  <button type="submit">Подписаться</button>
+  <p class="thanks" hidden>Вы подписаны.</p>
+</form>
+
+<script>
+  function check(form) {
+    let ok = true;
+    for (const input of form.querySelectorAll('input[required]')) {
+      const bad = !input.value || !input.checkValidity();
+      input.setAttribute('aria-invalid', bad ? 'true' : 'false');
+      let err = input.parentElement.querySelector('.err');
+      if (bad && !err) {
+        err = document.createElement('span');
+        err.className = 'err';
+        err.textContent = 'Заполните поле';
+        input.after(err);
+      }
+      if (!bad) err?.remove();
+      ok = ok && !bad;
+    }
+    return ok;
+  }
+  document.getElementById('request').addEventListener('submit', async (event) => {
+    event.preventDefault();
+    if (!check(event.target)) return;
+    await fetch('/send', { method: 'POST', body: new FormData(event.target) });
+    document.getElementById('request-box').classList.add('box--done');
+    document.querySelector('#request-box .thanks').hidden = false;
+  });
+  document.getElementById('subscribe').addEventListener('submit', async (event) => {
+    event.preventDefault();
+    const form = event.target;
+    if (!check(form)) return;
+    await fetch('/subscribe', { method: 'POST', body: new FormData(form) });
+    form.reset();
+    form.querySelector('.thanks').hidden = false;
+  });
+</script>
+</body>
+</html>

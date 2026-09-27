@@ -20,6 +20,7 @@ import { t } from '../i18n.js';
 import { browserChrome, clip, contains, deltaE, parseColor, SAME_COLOR, visibleNodes } from './analyze/common.js';
 import { exportRender } from './export.js';
 import { orderedChildren } from './inspect.js';
+import { textRole } from './analyze/breakpoints.js';
 
 const norm = (value) => String(value || '').replace(/\s+/g, ' ').trim().toLowerCase();
 
@@ -69,16 +70,43 @@ export function probePage(rootSelector) {
     if (clipped) return;
     const box = { x: rect.x - origin.x, y: rect.y - origin.y, w: rect.width, h: rect.height };
 
-    const own = Array.from(el.childNodes)
-      .filter((node) => node.nodeType === 3 && node.nodeValue.trim())
-      .map((node) => node.nodeValue.trim())
-      .join(' ');
+    const ownNodes = Array.from(el.childNodes).filter((node) => node.nodeType === 3 && node.nodeValue.trim());
+    const own = ownNodes.map((node) => node.nodeValue.trim()).join(' ');
     if (own) {
+      /*
+       * Бокс самого текста и число его строк — по Range, а не по элементу: у кнопки бокс
+       * элемента включает поля, а перенос строк (text-wrap: balance против жадного переноса
+       * Figma) виден только по строкам текста.
+       */
+      const range = document.createRange();
+      const tops = [];
+      let text = null;
+      for (const node of ownNodes) {
+        range.selectNodeContents(node);
+        for (const r of range.getClientRects()) {
+          if (!r.width || !r.height) continue;
+          tops.push(r.top);
+          text = text
+            ? { l: Math.min(text.l, r.left), t: Math.min(text.t, r.top), r: Math.max(text.r, r.right), b: Math.max(text.b, r.bottom) }
+            : { l: r.left, t: r.top, r: r.right, b: r.bottom };
+        }
+      }
+      tops.sort((a, b) => a - b);
+      const lines = tops.filter((top, i) => i === 0 || top - tops[i - 1] > 2).length;
+      /* Кнопка или ссылка, чей текст это: с ней сравнивается рамка кнопки из макета. */
+      const control = el.closest('a, button, [role="button"], summary');
+      const controlRect = control && control !== root && root.contains(control) ? control.getBoundingClientRect() : null;
+      const wrap = style.textWrapStyle || style.textWrap || '';
       items.push({
         kind: 'text',
         text: own,
         selector: cssPath(el),
         box,
+        ...(text ? { textBox: { x: text.l - origin.x, y: text.t - origin.y, w: text.r - text.l, h: text.b - text.t } } : {}),
+        ...(lines ? { lines } : {}),
+        ...(controlRect
+          ? { control: { selector: cssPath(control), box: { x: controlRect.x - origin.x, y: controlRect.y - origin.y, w: controlRect.width, h: controlRect.height } } }
+          : {}),
         style: {
           fontSize: style.fontSize,
           fontWeight: style.fontWeight,
@@ -86,6 +114,7 @@ export function probePage(rootSelector) {
           letterSpacing: style.letterSpacing,
           color: style.color,
           textTransform: style.textTransform,
+          ...(wrap && !/^(wrap|auto)$/.test(wrap) ? { textWrap: wrap } : {}),
         },
       });
     }
@@ -127,25 +156,56 @@ export function probePage(rootSelector) {
   return { origin: { w: origin.width, h: origin.height }, items };
 }
 
+/**
+ * Ширина, которую у страницы отнимает полоса прокрутки корня.
+ *
+ * innerWidth − clientWidth тут не годится: со scrollbar-gutter: stable и своим
+ * ::-webkit-scrollbar clientWidth корня равен окну, а уже сам корень (offsetWidth) на гуттер уже.
+ */
+export function scrollbarGutter() {
+  const root = document.documentElement;
+  return Math.max(0, Math.round(window.innerWidth - root.getBoundingClientRect().width - (parseFloat(getComputedStyle(root).marginLeft) || 0) - (parseFloat(getComputedStyle(root).marginRight) || 0)));
+}
+
 export function designItems(snapshot, rootId) {
   const root = snapshot.nodes[rootId];
   /* Нарисованная строка браузера — не часть страницы: поток начинается под ней. */
   const chrome = browserChrome(snapshot, rootId);
   const lift = chrome?.height ?? 0;
   const origin = root.box ? { x: root.box.x, y: root.box.y + lift } : { x: 0, y: 0 };
+  const rel = (b) => ({ x: b.x - origin.x, y: b.y - origin.y, w: b.w, h: b.h });
+  const lead = leadFrame(snapshot, rootId, origin);
+  const names = {};
+  const ancestorsOf = (node) => {
+    const out = [];
+    for (let id = node.parent; id && id !== rootId && snapshot.nodes[id]; id = snapshot.nodes[id].parent) {
+      out.push(id);
+      names[id] = snapshot.nodes[id].name;
+    }
+    return out;
+  };
   const items = [];
   for (const { node } of visibleNodes(snapshot, rootId)) {
     if (!node.box || node.id === chrome?.node) continue;
     /* Закреплённое (fixed) живёт в координатах окна, а не потока: вычитать из него строку нельзя. */
     if (lift && node.scrollBehavior === 'FIXED') continue;
-    const box = { x: node.box.x - origin.x, y: node.box.y - origin.y, w: node.box.w, h: node.box.h };
+    const box = rel(node.box);
     if (node.type === 'TEXT' && node.text?.chars?.trim()) {
       const style = node.text.style || {};
+      const ancestors = ancestorsOf(node);
+      const frame = buttonFrame(snapshot, node, rootId);
+      const lineHeight = lineHeightPx(style);
       items.push({
         kind: 'text',
         id: node.id,
         text: node.text.chars,
         box,
+        ancestors,
+        ...(lead && ancestors.includes(lead.node) ? { inLead: true } : {}),
+        ...(node.text.autoResize ? { autoResize: node.text.autoResize } : {}),
+        ...(style.align ? { align: style.align } : {}),
+        ...(frame ? { frame: { id: frame.id, name: frame.name, box: rel(frame.box) } } : {}),
+        ...(lineHeight && node.text.autoResize !== 'TRUNCATE' ? { lines: Math.max(1, Math.round(node.box.h / lineHeight)) } : {}),
         style: {
           fontSize: style.size,
           fontWeight: style.weight,
@@ -162,7 +222,66 @@ export function designItems(snapshot, rootId) {
       if (paint) items.push({ kind: 'box', id: node.id, name: node.name, type: node.type, box, paint });
     }
   }
-  return { size: { w: root.box?.w, h: root.box?.h - lift }, items, ...(chrome ? { chrome } : {}) };
+  return { size: { w: root.box?.w, h: root.box?.h - lift }, items, names, ...(chrome ? { chrome } : {}), ...(lead ? { lead } : {}) };
+}
+
+/** Межстрочный интервал текста в px: явный, «авто» из снимка или процент от кегля. */
+function lineHeightPx(style) {
+  const lh = style.lineHeight;
+  if (!lh) return null;
+  if (lh.unit === 'px') return lh.value || null;
+  if (lh.unit === 'auto') return lh.px || null;
+  if (lh.unit === '%' && style.size) return (style.size * lh.value) / 100 || null;
+  return null;
+}
+
+const CONTAINERS = new Set(['FRAME', 'INSTANCE', 'COMPONENT', 'GROUP']);
+
+/**
+ * Рамка, внутри которой текст — единственный: кнопка, пилюля, пункт меню.
+ *
+ * Текст в макете часто растянут на ширину кнопки, а на странице его бокс — по содержимому или
+ * это бокс самой кнопки с полями. Сравнивать надо рамку кнопки с кнопкой страницы, а не текстовый
+ * слой с элементом: иначе совпадающая кнопка давала «w +203, h +26». Карточка, где текст тоже
+ * единственный, кнопкой не считается — у неё площадь несоразмерна тексту.
+ */
+function buttonFrame(snapshot, text, rootId) {
+  let node = snapshot.nodes[text.parent];
+  for (let depth = 0; node && node.id !== rootId && depth < 3; depth += 1, node = snapshot.nodes[node.parent]) {
+    if (!CONTAINERS.has(node.type) || !node.box) continue;
+    let texts = 0;
+    const count = (id) => {
+      const kid = snapshot.nodes[id];
+      if (!kid || kid.visible === false || texts > 1) return;
+      if (kid.type === 'TEXT' && kid.text?.chars?.trim()) texts += 1;
+      for (const child of kid.children || []) count(child);
+    };
+    count(node.id);
+    if (texts !== 1) return null;
+    const ratio = (node.box.w * node.box.h) / Math.max(1, text.box.w * text.box.h);
+    return ratio <= 8 ? node : null;
+  }
+  return null;
+}
+
+/**
+ * Кадр, контент которого начинается не с нуля.
+ *
+ * «Системы отделения»: дочерний Desktop на y=60, сверху наложена шапка. Сверка писала «57
+ * элементов смещены на −60px» и считала это расхождением высоты. Кандидат — широкий дочерний
+ * фрейм на половину высоты и больше, начатый ниже верха; подтверждается он уже парами текстов.
+ */
+export function leadFrame(snapshot, rootId, origin) {
+  const root = snapshot.nodes[rootId];
+  if (!root?.box) return null;
+  for (const kid of orderedChildren(snapshot, root)) {
+    if (!kid.box || !CONTAINERS.has(kid.type)) continue;
+    const y = kid.box.y - origin.y;
+    const wide = kid.box.w >= root.box.w * 0.98;
+    const tall = kid.box.h >= (root.box.h - (origin.y - root.box.y)) * 0.5;
+    if (wide && tall && y >= 20 && y <= 200) return { node: kid.id, name: kid.name, y: round(y) };
+  }
+  return null;
 }
 
 /** Фигуры, которые в вёрстке становятся SVG: их краска сверяется файлом иконки, а не CSS. */
@@ -537,33 +656,137 @@ export function findStepDrift(pairs, { tolerance = 2, minRun = 3 } = {}) {
   return out;
 }
 
+/**
+ * Боксы, которые сравниваются у пары текстов.
+ *
+ * Текст внутри кнопки сравнивается рамкой кнопки с кнопкой страницы. Текст фиксированной ширины
+ * (растянутый в макете на блок) — по той кромке, к которой он выровнен, а разница ширины уходит
+ * в textBox: ширина текстового слоя — свойство макета, а не вёрстки. Число строк такой текст
+ * всё равно проверяет — через lines.
+ */
+export function pairBoxes(pair, lift = 0) {
+  const d = pair.design;
+  const p = pair.page;
+  const up = (box) => (lift && d.inLead ? { ...box, y: box.y - lift } : box);
+  if (d.frame && p.control) return { design: up(d.frame.box), page: p.control.box, frame: d.frame.id, selector: p.control.selector };
+  const fixed = d.autoResize === 'NONE' || d.autoResize === 'HEIGHT';
+  const aligned = d.align === 'CENTER' || d.align === 'RIGHT';
+  return { design: up(d.box), page: p.box, ...(fixed || aligned ? { loose: d.align || 'LEFT' } : {}) };
+}
+
+/** Сдвиг пары: для растянутого текста x — по кромке выравнивания, ширина — отдельно. */
+function pairShift(boxes) {
+  const { design: a, page: b, loose } = boxes;
+  const edge = (box) => (loose === 'CENTER' ? box.x + box.w / 2 : loose === 'RIGHT' ? box.x + box.w : box.x);
+  return {
+    x: round(loose ? edge(b) - edge(a) : b.x - a.x),
+    y: round(b.y - a.y),
+    w: round(b.w - a.w),
+    h: round(b.h - a.h),
+  };
+}
+
+/**
+ * Подтвердилось ли, что контент кадра начинается не с нуля.
+ *
+ * Кандидат из designItems (lead) принимается, только если большинство текстов внутри него
+ * на странице выше ровно на его отступ: иначе это обычное расхождение, и молча вычитать нельзя.
+ */
+export function confirmLead(design, pairs, { tolerance = 2 } = {}) {
+  if (!design.lead) return null;
+  const inside = pairs.filter((pair) => pair.design.inLead);
+  if (inside.length < 3) return null;
+  const agree = inside.filter((pair) => Math.abs(pair.page.box.y - pair.design.box.y + design.lead.y) <= Math.max(tolerance, 4));
+  return agree.length / inside.length >= 0.6 ? design.lead : null;
+}
+
+/**
+ * Состояния, которых нет на странице: контейнер макета, чьи тексты не нашлись все до одного.
+ *
+ * Раскрытые «Партнёры» на мобильном — это не пять разных пропаж, а одно состояние, которое на
+ * странице открывается действием. Берётся самый верхний такой контейнер.
+ */
+export function absentBlocks(design, onlyDesign, pairs, { min = 3 } = {}) {
+  const missing = new Map();
+  const present = new Set();
+  for (const item of onlyDesign) for (const id of item.ancestors || []) missing.set(id, [...(missing.get(id) || []), item]);
+  for (const pair of pairs) for (const id of pair.design.ancestors || []) present.add(id);
+  const candidates = new Map([...missing].filter(([id, list]) => list.length >= min && !present.has(id)));
+  /* ancestors идут от текста вверх: у верхнего кандидата выше него других кандидатов нет. */
+  const topmost = [...candidates].filter(([id, list]) => {
+    const chain = list[0].ancestors;
+    return !chain.slice(chain.indexOf(id) + 1).some((up) => candidates.has(up));
+  });
+  return topmost.map(([id, list]) => ({ node: id, name: design.names?.[id], texts: list.length, sample: list.slice(0, 3).map((item) => clip(item.text, 40)) }));
+}
+
+/**
+ * Разный контент выше сдвинутого блока.
+ *
+ * Мобильный макет с заглушками и другим порядком картинок давал «shiftedBlock −250px», хотя
+ * вёрстка верна: выше блока в макете и на странице просто разные тексты. Смотрится полоса между
+ * последним несдвинутым текстом и началом блока — с обеих сторон.
+ */
+export function contentAbove(block, pairs, onlyDesign, onlyPage) {
+  const members = new Set(block);
+  const top = Math.min(...block.map((pair) => pair.design.box.y));
+  const topPage = Math.min(...block.map((pair) => pair.page.box.y));
+  const above = pairs.filter((pair) => !members.has(pair) && pair.design.box.y < top);
+  const anchor = above.length ? Math.max(...above.map((pair) => pair.design.box.y)) : -Infinity;
+  const anchorPage = above.length ? Math.max(...above.map((pair) => pair.page.box.y)) : -Infinity;
+  const design = onlyDesign.filter((item) => item.box.y > anchor && item.box.y < top);
+  const page = onlyPage.filter((item) => item.box.y > anchorPage && item.box.y < topPage);
+  if (!design.length && !page.length) return null;
+  return {
+    ...(design.length ? { onlyDesign: design.slice(0, 3).map((item) => ({ node: item.id, text: clip(item.text, 40) })) } : {}),
+    ...(page.length ? { onlyPage: page.slice(0, 3).map((item) => ({ selector: item.selector, text: clip(item.text, 40) })) } : {}),
+  };
+}
+
 export function compareGeometry(design, page, { tolerance = 2 } = {}) {
   const { pairs, onlyDesign, onlyPage } = pairTexts(design.items, page.items);
+  const lead = confirmLead(design, pairs, { tolerance });
   const findings = [];
+  const pairOf = new Map();
 
   for (const pair of pairs) {
-    const shift = {
-      x: round(pair.page.box.x - pair.design.box.x),
-      y: round(pair.page.box.y - pair.design.box.y),
-      w: round(pair.page.box.w - pair.design.box.w),
-      h: round(pair.page.box.h - pair.design.box.h),
-    };
+    const boxes = pairBoxes(pair, lead?.y ?? 0);
+    const shift = pairShift(boxes);
     const styles = styleDiff(pair.design, pair.page);
-    const worst = Math.max(Math.abs(shift.x), Math.abs(shift.y), Math.abs(shift.w));
-    if (worst <= tolerance && !Object.keys(styles).length) continue;
-    findings.push({
+    const worst = Math.max(Math.abs(shift.x), Math.abs(shift.y), boxes.loose ? 0 : Math.abs(shift.w));
+    const lines =
+      pair.design.lines && pair.page.lines && pair.design.lines !== pair.page.lines
+        ? { design: pair.design.lines, page: pair.page.lines, ...(pair.page.style?.textWrap ? { textWrap: pair.page.style.textWrap } : {}) }
+        : null;
+    if (worst <= tolerance && !Object.keys(styles).length && !lines) continue;
+    const kept = Object.fromEntries(
+      Object.entries(shift).filter(([key, value]) => Math.abs(value) > tolerance && !(boxes.loose && (key === 'w' || key === 'h'))),
+    );
+    const finding = {
       text: clip(pair.design.text, 40),
       node: pair.design.id,
       selector: pair.page.selector,
-      ...(worst > tolerance ? { shift: Object.fromEntries(Object.entries(shift).filter(([, value]) => Math.abs(value) > tolerance)) } : {}),
+      ...(boxes.frame ? { frame: boxes.frame, control: boxes.selector } : {}),
+      ...(worst > tolerance && Object.keys(kept).length ? { shift: kept } : {}),
+      ...(boxes.loose && (Math.abs(shift.w) > tolerance || Math.abs(shift.h) > tolerance)
+        ? { textBox: { w: shift.w, h: shift.h, note: 'размер текстового слоя: в макете он растянут на блок, сравнивается кромка выравнивания' } }
+        : {}),
+      ...(lines
+        ? { lines: { ...lines, note: `в макете ${lines.design} стр., на странице ${lines.page}${lines.textWrap ? ` (text-wrap: ${lines.textWrap})` : ''}` } }
+        : {}),
       ...(Object.keys(styles).length ? { styles } : {}),
-      severity: worst + Object.keys(styles).length * 4,
-    });
+      severity: worst + Object.keys(styles).length * 4 + (lines ? 6 : 0),
+    };
+    /* Растянутый текст без других расхождений — это не находка, а свойство макета. */
+    if (!finding.shift && !finding.styles && !finding.lines) continue;
+    findings.push(finding);
+    pairOf.set(finding, pair);
   }
 
   /* Разный шаг в колонке — одна находка до общего сдвига: иначе растущий сдвиг частями
      попадал бы в корзины shiftedBlock и выглядел бы как несколько разных сдвигов блока. */
   const swallowed = new Set();
+  const residual = (finding) => Object.keys(finding.shift).length || finding.styles || finding.lines;
   const byNode = new Map(findings.map((finding) => [finding.node, finding]));
   const drifts = findStepDrift(pairs, { tolerance });
   for (const drift of drifts) {
@@ -572,7 +795,7 @@ export function compareGeometry(design, page, { tolerance = 2 } = {}) {
       if (!finding?.shift?.y) continue;
       delete finding.shift.y;
       finding.stepDrift = drift.pageStep - drift.designStep;
-      if (!Object.keys(finding.shift).length && !finding.styles) swallowed.add(finding);
+      if (!residual(finding)) swallowed.add(finding);
     }
   }
   const stepFindings = drifts.map(({ nodes, ...drift }) => drift);
@@ -593,9 +816,13 @@ export function compareGeometry(design, page, { tolerance = 2 } = {}) {
   const grouped = [];
   for (const [bucket, list] of shifted) {
     if (list.length < 3) continue;
+    const cause = contentAbove(list.map((finding) => pairOf.get(finding)), pairs, onlyDesign, onlyPage);
     grouped.push({
       shiftedBlock: `${list.length} элементов смещены по вертикали примерно на ${bucket}px`,
-      hint: 'Обычно это разная высота блока выше, а не ошибка в каждом элементе: сначала сверьте её.',
+      hint: cause
+        ? 'Выше блока контент в макете и на странице разный (above): сдвиг, скорее всего, от него, а не от вёрстки. Сверьте контент, прежде чем чинить отступы.'
+        : 'Обычно это разная высота блока выше, а не ошибка в каждом элементе: сначала сверьте её.',
+      ...(cause ? { cause: 'content', above: cause } : {}),
       sample: list.slice(0, 3).map((finding) => ({ text: finding.text, node: finding.node, selector: finding.selector })),
       severity: Math.abs(bucket),
     });
@@ -603,20 +830,25 @@ export function compareGeometry(design, page, { tolerance = 2 } = {}) {
     for (const finding of list) {
       delete finding.shift.y;
       finding.blockShift = bucket;
-      if (!Object.keys(finding.shift).length && !finding.styles) swallowed.add(finding);
+      if (!residual(finding)) swallowed.add(finding);
       else finding.severity -= Math.abs(bucket);
     }
   }
+  for (const finding of findings) if (finding.shift && !Object.keys(finding.shift).length) delete finding.shift;
 
   const rest = findings.filter((finding) => !swallowed.has(finding));
   const all = [...stepFindings, ...grouped, ...rest].sort((a, b) => b.severity - a.severity);
+  const absent = absentBlocks(design, onlyDesign, pairs);
   return {
     matched: pairs.length,
     findings: all,
+    ...(lead ? { lead } : {}),
     onlyDesign: onlyDesign.slice(0, 15).map((item) => ({ node: item.id, text: clip(item.text, 40) })),
     onlyPage: onlyPage.slice(0, 15).map((item) => ({ selector: item.selector, text: clip(item.text, 40) })),
+    ...(absent.length ? { onlyDesignBlocks: absent.slice(0, 5) } : {}),
   };
 }
+
 
 /* Показаны не все находки. Одного числа found мало: модель читает список и считает его полным,
    а расхождение за пределом limit остаётся в вёрстке непроверенным. */
@@ -672,6 +904,7 @@ export async function compareWithDesign({
   limit = 30,
   client,
   editor,
+  widenedBy = 0,
 }) {
   const runId = newRunId('figma-compare');
   const dir = await runDir(runId);
@@ -709,7 +942,30 @@ export async function compareWithDesign({
       ...(semantic.findings.length > limit ? { note: truncatedNote(semantic.findings.length, limit) } : {}),
       onlyDesign: semantic.onlyDesign,
       onlyPage: semantic.onlyPage,
+      ...(semantic.onlyDesignBlocks
+        ? {
+            onlyDesignBlocks: semantic.onlyDesignBlocks,
+            onlyDesignBlocksNote: t({
+              ru: 'Контейнеры макета, ни один текст которых не нашёлся на странице. Похоже на состояние (раскрытый блок, вкладка, модалка), которого без действия на странице нет: откройте его через browser_act и сверьте ещё раз. Если такого состояния нет и в задаче — спросите человека.',
+              en: 'Design containers none of whose texts were found on the page. Looks like a state (an expanded block, a tab, a modal) the page shows only after an action: open it with browser_act and compare again. If the task has no such state either — ask the human.',
+            }),
+          }
+        : {}),
     };
+    /* Контакты и адреса без пары — чаще заглушки одного кадра, чем ошибка вёрстки. */
+    const roles = [...new Set([...semantic.onlyDesign, ...semantic.onlyPage].map((item) => textRole(item.text)).filter(Boolean))];
+    if (roles.length) {
+      out.contentNote = t({
+        ru: `Среди несовпавших текстов есть ${roles.join(', ')}: частая причина — заглушки в одном кадре и реальные данные в другом. figma_breakpoints по кадрам этого экрана покажет contentMismatch — расхождения макета с самим собой.`,
+        en: `The unmatched texts include ${roles.join(', ')}: a common cause is placeholders in one frame and real data in another. figma_breakpoints over this screen's frames shows contentMismatch — the design disagreeing with itself.`,
+      });
+    }
+    if (semantic.lead) {
+      out.originNote = t({
+        ru: `Кадр начинается не с нуля: «${semantic.lead.name}» (${semantic.lead.node}) стоит на y=${semantic.lead.y}, а его тексты на странице выше ровно на столько. Поправка учтена: координаты внутри него считаются от его верха.`,
+        en: `The frame does not start at zero: «${semantic.lead.name}» (${semantic.lead.node}) sits at y=${semantic.lead.y}, and its texts on the page are higher by exactly that. The correction is applied: coordinates inside it count from its top.`,
+      });
+    }
     const paint = comparePaint(design, probed, { tolerance });
     out.paint = {
       boxes: paint.boxes,
@@ -760,10 +1016,25 @@ export async function compareWithDesign({
         en: `The frame is ${round(design.size.w)}px wide, the compared block on the page ${round(probed.origin.w)}px: read the x offsets with that correction in mind.`,
       });
     }
-    if (Math.abs((design.size.h ?? 0) - (probed.origin.h ?? 0)) > 8) {
+    /* Кадр со сдвинутым контентом выше страницы на этот сдвиг: разница высот от него — не расхождение. */
+    const frameH = (design.size.h ?? 0) - (semantic.lead?.y ?? 0);
+    if (Math.abs(frameH - (probed.origin.h ?? 0)) > 8) {
       out.heightNote = t({
-        ru: `Высота кадра ${round(design.size.h)}px, страницы ${round(probed.origin.h)}px — разница ${round((probed.origin.h ?? 0) - (design.size.h ?? 0))}px. Пока она не сойдётся, всё, что ниже расхождения, будет смещено целиком.`,
-        en: `The frame is ${round(design.size.h)}px tall, the page ${round(probed.origin.h)}px — a difference of ${round((probed.origin.h ?? 0) - (design.size.h ?? 0))}px. Until that closes, everything below the discrepancy is shifted as a whole.`,
+        ru: `Высота кадра ${round(frameH)}px${semantic.lead ? ' (за вычетом сдвига контента)' : ''}, страницы ${round(probed.origin.h)}px — разница ${round((probed.origin.h ?? 0) - frameH)}px. Пока она не сойдётся, всё, что ниже расхождения, будет смещено целиком.`,
+        en: `The frame is ${round(frameH)}px tall${semantic.lead ? ' (less the content offset)' : ''}, the page ${round(probed.origin.h)}px — a difference of ${round((probed.origin.h ?? 0) - frameH)}px. Until that closes, everything below the discrepancy is shifted as a whole.`,
+      });
+    }
+    /* Гуттер полосы прокрутки: в своей сессии окно уже расширено на него, в чужой — сказать, откуда разница. */
+    const gutter = await page.evaluate(scrollbarGutter).catch(() => 0);
+    if (widenedBy > 0) {
+      out.scrollbarNote = t({
+        ru: `Полоса прокрутки страницы отнимает ${widenedBy}px (свой ::-webkit-scrollbar и scrollbar-gutter): окно расширено на неё, контент сверялся шириной кадра.`,
+        en: `The page scrollbar takes ${widenedBy}px (its own ::-webkit-scrollbar and scrollbar-gutter): the window was widened by it, so the content was compared at the frame width.`,
+      });
+    } else if (gutter > 0) {
+      out.scrollbarNote = t({
+        ru: `Полоса прокрутки страницы отнимает ${gutter}px: контент на столько уже окна, и все x съезжают на половину этого. Откройте сессию с scrollbars: "overlay" (как на телефоне) или шире на ${gutter}px — либо передайте url без sessionId, стенд поправит сам.`,
+        en: `The page scrollbar takes ${gutter}px: the content is that much narrower than the window, and every x shifts by half of it. Open the session with scrollbars: "overlay" (as on a phone) or ${gutter}px wider — or pass url without sessionId and the stand will correct it itself.`,
       });
     }
   }
@@ -816,6 +1087,33 @@ export function sectionShift(section, pairs) {
   };
 }
 
+/** Селекторы совпавших текстов каждой секции и всех остальных: по ним ищется обёртка секции. */
+export function sectionGroups(sections, pairs) {
+  const inside = (section, pair) =>
+    pair.design.box.y >= section.box.y - 1 && pair.design.box.y + pair.design.box.h <= section.box.y + section.box.h + 1;
+  return sections.map((section) => ({
+    own: pairs.filter((pair) => inside(section, pair)).map((pair) => pair.page.selector),
+    other: pairs.filter((pair) => !inside(section, pair)).map((pair) => pair.page.selector),
+  }));
+}
+
+/** В странице: высота общего предка текстов секции, не захватывающего тексты других секций. */
+export function pageSectionHeights({ root, groups }) {
+  const top = root ? document.querySelector(root) : document.body;
+  const find = (list) => list.map((sel) => document.querySelector(sel)).filter(Boolean);
+  return groups.map(({ own, other }) => {
+    const mine = find(own);
+    if (!mine.length) return null;
+    const theirs = find(other).filter((el) => !mine.includes(el));
+    let box = mine[0];
+    while (box && !mine.every((el) => box.contains(el))) box = box.parentElement;
+    if (!box || box === top || !top.contains(box) || theirs.some((el) => box.contains(el))) return null;
+    /* Подняться до самой широкой обёртки, пока в неё не попадают чужие тексты. */
+    while (box.parentElement && box.parentElement !== top && !theirs.some((el) => box.parentElement.contains(el))) box = box.parentElement;
+    return box.getBoundingClientRect().height;
+  });
+}
+
 /**
  * Попиксельно по секциям, а не по кадру целиком.
  *
@@ -842,10 +1140,14 @@ async function compareSections({ figmaRef, snapshot, rootId, page, selector, dir
     };
   }, selector);
   const { pairs } = pairTexts(design.items, probed.items);
+  const frame = frameSections(snapshot, rootId);
+  const heights = await page.evaluate(pageSectionHeights, { root: selector, groups: sectionGroups(frame, pairs) }).catch(() => []);
 
   const sections = [];
-  for (const [index, section] of frameSections(snapshot, rootId).entries()) {
+  for (const [index, section] of frame.entries()) {
     const { texts, shift } = sectionShift(section, pairs);
+    const pageH = heights[index];
+    const heightOf = pageH == null ? { design: section.box.h, page: null } : { design: section.box.h, page: round(pageH), delta: round(pageH - section.box.h) };
     const left = Math.min(Math.max(0, section.box.x), meta.width - 1);
     const top = Math.min(Math.max(0, section.box.y), meta.height - 1);
     const width = Math.min(section.box.w, meta.width - left);
@@ -890,6 +1192,7 @@ async function compareSections({ figmaRef, snapshot, rootId, page, selector, dir
       box: section.box,
       shift,
       texts,
+      height: heightOf,
       diffPercentage: round(diffPercentage, 3),
       match: diffPercentage <= threshold,
       compared: `${cw}x${ch}`,
@@ -899,10 +1202,17 @@ async function compareSections({ figmaRef, snapshot, rootId, page, selector, dir
     });
   }
 
+  /* Высоты — в порядке секций сверху вниз: так видно, с какой секции начинается разница. */
+  const sectionHeights = sections.map((section) => ({ name: section.name, node: section.node, ...section.height }));
   sections.sort((a, b) => b.diffPercentage - a.diffPercentage);
   return {
     count: sections.length,
     matched: sections.filter((section) => section.match).length,
+    sectionHeights,
+    sectionHeightsNote: t({
+      ru: 'Высота секции на странице — у общего предка её текстов, в который не попадают тексты соседних секций; page: null — такого предка нет (секция не обёрнута своим элементом или в ней нет совпавших текстов).',
+      en: 'A section height on the page is taken from the common ancestor of its texts that holds no texts of neighbouring sections; page: null — there is no such ancestor (the section has no wrapper of its own or no matched texts).',
+    }),
     sections,
     note: t({
       ru: 'Каждая секция кадра сравнена со своим куском страницы с поправкой на сдвиг её текстов (shift). Разница шрифтового рендеринга даёт единицы процентов; десятки — цвет, ряд, выравнивание, пропавший элемент: смотрите diff. texts: 0 — секцию не по чему выровнять, сдвиг взят нулевым.',

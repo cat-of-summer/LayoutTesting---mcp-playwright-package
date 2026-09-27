@@ -51,11 +51,30 @@ function pseudoLocalizeInPage() {
   }
 }
 
+/**
+ * Стиль overlay-полос прокрутки: они не отнимают ширину, а scrollbar-gutter ничего не резервирует.
+ * В режиме auto — только в узком окне, медиа-запросом: layout_audit с widths гоняет одну сессию
+ * по разным ширинам, и решение, принятое при открытии, на другой ширине было бы неверным.
+ */
+export const OVERLAY_SCROLLBARS = `html,html *{scrollbar-width:none!important;scrollbar-gutter:auto!important}::-webkit-scrollbar{display:none!important}`;
+
+export function scrollbarCss(mode) {
+  if (mode === 'overlay') return OVERLAY_SCROLLBARS;
+  if (mode === 'auto') return `@media (max-width:767.98px){${OVERLAY_SCROLLBARS}}`;
+  return null;
+}
+
 /** Правки, которые должны примениться до первого рендера. */
 export async function applyProfileToPage(page, profile) {
   await page.addInitScript(
-    ({ rtl, textZoom, freezeTime }) => {
+    ({ rtl, textZoom, freezeTime, scrollbars }) => {
       const apply = () => {
+        if (scrollbars && document.documentElement && !document.querySelector('style[data-lt-scrollbars]')) {
+          const style = document.createElement('style');
+          style.setAttribute('data-lt-scrollbars', '');
+          style.textContent = scrollbars;
+          (document.head || document.documentElement).appendChild(style);
+        }
         if (rtl && document.documentElement) {
           document.documentElement.setAttribute('dir', 'rtl');
           document.documentElement.setAttribute('lang', 'ar');
@@ -82,7 +101,7 @@ export async function applyProfileToPage(page, profile) {
         Math.random = () => 0.42;
       }
     },
-    { rtl: !!profile.rtl, textZoom: profile.textZoom, freezeTime: !!profile.freezeTime },
+    { rtl: !!profile.rtl, textZoom: profile.textZoom, freezeTime: !!profile.freezeTime, scrollbars: scrollbarCss(profile.scrollbars ?? 'auto') },
   );
 }
 

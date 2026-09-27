@@ -36,6 +36,9 @@
 | Совпадает ли картинка, а не только тексты | `figma_compare` с `sections: true` — попиксельно по секциям |
 | Что для этого кадра ещё не сверяли | `coverage` в ответе `figma_compare` |
 | Узел «не найден» в `paint` | смотреть, в какой корзине: `shifted` — уехал, и видно куда; `notFound` — не нашёлся нигде |
+| Все x съехали на половину полосы прокрутки | `scrollbarNote` в ответе `figma_compare`; `browser_open` с `scrollbars: "overlay"` |
+| Десктоп и мобильный кадры с разными контактами | `figma_breakpoints` → `contentMismatch` |
+| `interaction_audit` пишет unsettled на всём | фоновая анимация: `ignore` с её селектором; canvas и video не считаются и так |
 
 ## Вёрстка
 

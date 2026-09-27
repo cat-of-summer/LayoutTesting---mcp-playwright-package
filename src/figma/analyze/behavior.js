@@ -75,10 +75,41 @@ function labelOf(snapshot, node) {
   return clip(name, 40);
 }
 
+/** Имя набора вариантов, к которому относится узел: у экземпляра — из связи, у варианта — родитель-набор. */
+function setOf(snapshot, node) {
+  if (!node) return null;
+  if (node.type === 'COMPONENT_SET') return node.name;
+  if (node.component?.set) return node.component.set;
+  const parent = snapshot?.nodes?.[node.parent];
+  return parent?.type === 'COMPONENT_SET' ? parent.name : null;
+}
+
+/**
+ * Ведёт ли переход на компонент UI-кита, а не на состояние экрана.
+ *
+ * Выпадающие «Год/Космодром» в прототипе вели на 338:9873 — «Pagination / Default» со страницы
+ * UI-кита, и figma_behavior отдавал это как обычную цель: агент искал в пагинации поведение
+ * выпадающего списка. Смена варианта своего же набора (CHANGE_TO между состояниями кнопки) —
+ * нормальное состояние; определение компонента из другого набора — ссылка в кит.
+ */
+export function uiKitTarget(target, targetSnapshot, sourceSet = null) {
+  if (!target) return null;
+  const definition = target.type === 'COMPONENT' || target.type === 'COMPONENT_SET' || target.component?.definition;
+  if (!definition) return null;
+  const set = setOf(targetSnapshot, target);
+  if (sourceSet && set && sourceSet === set) return null;
+  return {
+    toType: target.type,
+    toComponent: true,
+    ...(set ? { toSet: set } : {}),
+    note: 'цель перехода — компонент UI-кита, а не состояние экрана: вероятно, связь прототипа проставлена по ошибке; поведение возьмите из комментариев или спросите человека',
+  };
+}
+
 export function describeBehavior(frames, { lookup = null } = {}) {
   const names = new Map();
   for (const frame of frames) {
-    for (const { node } of visibleNodes(frame.snapshot, frame.rootId)) names.set(node.id, { node, frame: frame.ref });
+    for (const { node } of visibleNodes(frame.snapshot, frame.rootId)) names.set(node.id, { node, frame: frame.ref, snapshot: frame.snapshot });
   }
   const nameOf = (id) => {
     const known = names.get(id);
@@ -117,7 +148,10 @@ export function describeBehavior(frames, { lookup = null } = {}) {
         for (const action of (interaction.actions || []).filter(Boolean)) {
           const key = action.type === 'NODE' ? `NODE:${action.navigation || 'NAVIGATE'}` : action.type;
           const destination = action.destinationId || null;
+          const known = destination ? names.get(destination) : null;
+          const kit = known ? uiKitTarget(known.node, known.snapshot, setOf(frame.snapshot, node)) : null;
           edges.push({
+            fromSet: setOf(frame.snapshot, node),
             from: node.id,
             frame: frame.ref,
             label: labelOf(frame.snapshot, node),
@@ -130,6 +164,7 @@ export function describeBehavior(frames, { lookup = null } = {}) {
             ...(action.url ? { url: action.url } : {}),
             ...(names.get(destination)?.node.overlay ? { overlay: names.get(destination).node.overlay } : {}),
             ...(transitionOf(action) ? { transition: transitionOf(action) } : {}),
+            ...(kit || {}),
           });
         }
       }
@@ -147,6 +182,8 @@ export function describeBehavior(frames, { lookup = null } = {}) {
         action: edge.action,
         means: edge.means,
         ...(edge.to ? { to: edge.to, toName: edge.toName } : {}),
+        ...(edge.toComponent ? { toType: edge.toType, toComponent: true, ...(edge.toSet ? { toSet: edge.toSet } : {}), note: edge.note } : {}),
+        ...(edge.fromSet ? { fromSet: edge.fromSet } : {}),
         ...(edge.url ? { url: edge.url } : {}),
         ...(edge.overlay ? { overlay: edge.overlay } : {}),
         ...(edge.transition ? { transition: edge.transition } : {}),

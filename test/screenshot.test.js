@@ -421,3 +421,36 @@ test('обычный кадр вкладывается целиком', options,
   assert.equal(img.cropped, undefined);
   assert.equal(img.height, 600);
 });
+
+test('clip ниже первого экрана снимается целиком, а не по окну', options, async () => {
+  const { takeScreenshot } = await import('../src/checks/visual.js');
+  const session = await pool.createSession({ viewport: '380x800' });
+  try {
+    await pool.gotoAndSettle(session, `${base}/scrollbar-gutter.html`);
+    const shot = await takeScreenshot(session.page, { runId: 'clip-test', name: 'tall', clip: { x: 0, y: 0, width: 380, height: 2100 } });
+    assert.equal(shot.height, 2100, 'clip в координатах страницы, окно 800 его не режет');
+    assert.equal(shot.clipNote, undefined);
+    const over = await takeScreenshot(session.page, { runId: 'clip-test', name: 'over', clip: { x: 0, y: 1800, width: 380, height: 1000 } });
+    assert.ok(over.height < 1000, 'за документом clip обрезается');
+    assert.match(over.clipNote, /обрезан по размеру страницы/);
+  } finally {
+    await pool.closeSession(session.id);
+  }
+});
+
+test('свой скроллбар со scrollbar-gutter: в узком окне overlay, classic оставляет гуттер', options, async () => {
+  const { scrollbarGutter } = await import('../src/figma/compare.js');
+  const measure = async (profile) => {
+    const session = await pool.createSession(profile);
+    try {
+      await pool.gotoAndSettle(session, `${base}/scrollbar-gutter.html`);
+      return await session.page.evaluate(scrollbarGutter);
+    } finally {
+      await pool.closeSession(session.id);
+    }
+  };
+  assert.equal(await measure({ viewport: '380x800' }), 0, 'auto: в узком окне полосы поверх контента, как на телефоне');
+  assert.equal(await measure({ viewport: '380x800', scrollbars: 'classic' }), 15, 'classic: гуттер проекта на месте');
+  assert.equal(await measure({ viewport: '1440x900' }), 15, 'auto в широком окне — как рисует страница');
+  assert.equal(await measure({ viewport: '1440x900', scrollbars: 'overlay' }), 0);
+});

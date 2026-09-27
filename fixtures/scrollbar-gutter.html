@@ -1,0 +1,23 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<title>Свой скроллбар и зарезервированный гуттер</title>
+<style>
+  /* Как у проекта: гуттер зарезервирован, полоса прокрутки своя — headless её не прячет. */
+  html { scrollbar-gutter: stable; }
+  ::-webkit-scrollbar { width: 15px; background: #eee; }
+  ::-webkit-scrollbar-thumb { background: #999; }
+  body { margin: 0; font: 16px/1.4 sans-serif; }
+  section { height: 700px; border-bottom: 1px solid #ccc; }
+  .s1 { background: #fde; }
+  .s2 { background: #dfe; }
+  .s3 { background: #def; }
+</style>
+</head>
+<body>
+<section class="s1">Первый экран</section>
+<section class="s2">Второй экран</section>
+<section class="s3">Третий экран</section>
+</body>
+</html>

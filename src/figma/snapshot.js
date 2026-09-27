@@ -485,6 +485,11 @@ export async function findNode(fileKey, nodeId, { cacheDir = DIRS.figma } = {}) 
   return null;
 }
 
+/** Имена кадров и их страниц, известные по снятиям файла: id → { name, page }. */
+export async function frameIndex(fileKey, { cacheDir = DIRS.figma } = {}) {
+  return (await readMeta(fileKey, { cacheDir }))?.frames || {};
+}
+
 export async function loadSnapshot(fileKey, rootId, { cacheDir = DIRS.figma } = {}) {
   const meta = await readMeta(fileKey, { cacheDir });
   const entry = meta?.roots?.[rootId];
@@ -613,6 +618,9 @@ async function syncFile({ fileKey, nodeIds, wholeFile }, ctx) {
       out.channel = 'editor';
     }
     meta.checkedAt = stamp();
+    /* Имена кадров и страниц — по всему файлу, а не по отданному срезу: по ним комментарий на
+       неснятом кадре называет, где он стоит, без figma_sync по каждому кадру. */
+    meta.frames = Object.fromEntries(pages.flatMap((page) => page.frames.map((frame) => [frame.id, { name: frame.name, page: page.name }])));
     /*
      * Страница с сотней кадров режется, и хвост должен быть достижим: без page и offset агент
      * искал нужный кадр перебором соседних id. Одна страница по имени или id отдаётся с
@@ -713,6 +721,8 @@ async function syncFile({ fileKey, nodeIds, wholeFile }, ctx) {
       const rel = `${meta.version}/${safeId(id)}.json`;
       await writeJson(path.join(cacheDir, fileKey, rel), snapshot);
       meta.roots[id] = { version: meta.version, model: MODEL, file: rel, fetchedAt: meta.checkedAt, channel: fetched.channel };
+      const page = snapshot.ancestors?.find((item) => item.type === 'PAGE')?.name;
+      meta.frames = { ...meta.frames, [id]: strip({ ...meta.frames?.[id], name: snapshot.nodes[id]?.name, page: page ?? meta.frames?.[id]?.page }) };
     }
   }
 

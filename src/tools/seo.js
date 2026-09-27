@@ -8,7 +8,7 @@
 import { z } from 'zod';
 import { d } from '../i18n-params.js';
 import { readFile } from 'node:fs/promises';
-import { createSession, closeSession, getSession, gotoAndSettle } from '../browser/pool.js';
+import { createSession, closeSession, gotoAndSettle, sessionAt } from '../browser/pool.js';
 import { json, profileCoreSchema } from './shared.js';
 import { resolveConditions } from '../browser/profiles.js';
 import { resolveInRoot } from '../paths.js';
@@ -26,7 +26,7 @@ export function register(server) {
       }),
       inputSchema: {
         sessionId: z.string().optional().describe(d('Разобрать страницу открытой сессии — как она выглядит сейчас, после логина и раскрытых меню')),
-        url: z.string().optional().describe(d('Открыть свою одноразовую сессию по адресу')),
+        url: z.string().optional().describe(d('Адрес: без sessionId — своя одноразовая сессия, с sessionId — переход в ней')),
         html: z.string().optional().describe(d('Разобрать переданную разметку без браузера')),
         file: z.string().optional().describe(d('Разобрать сохранённый файл: путь относительно рабочего каталога стенда')),
         pageUrl: z.string().optional().describe(d('Адрес, относительно которого разрешать ссылки в html или file. Без него относительные адреса и саморефренс canonical не посчитать')),
@@ -35,7 +35,7 @@ export function register(server) {
     },
     async ({ sessionId, url, html, file, pageUrl, ...conditions }) => {
       if (sessionId) {
-        const session = getSession(sessionId);
+        const { session } = await sessionAt(sessionId, url);
         return json(await seoFromPage(session.page, session.lastResponse));
       }
 

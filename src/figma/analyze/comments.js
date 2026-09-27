@@ -176,7 +176,7 @@ export function resolveAnchor(comment, frames) {
 }
 
 /** Имя без хвостов копии: «Footer copy 2», «Главная (копия)» → «footer», «главная». */
-const baseName = (name) =>
+export const baseName = (name) =>
   String(name || '')
     .toLowerCase()
     .replace(/\(?\s*(copy|копия)\s*\d*\s*\)?/g, '')
@@ -240,6 +240,25 @@ export function copyTarget(snapshot, anchorNode, lineage, frames, wanted) {
     }
   }
   return null;
+}
+
+/**
+ * Имя кадра и страницы у привязки треда.
+ *
+ * Комментарий из scope: file на неснятом кадре приходил голым id («588:1203»), и понять, к какой
+ * странице он относится, можно было только figma_sync по каждому кадру. Имена берутся из
+ * индекса кадров файла (meta.frames): его пополняет каждое снятие.
+ */
+export function placeThreads(threads, index = {}) {
+  for (const thread of threads) {
+    const anchor = thread.anchor;
+    if (!anchor) continue;
+    const info = index[anchor.frame] || (!anchor.frame && index[anchor.node]);
+    if (!info) continue;
+    if (info.name && anchor.frame) anchor.frameName = clip(info.name, 60);
+    if (info.page) anchor.page = info.page;
+  }
+  return threads;
 }
 
 /** Совместимость: только сама привязка. */

@@ -118,9 +118,24 @@ function pickTargets({ selectors, maxTargets }) {
  * оговорка, которую ответ обязан нести: то, что не двигается и не гаснет — цвет, тень, фон, —
  * этим способом не измеряется вовсе и даст durationMs: 0 при работающем переходе.
  */
-function watchInPage({ selector, timeoutMs }) {
+function watchInPage({ selector, timeoutMs, ignore = [] }) {
   return new Promise((resolve) => {
     const root = document.querySelector(selector);
+    /*
+     * Фон, который живёт сам по себе: звёзды на canvas, видео, бегущая строка в ignore. Их
+     * атрибуты меняются каждый кадр, и без фильтра любой клик читался как «ответил», а таймер
+     * упирался в «unsettled» — на всей странице разом.
+     */
+    const ignoreSelector = ignore.filter(Boolean).join(', ');
+    const inIgnored = (el) => {
+      if (!el || el.nodeType !== 1) return false;
+      if (el.tagName === 'CANVAS' || el.tagName === 'VIDEO') return true;
+      try {
+        return Boolean(ignoreSelector && el.closest(ignoreSelector));
+      } catch {
+        return false;
+      }
+    };
     if (!root) {
       resolve({ error: 'элемент исчез до начала наблюдения' });
       return;
@@ -128,7 +143,7 @@ function watchInPage({ selector, timeoutMs }) {
 
     /* Цели наблюдения: сам элемент, то, чем он управляет, и его ближайший контейнер. */
     const controls = root.getAttribute('aria-controls');
-    const watched = [root, controls ? document.getElementById(controls) : null, root.parentElement].filter(Boolean);
+    const watched = [root, controls ? document.getElementById(controls) : null, root.parentElement].filter((el) => el && (el === root || !inIgnored(el)));
 
     /*
      * Прокручиваемые области ищутся по всей странице, а не среди предков.
@@ -140,7 +155,7 @@ function watchInPage({ selector, timeoutMs }) {
     const scrollers = Array.from(document.querySelectorAll('*'))
       .filter((el) => {
         const s = getComputedStyle(el);
-        return /auto|scroll/.test(s.overflowX + s.overflowY) && (el.scrollWidth > el.clientWidth || el.scrollHeight > el.clientHeight);
+        return !inIgnored(el) && /auto|scroll/.test(s.overflowX + s.overflowY) && (el.scrollWidth > el.clientWidth || el.scrollHeight > el.clientHeight);
       })
       .slice(0, 20);
 
@@ -160,6 +175,7 @@ function watchInPage({ selector, timeoutMs }) {
     let removed = 0;
     const observer = new MutationObserver((records) => {
       for (const record of records) {
+        if (inIgnored(record.target)) continue;
         if (record.type === 'attributes' && attrs.length < 10) {
           attrs.push({
             attr: record.attributeName,
@@ -205,7 +221,8 @@ function watchInPage({ selector, timeoutMs }) {
           changed: { moved: signature() !== before, added, removed, attrs },
           timing: {
             settled: false,
-            kind: changedFrames >= frames - 2 ? 'continuous' : 'unsettled',
+            /* Геометрия не менялась вовсе: ответ без движения (цвет, класс), а не бесконечная анимация. */
+            kind: firstChangeMs === null ? 'noMotion' : changedFrames >= frames - 2 ? 'continuous' : 'unsettled',
             frames,
             changedFrames,
             firstChangeMs,
@@ -296,7 +313,7 @@ const isSilent = (result) =>
 
 export async function runInteractions(
   page,
-  { selectors = null, actions = ['click'], maxTargets = 30, timeoutMs = 1200, maxItems = 20 } = {},
+  { selectors = null, actions = ['click'], maxTargets = 30, timeoutMs = 1200, maxItems = 20, ignore = [] } = {},
 ) {
   const targets = await page.evaluate(pickTargets, { selectors, maxTargets });
   const results = [];
@@ -309,7 +326,7 @@ export async function runInteractions(
        * Наблюдение запускается до действия и не ожидается сразу: иначе оно бы встало в очередь
        * ПОСЛЕ клика и пропустило первые кадры — а именно в первом кадре и видно рывок.
        */
-      const watching = page.evaluate(watchInPage, { selector: target.selector, timeoutMs }).catch((err) => ({ error: err.message }));
+      const watching = page.evaluate(watchInPage, { selector: target.selector, timeoutMs, ignore }).catch((err) => ({ error: err.message }));
       const { failed, forced } = await act(locator, action);
       const result = await watching;
 

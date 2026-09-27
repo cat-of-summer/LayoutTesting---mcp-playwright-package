@@ -121,3 +121,19 @@ test('form_audit ловит маску без input, дёрганье ошибк
   assert.equal(res.submit, 'intercept');
   assert.ok(feedback.steps.every((step) => step.screenshot), 'у каждого шага скриншот');
 });
+
+test('form_audit: форма, спрятанная или сброшенная после успеха, — успех, а не пачка ошибок', options, async () => {
+  await call('browser_goto', { sessionId, url: `${base}/form-success.html` });
+  const res = await call('form_audit', { sessionId });
+  const [request, subscribe] = res.forms;
+  const validIssues = (form) => form.issues.filter((issue) => issue.step === 'valid');
+
+  assert.equal(request.success?.kind, 'hidden', JSON.stringify(request.steps.at(-1)));
+  assert.match(request.success.message, /Спасибо/);
+  assert.deepEqual(validIssues(request), [], JSON.stringify(validIssues(request)));
+  assert.equal(request.steps.at(-1).screenshot, undefined, 'спрятанную форму не снять — ссылки на пустой файл нет');
+
+  assert.equal(subscribe.success?.kind, 'reset', JSON.stringify(subscribe.steps.at(-1)));
+  assert.match(subscribe.success.message, /подписаны/);
+  assert.deepEqual(validIssues(subscribe), [], JSON.stringify(validIssues(subscribe)));
+});

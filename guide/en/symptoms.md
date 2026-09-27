@@ -36,6 +36,9 @@ A quick-choice table: what you came with and what to look at it with.
 | Does the picture match, not just the texts | `figma_compare` with `sections: true` — pixel per section |
 | What has not been compared for this frame yet | `coverage` in the `figma_compare` answer |
 | A node is "not found" in `paint` | check which bucket: `shifted` — it moved, and by how much is shown; `notFound` — it was nowhere |
+| Every x is off by half a scrollbar | `scrollbarNote` in the `figma_compare` answer; `browser_open` with `scrollbars: "overlay"` |
+| Desktop and mobile frames with different contacts | `figma_breakpoints` → `contentMismatch` |
+| `interaction_audit` says unsettled everywhere | background animation: `ignore` with its selector; canvas and video are ignored anyway |
 
 ## The markup
 

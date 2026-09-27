@@ -161,7 +161,41 @@ function readState({ formSelector, fields, before }) {
     };
   }
   const rect = form.getBoundingClientRect();
-  return { fields: out, box: { w: Math.round(rect.width), h: Math.round(rect.height) } };
+  /* Форму прячут после успешной отправки — сама или через предка: checkVisibility видит и то и другое. */
+  const hidden = !rect.width || !rect.height || (form.checkVisibility ? !form.checkVisibility({ checkOpacity: true, checkVisibilityCSS: true }) : false);
+  return { fields: out, box: { w: Math.round(rect.width), h: Math.round(rect.height) }, ...(hidden ? { hidden: true } : {}) };
+}
+
+/** Видимые строки текста страницы: по разнице до и после отправки находится «Спасибо». */
+function visibleLines() {
+  const lines = new Set();
+  const walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT);
+  for (let node = walker.nextNode(); node; node = walker.nextNode()) {
+    const text = node.textContent.trim().replace(/\s+/g, ' ');
+    const el = node.parentElement;
+    if (!text || !el || (el.checkVisibility && !el.checkVisibility({ checkOpacity: true, checkVisibilityCSS: true }))) continue;
+    const r = el.getBoundingClientRect();
+    if (r.width && r.height) lines.add(text.slice(0, 200));
+  }
+  return [...lines];
+}
+
+/**
+ * Успешная отправка по состоянию формы после неё.
+ *
+ * Форма после успеха исчезает, прячется или сбрасывается и уступает место «Спасибо». Раньше
+ * это читалось как провал: сброшенные обязательные поля снова :invalid, скрытый текст ошибки
+ * пуст, высота формы ноль — и шаг valid приносил пачку errorStays и heightChanged.
+ */
+export function successOf(state, { linesBefore = [], linesAfter = [] } = {}) {
+  const fresh = linesAfter.filter((line) => !linesBefore.includes(line));
+  const message = fresh.join(' ').slice(0, 160) || undefined;
+  if (state.gone) return { kind: 'gone', ...(message ? { message } : {}) };
+  if (state.hidden) return { kind: 'hidden', ...(message ? { message } : {}) };
+  const fields = Object.values(state.fields || {}).filter((field) => !field.missing);
+  const cleared = fields.length && fields.every((field) => field.value === '' || field.value === false);
+  if (cleared && message) return { kind: 'reset', message };
+  return null;
 }
 
 /**
@@ -220,8 +254,10 @@ export function findJitter({ frames, names }, { threshold = 2 } = {}) {
 }
 
 /** Находки шага: помеченное без текста ошибки, наложения, рост высоты. */
-export function judgeStep(step, state, { baseHeight, expectInvalid = null, expectValid = [] } = {}) {
+export function judgeStep(step, state, { baseHeight, expectInvalid = null, expectValid = [], success = null } = {}) {
   const issues = [];
+  /* После успешной отправки состояние полей уже ничего не говорит: их сбросили или спрятали. */
+  if (success) return issues;
   for (const [selector, field] of Object.entries(state.fields || {})) {
     if (field.missing) continue;
     if (field.invalid && !field.error && !field.native) {
@@ -300,8 +336,9 @@ export async function auditForms(session, { selector = 'form', open = [], values
   };
   const shoot = async (formSelector, name) => {
     const file = path.join(dir, `${String(++shots).padStart(2, '0')}-${name}.png`);
-    await page.locator(formSelector).first().screenshot({ path: file, animations: 'disabled' }).catch(() => null);
-    return artifactRef(file).url;
+    /* Спрятанную форму снять нельзя: ссылка на несуществующий файл хуже, чем её отсутствие. */
+    const done = await page.locator(formSelector).first().screenshot({ path: file, animations: 'disabled', timeout: 3000 }).then(() => true, () => false);
+    return done ? artifactRef(file).url : null;
   };
   const layoutIn = async (formSelector) => {
     const report = await layoutAudit(page, { include: [formSelector], categories: LAYOUT_CATEGORIES, maxItems: 5 });
@@ -372,7 +409,7 @@ export async function auditForms(session, { selector = 'form', open = [], values
         const layout = await layoutIn(cssSelector);
         const shot = await shoot(cssSelector, `${index}-${step}`);
         const invalid = Object.entries(state.fields || {}).filter(([, f]) => f.invalid || f.error).map(([s, f]) => ({ selector: s, ...(f.error ? { error: f.error } : {}) }));
-        report.steps.push({ step, invalid, height: state.box?.h, ...(layout ? { layout } : {}), screenshot: shot });
+        report.steps.push({ step, invalid, height: state.box?.h, ...(layout ? { layout } : {}), ...(shot ? { screenshot: shot } : {}), ...(extra.success ? { success: extra.success } : {}) });
         report.issues.push(...judgeStep(step, state, { baseHeight, ...extra }));
         if (layout) report.issues.push({ step, kind: 'layout', counts: layout.counts, note: 'В этом состоянии формы что-то наложилось или обрезано — подробности в steps.' });
       };
@@ -426,9 +463,13 @@ export async function auditForms(session, { selector = 'form', open = [], values
       const before = await wrapTexts();
       for (const field of form.fields) await enter(field, validValue(field));
       const sentBefore = sent.length;
+      const linesBefore = await page.evaluate(visibleLines).catch(() => []);
       if (submit !== 'none') await clickSubmit(form);
       const valid = await snapshot(before);
-      await record('valid', valid, { expectValid: form.fields.map((f) => f.selector) });
+      const linesAfter = await page.evaluate(visibleLines).catch(() => []);
+      const success = successOf(valid, { linesBefore, linesAfter });
+      await record('valid', valid, { expectValid: form.fields.map((f) => f.selector), success });
+      if (success) report.success = success;
       report.sent = sent.slice(sentBefore).map(({ method, url: to, body }) => ({ method, url: to, ...(body ? { body } : {}) }));
       if (submit !== 'none' && !report.sent.length && !valid.gone) {
         report.issues.push({ step: 'valid', kind: 'notSent', note: 'Годная форма не отправила ни одного запроса. Если отправка идёт не fetch/xhr/переходом — проверьте руками.' });

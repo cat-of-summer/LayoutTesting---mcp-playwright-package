@@ -105,3 +105,15 @@ test('живая страница переживает мёртвую сосед
   await pool.closeSession(alive.id);
   await pool.closeSession(dead.id);
 });
+
+test('сессия с keepAlive переживает простой, а сама подсказка о нём есть в ошибке простоя', options, async () => {
+  const kept = await pool.createSession({ viewport: 'mobile' }, { keepAlive: true });
+  const idle = await pool.createSession({ viewport: 'mobile' });
+  try {
+    await wait(700);
+    assert.ok(pool.listSessions().some((s) => s.id === kept.id), 'keepAlive: простой не закрывает');
+    assert.throws(() => pool.getSession(idle.id), /keepAlive: true/);
+  } finally {
+    await pool.closeSession(kept.id).catch(() => {});
+  }
+});

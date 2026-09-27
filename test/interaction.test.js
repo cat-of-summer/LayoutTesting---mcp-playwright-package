@@ -117,3 +117,18 @@ test('на замороженной странице прогон отказыв
     await pool.closeSession(session.id);
   }
 });
+
+test('вечная анимация canvas и фон из ignore не делают «ответившей» каждую кнопку', options, async () => {
+  const session = await pool.createSession({ viewport: '1280x900', animations: 'allow' }, { owned: 'internal' });
+  try {
+    await pool.gotoAndSettle(session, `${base}/interaction-canvas.html`, { animations: 'allow' });
+    const report = await runInteractions(session.page, { selectors: ['.dead', '.toggle'], timeoutMs: 600, ignore: ['.ticker'] });
+    const [dead, toggle] = report.targets;
+    assert.equal(dead.verdict, 'молчит', JSON.stringify(dead));
+    assert.equal(toggle.verdict, 'ответил', JSON.stringify(toggle));
+    assert.equal(toggle.timing.kind, 'noMotion', 'смена класса без движения — не «unsettled»');
+    assert.ok(toggle.changed.attrs.every((attr) => attr.attr !== 'data-frame'), JSON.stringify(toggle.changed.attrs));
+  } finally {
+    await pool.closeSession(session.id);
+  }
+});

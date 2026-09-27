@@ -169,11 +169,15 @@ export const profileSchema = {
   zoom: z.number().optional().describe(d('Масштаб страницы в процентах: 200 сжимает viewport вдвое')),
   textZoom: z.number().optional().describe(d('Масштаб только шрифта в процентах (WCAG 1.4.4)')),
   pseudoLoc: z.boolean().optional().describe(d('Псевдолокализация: диакритика и +40% длины строк')),
+  scrollbars: z
+    .enum(['auto', 'overlay', 'classic'])
+    .optional()
+    .describe(d('overlay — полосы прокрутки как на телефоне; auto — так в окне уже 768px')),
   deviceScaleFactor: z.number().optional().describe(d('DPR: 1, 2, 3')),
   locale: z.string().optional(),
   timezoneId: z.string().optional(),
-  userAgent: z.string().optional().describe(d('Своя строка User-Agent: часть сайтов отдаёт headless-браузеру 403')),
-  freezeTime: z.boolean().optional().describe(d('Заморозить Date и Math.random для стабильных снимков')),
+  userAgent: z.string().optional().describe(d('Свой User-Agent: часть сайтов отдаёт headless 403')),
+  freezeTime: z.boolean().optional().describe(d('Заморозить Date и Math.random')),
   throttle: z
     .object({ network: z.string().optional(), cpu: z.number().optional() })
     .optional()
@@ -181,19 +185,19 @@ export const profileSchema = {
   auth: z
     .string()
     .optional()
-    .describe(d('HTTP basic auth в виде "пользователь:пароль". Логин в самом URL не нужен — он потом лезет во все ответы')),
+    .describe(d('HTTP basic auth: "пользователь:пароль" — не в URL, иначе он лезет во все ответы')),
   extraHTTPHeaders: z
     .record(z.string())
     .optional()
-    .describe(d('Заголовки ко всем запросам: Accept-Language, X-Forwarded-Proto и прочее')),
+    .describe(d('Заголовки ко всем запросам')),
   hostMap: z
     .record(z.string())
     .optional()
-    .describe(d('Подмена разрешения имён: {"www.site.local": "172.20.0.5"} — для стендов за vhost. Только chromium')),
+    .describe(d('Имя → IP: {"www.site.local": "172.20.0.5"}, стенды за vhost. Только chromium')),
   storageState: z
     .string()
     .optional()
-    .describe(d('Имя сохранённого состояния из browser_storage: сессия откроется уже залогиненной')),
+    .describe(d('Состояние из browser_storage: сессия откроется залогиненной')),
   serviceWorkers: z
     .enum(['allow', 'block'])
     .optional()

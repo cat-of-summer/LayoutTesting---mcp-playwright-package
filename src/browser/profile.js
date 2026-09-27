@@ -25,6 +25,13 @@ export const PROFILE_DEFAULTS = {
   /** Только размер шрифта, без изменения viewport (WCAG 1.4.4). */
   textZoom: 100,
   pseudoLoc: false,
+  /**
+   * Полосы прокрутки: overlay — поверх контента, как на телефонах; classic — как их рисует
+   * страница; auto — overlay в окнах уже 768px. Headless сам их прячет, но свой
+   * ::-webkit-scrollbar проекта со scrollbar-gutter: stable возвращал гуттер: мобильный кадр 380
+   * сверялся со страницей 365, и все x съезжали на 7.5px.
+   */
+  scrollbars: 'auto',
   userAgent: undefined,
   /** Троттлинг сети и CPU — только chromium (через CDP). */
   throttle: null,

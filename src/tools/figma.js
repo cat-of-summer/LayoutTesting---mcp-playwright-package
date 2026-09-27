@@ -23,27 +23,30 @@ import { exportImages, exportRender, exportSvg } from '../figma/export.js';
 import { cssItems, outlineLines, textItems, unresolvedOf, usedVariables } from '../figma/inspect.js';
 import { assetInventory } from '../figma/assets.js';
 import { getRestClient } from '../figma/rest.js';
-import { addRequests, ensureNode, ensureNodes, findNode, pathOf, syncFigma } from '../figma/snapshot.js';
+import { addRequests, ensureNode, ensureNodes, findNode, frameIndex, pathOf, syncFigma } from '../figma/snapshot.js';
 import { groupRefs, parseFigmaRef, refOf } from '../figma/url.js';
 import { diffSnapshots, fetchVersions, parseMoment, pickVersions, snapshotAt } from '../figma/history.js';
 import { loadProject, projectSummary } from '../figma/project.js';
 import { browserChrome } from '../figma/analyze/common.js';
+import { round } from '../figma/css.js';
 import { inferStructure } from '../figma/analyze/structure.js';
 import { findComponents } from '../figma/analyze/components.js';
 import { collectTokens } from '../figma/analyze/tokens.js';
 import { compareBreakpoints } from '../figma/analyze/breakpoints.js';
 import {
+  baseName,
   buildThreads,
   collectAnnotations,
   commentsDigest,
   fetchComments,
   missingFrames,
+  placeThreads,
   readCachedComments,
 } from '../figma/analyze/comments.js';
-import { describeBehavior } from '../figma/analyze/behavior.js';
-import { compareWithDesign, probePage } from '../figma/compare.js';
+import { describeBehavior, uiKitTarget } from '../figma/analyze/behavior.js';
+import { compareWithDesign, probePage, scrollbarGutter } from '../figma/compare.js';
 import { measurePairs, measureSpacing, pageBoxes } from '../figma/spacing.js';
-import { getSession, gotoAndSettle, withSession } from '../browser/pool.js';
+import { gotoAndSettle, sessionAt, withSession } from '../browser/pool.js';
 
 /* /v1/me стоит запроса tier 3. figma_status зовут, когда что-то не работает, — то есть подряд. */
 const ME_TTL_MS = 10 * 60 * 1000;
@@ -113,8 +116,25 @@ async function commentFrames(fileKey, comments, own, { client, resolved = false,
     else missing.push(id);
   }
   const blind = own.some((frame) => !frame.snapshot.ancestors?.length);
-  if (sync && blind && missing.length) {
-    const batch = missing.slice(0, COMMENT_FRAMES_MAX);
+  /*
+   * Копии запрошенных кадров на других страницах («Объяснение» с узлами 588:*): дизайнер пишет
+   * замечания на них. Предки таких кадров запрошенному узлу не родня, и без имени кадра их
+   * отбрасывали как чужие. Имя берётся из индекса кадров файла; если кадров в нём нет — индекс
+   * снимается одним запросом списка кадров файла.
+   */
+  let copies = [];
+  if (sync && missing.length) {
+    let index = await frameIndex(fileKey);
+    if (missing.some((id) => !index[id])) {
+      const listed = await syncFigma([fileKey], { client, editor: editorChannel }).catch(() => null);
+      if (listed && requests) addRequests(requests, listed.requests);
+      index = await frameIndex(fileKey);
+    }
+    const wanted = new Set(own.map((frame) => baseName(frame.snapshot.nodes[frame.rootId]?.name)).filter(Boolean));
+    copies = missing.filter((id) => index[id] && wanted.has(baseName(index[id].name)));
+  }
+  if (sync && (blind || copies.length) && missing.length) {
+    const batch = (blind ? [...new Set([...copies, ...missing])] : copies).slice(0, COMMENT_FRAMES_MAX);
     const result = await syncFigma(
       batch.map((id) => refOf(fileKey, id)),
       { client, editor: editorChannel },
@@ -126,9 +146,8 @@ async function commentFrames(fileKey, comments, own, { client, resolved = false,
     }
     /* Кадр, удалённый из макета, остаётся в комментариях: это не ошибка, а просто не наш случай. */
     missing = missing.filter((id) => !frames.some((frame) => frame.rootId === id));
-  } else if (!blind) {
-    missing = [];
   }
+  if (!blind) missing = [];
   return { frames, notSynced: missing.slice(0, 10) };
 }
 
@@ -168,6 +187,18 @@ export function screenReason(frame) {
   if (w < 320) return 'уже 320px — элемент, а не экран';
   if (w > 2560) return 'шире 2560px — холст или секция, а не экран';
   return null;
+}
+
+/** Нарисованная строка браузера в ответе figma_spec: сколько вычитать из y узлов потока. */
+export function chromeNote(chrome) {
+  if (!chrome) return null;
+  return {
+    ...chrome,
+    note: t({
+      ru: `Похоже на нарисованную строку браузера: страница в браузере начинается под ней. Вычитайте ${round(chrome.height)}px из y узлов потока; fixed-узлы считаются от окна, им вычитать не нужно.`,
+      en: `Looks like a drawn browser bar: in the browser the page starts below it. Subtract ${round(chrome.height)}px from the y of flow nodes; fixed nodes count from the window and need no correction.`,
+    }),
+  };
 }
 
 export function suggestWidths(result) {
@@ -523,16 +554,8 @@ export function register(server) {
         ...(requests ? { requests } : {}),
         comments: await commentsOf(fileKey, snapshot, node.id),
       };
-      const chrome = browserChrome(snapshot, node.id);
-      if (chrome) {
-        out.chrome = {
-          ...chrome,
-          note: t({
-            ru: `Похоже на нарисованную строку браузера: страница в браузере начинается под ней. Вычитайте ${round(chrome.height)}px из y узлов потока; fixed-узлы считаются от окна, им вычитать не нужно.`,
-            en: `Looks like a drawn browser bar: in the browser the page starts below it. Subtract ${round(chrome.height)}px from the y of flow nodes; fixed nodes count from the window and need no correction.`,
-          }),
-        };
-      }
+      const chrome = chromeNote(browserChrome(snapshot, node.id));
+      if (chrome) out.chrome = chrome;
 
       /*
        * Разделы собираются по очереди и складываются, пока ответ помещается в потолок.
@@ -563,7 +586,14 @@ export function register(server) {
 
       for (const name of ['outline', 'assets', 'text', 'css']) {
         if (!want.has(name)) continue;
-        const section = build[name]();
+        /* Сломавшийся раздел не роняет остальные: агенту нужен хотя бы outline, и видно, где сломалось. */
+        let section;
+        try {
+          section = build[name]();
+        } catch (error) {
+          skipped[name] = { skipped: true, error: error.message, node: refOf(fileKey, node.id), how: how[name] };
+          continue;
+        }
         if (JSON.stringify(out).length + JSON.stringify(section).length > budget) {
           skipped[name] = { skipped: true, why: 'ответ уперся в потолок объёма', how: how[name] };
           continue;
@@ -733,7 +763,7 @@ export function register(server) {
       inputSchema: {
         figma: z.string().describe(d('Узел-контейнер: ссылка figma.com или запись ключ:id')),
         sessionId: z.string().optional().describe(d('Сессия с открытой страницей: сравнение идёт по ней')),
-        url: z.string().optional().describe(d('Адрес страницы: стенд откроет её сам шириной кадра макета')),
+        url: z.string().optional().describe(d('Адрес страницы: без sessionId стенд откроет её сам шириной кадра, с sessionId перейдёт на неё в сессии')),
         selector: z.string().optional().describe(d('Блок на странице, которому соответствует кадр макета')),
         pairs: z
           .array(z.object({ node: z.string(), selector: z.string() }))
@@ -767,7 +797,10 @@ export function register(server) {
         }
         return out;
       };
-      if (sessionId) return json(await run(getSession(sessionId).page));
+      if (sessionId) {
+        const { session, navigation } = await sessionAt(sessionId, url);
+        return json({ ...(await run(session.page)), ...(navigation ? { navigation } : {}) });
+      }
       if (!url) throw new Error('Нужен sessionId открытой сессии или url страницы.');
       const width = Math.max(320, Math.round(node.box?.w || 1440));
       return withSession({ viewport: `${width}x900` }, async (session) => {
@@ -788,7 +821,7 @@ export function register(server) {
       inputSchema: {
         figma: z.string().describe(d('Узел: ссылка figma.com или запись ключ:id')),
         sessionId: z.string().optional().describe(d('Сессия с открытой страницей: сравнение идёт по ней')),
-        url: z.string().optional().describe(d('Адрес страницы: стенд откроет её сам шириной кадра макета')),
+        url: z.string().optional().describe(d('Адрес страницы: без sessionId стенд откроет её сам шириной кадра, с sessionId перейдёт на неё в сессии')),
         selector: z.string().optional().describe(d('Блок на странице, которому соответствует кадр макета')),
         mode: z
           .enum(['both', 'semantic', 'pixel'])
@@ -819,14 +852,16 @@ export function register(server) {
       };
       /* Предупреждать о ширине окна имеет смысл только для экрана: карточку сверяют в любом окне. */
       const frameWidth = screenReason({ type: node.type, size: `${node.box?.w}x${node.box?.h}` }) ? null : Math.round(node.box.w);
-      const withCoverage = (result, page) => ({
+      /* Окно, расширенное на гуттер полосы прокрутки, по контенту той же ширины, что кадр. */
+      const withCoverage = (result, page, widened = 0) => ({
         ...result,
-        coverage: noteCoverage(ref, snapshot.version, { mode, sections, width: page.viewportSize()?.width ?? null, frameWidth }),
+        coverage: noteCoverage(ref, snapshot.version, { mode, sections, width: page.viewportSize() ? page.viewportSize().width - widened : null, frameWidth }),
       });
 
       if (sessionId) {
-        const { page } = getSession(sessionId);
-        return json(withCoverage(await compareWithDesign({ ...options, page }), page));
+        const { session, navigation } = await sessionAt(sessionId, url);
+        const { page } = session;
+        return json({ ...withCoverage(await compareWithDesign({ ...options, page }), page), ...(navigation ? { navigation } : {}) });
       }
       if (!url) throw new Error('Нужен sessionId открытой сессии или url страницы.');
 
@@ -835,8 +870,14 @@ export function register(server) {
       const width = Math.max(320, Math.round(node.box?.w || 1440));
       return withSession({ viewport: `${width}x900` }, async (session) => {
         const navigation = await gotoAndSettle(session, url);
-        const result = await compareWithDesign({ ...options, page: session.page });
-        return json({ ...withCoverage(result, session.page), navigation });
+        /* Полоса прокрутки страницы отнимает ширину: окно расширяется на неё, чтобы контент был шириной кадра. */
+        const gutter = await session.page.evaluate(scrollbarGutter).catch(() => 0);
+        if (gutter > 0) {
+          await session.page.setViewportSize({ width: width + gutter, height: 900 });
+          await session.page.waitForTimeout(150);
+        }
+        const result = await compareWithDesign({ ...options, page: session.page, widenedBy: gutter });
+        return json({ ...withCoverage(result, session.page, gutter), navigation });
       });
     },
   );
@@ -887,7 +928,7 @@ export function register(server) {
         if (context.notSynced.length) {
           notes.push(`Кадры ${context.notSynced.join(', ')} не сняты: комментарии в них не привязаны к элементам. figma_sync по ним.`);
         }
-        threads.push(...buildThreads(data.comments, [...own, ...context.frames], { resolved, targets }));
+        threads.push(...placeThreads(buildThreads(data.comments, [...own, ...context.frames], { resolved, targets }), await frameIndex(group.fileKey)));
       }
 
       return json({
@@ -1045,6 +1086,9 @@ export function register(server) {
           if (hit) {
             group.toName = hit.node.name;
             group.toRef = refOf(fileKey, group.to);
+            const page = hit.snapshot.ancestors?.find((item) => item.type === 'PAGE')?.name;
+            if (page) group.toPage = page;
+            Object.assign(group, uiKitTarget(hit.node, hit.snapshot, group.fromSet) || {});
             break;
           }
         }

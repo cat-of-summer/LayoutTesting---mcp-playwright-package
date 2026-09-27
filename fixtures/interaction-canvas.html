@@ -1,0 +1,38 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<title>Интерактив на фоне вечной анимации</title>
+<style>
+  body { margin: 0; font: 16px/1.4 sans-serif; }
+  #stars { position: fixed; inset: 0; z-index: -1; }
+  .ticker { height: 24px; overflow: hidden; }
+  main { padding: 40px; display: grid; gap: 16px; justify-items: start; }
+  .toggle.is-on { color: #c00; }
+</style>
+</head>
+<body>
+<!-- Звёздный фон: каждый кадр canvas меняет свои атрибуты, как библиотеки частиц. -->
+<canvas id="stars" width="300" height="150"></canvas>
+<!-- Счётчик в шапке: сам по себе переписывает атрибут каждый кадр. -->
+<div class="ticker"><span class="ticker__value" data-frame="0">0</span></div>
+<main>
+  <button class="dead" type="button">Ничего не делает</button>
+  <button class="toggle" type="button">Переключает класс</button>
+</main>
+<script>
+  const canvas = document.getElementById('stars');
+  const value = document.querySelector('.ticker__value');
+  let frame = 0;
+  const tick = () => {
+    frame += 1;
+    canvas.setAttribute('data-frame', String(frame));
+    canvas.style.opacity = String(0.9 + (frame % 10) / 100);
+    value.setAttribute('data-frame', String(frame));
+    requestAnimationFrame(tick);
+  };
+  requestAnimationFrame(tick);
+  document.querySelector('.toggle').addEventListener('click', (event) => event.currentTarget.classList.toggle('is-on'));
+</script>
+</body>
+</html>
