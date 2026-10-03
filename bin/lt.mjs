@@ -13,6 +13,8 @@ import { listRuns, pruneRuns, publicUrl, newRunId, slug } from '../src/artifacts
 import { createSession, closeSession, gotoAndSettle, closeAll } from '../src/browser/pool.js';
 import { takeScreenshot } from '../src/checks/visual.js';
 import { listBaselines } from '../src/checks/visual.js';
+import { USAGE_DIR } from '../src/usage/log.js';
+import { readUsageDir, buildUsageReport, formatUsageReport } from '../src/usage/report.js';
 
 const argv = process.argv.slice(2);
 const command = argv[0];
@@ -111,6 +113,8 @@ const HELP = `Стенд тестирования вёрстки — CLI
   lt baselines                            список эталонов
   lt runs                                 список прогонов
   lt clean      [--keep N]                удалить старые прогоны
+  lt usage      [--days N] [--dir ПАПКА]  сводка журнала использования (--json — машинный вид);
+                                          --dir сводит журналы, собранные у нескольких людей
 
 Условия просмотра (для shot, audit, compare, storybook):
   --browser chromium|firefox|webkit   --viewport 375x812 или ${Object.keys(VIEWPORTS).join('|')}
@@ -129,6 +133,26 @@ const HELP = `Стенд тестирования вёрстки — CLI
   --zooms 100,200  --forced none,active  --pseudo-axis true,false  --dprs 1,2
   --checks     --concurrency 2   --update
 `;
+
+/**
+ * Имена и параметры всех инструментов — из самого сервера, как в gen-tools-doc: по ним отчёт
+ * находит то, что не вызывают. Журнал на это время выключен, иначе служебное подключение
+ * легло бы в него сессией.
+ */
+async function toolManifest() {
+  process.env.LT_USAGE_LOG = '0';
+  const { createServer } = await import('../src/server.js');
+  const { Client } = await import('@modelcontextprotocol/sdk/client/index.js');
+  const { InMemoryTransport } = await import('@modelcontextprotocol/sdk/inMemory.js');
+  const [clientSide, serverSide] = InMemoryTransport.createLinkedPair();
+  const server = await createServer();
+  await server.connect(serverSide);
+  const client = new Client({ name: 'lt-usage', version: '0' });
+  await client.connect(clientSide);
+  const { tools } = await client.listTools();
+  await client.close();
+  return tools.map((tool) => ({ name: tool.name, params: Object.keys(tool.inputSchema?.properties ?? {}) }));
+}
 
 async function main() {
   const flags = parseFlags(argv.slice(1));
@@ -351,6 +375,21 @@ async function main() {
     case 'clean': {
       const removed = await pruneRuns(flags.keep ? Number(flags.keep) : undefined);
       console.log(`Удалено прогонов: ${removed.length}`);
+      break;
+    }
+
+    case 'usage': {
+      const dir = flags.dir && flags.dir !== true ? String(flags.dir) : USAGE_DIR;
+      const { records, skipped } = readUsageDir(dir);
+      if (!records.length) {
+        console.log(`Журнал пуст: ${dir}. Пишется при LT_USAGE_LOG=1 (в HTTP-режиме по умолчанию).`);
+        break;
+      }
+      const days = flags.days ? Number(flags.days) : null;
+      const since = days ? new Date(Date.now() - days * 24 * 60 * 60 * 1000) : null;
+      const report = buildUsageReport(records, { manifest: await toolManifest(), since, limit: Number(flags.limit || 10) });
+      if (skipped) report.skippedLines = skipped;
+      console.log(bool(flags.json) ? JSON.stringify(report, null, 2) : formatUsageReport(report));
       break;
     }
 

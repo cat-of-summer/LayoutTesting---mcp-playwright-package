@@ -10,6 +10,8 @@ import { ensureDirs } from './artifacts.js';
 import { handleUpload } from './media/upload.js';
 import { handleGuideRoute } from './guide-http.js';
 import { handleHandoffRoute } from './browser/handoff.js';
+import { currentImageTag } from './update.js';
+import { usageLog } from './usage/log.js';
 
 const arg = (name, fallback) => {
   const hit = process.argv.find((a) => a.startsWith(`--${name}=`));
@@ -50,6 +52,9 @@ async function startHttp() {
   const port = Number(arg('port', CONFIG.mcpPort));
   /* Стенд в контейнере: журнал вызовов нужен, чтобы после падения было видно, что шло. */
   process.env.LT_CALL_LOG ??= '1';
+  /* И журнал использования: стенд стоит у пользователя, и разбирать, как агенты работают с
+     инструментами, можно только по нему. LT_USAGE_LOG=0 в .env выключает. */
+  process.env.LT_USAGE_LOG ??= '1';
   /**
    * Сессия MCP -> транспорт и подпись набора, под которым она открыта. Браузеры переживают
    * переподключение агента.
@@ -146,7 +151,14 @@ async function startHttp() {
           onsessioninitialized: (id) => sessions.set(id, { transport, key: selection.key }),
         });
         transport.onclose = () => {
-          if (transport.sessionId) sessions.delete(transport.sessionId);
+          if (!transport.sessionId) return;
+          sessions.delete(transport.sessionId);
+          usageLog.record({
+            event: 'session_close',
+            mcpSession: transport.sessionId,
+            standVersion: currentImageTag() ?? 'unknown',
+            toolset: selection.key,
+          });
         };
         const server = await createServer({ selection });
         await server.connect(transport);

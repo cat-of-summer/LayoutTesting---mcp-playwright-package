@@ -8,9 +8,19 @@
  * Приём законный: Protocol.setRequestHandler — обычная запись в Map, и повторная установка
  * переопределяет прежний обработчик. Прежний мы забираем себе и вызываем сами, а не
  * переписываем разбор запросов заново.
+ *
+ * Здесь же стоит журнал использования (src/usage/): он должен видеть каждый вызов, ресурс и
+ * начало сессии, а проходят они все только через эти обработчики.
  */
-import { CallToolRequestSchema, ListToolsRequestSchema } from '@modelcontextprotocol/sdk/types.js';
+import {
+  CallToolRequestSchema,
+  GetPromptRequestSchema,
+  InitializeRequestSchema,
+  ListToolsRequestSchema,
+  ReadResourceRequestSchema,
+} from '@modelcontextprotocol/sdk/types.js';
 import { getProfile, saveEphemeralProfile } from './browser/profiles.js';
+import { usageLog, usageLogged, sessionFields } from './usage/log.js';
 
 /**
  * Строка журнала на каждый вызов: имя, длительность, куча до и после.
@@ -110,6 +120,13 @@ async function foldLegacyConditions(request, extra, next) {
   );
 }
 
+/** Старые ключи в вызове — для журнала использования: так видно, что агенты ещё ходят по-старому. */
+function legacyKeysOf(request) {
+  const args = request?.params?.arguments;
+  if (!DEMOTED.has(request?.params?.name) || !args || typeof args !== 'object') return [];
+  return Object.keys(args).filter((key) => MOVED.has(key) && args[key] !== undefined && args[key] !== null);
+}
+
 function appendNote(result, note) {
   if (!result || !Array.isArray(result.content)) return result;
   return { ...result, content: [...result.content, { type: 'text', text: note }] };
@@ -195,10 +212,16 @@ function slimSchema(schema) {
   return rest;
 }
 
-export function installProtocolPatches(mcp) {
+/**
+ * toolset и standVersion нужны только журналу использования: под каким набором открыта сессия и
+ * на какой версии стенда она шла. log подменяется в тестах.
+ */
+export function installProtocolPatches(mcp, { toolset = null, standVersion = null, log = usageLog } = {}) {
   const server = mcp?.server;
   const handlers = server?._requestHandlers;
   if (!handlers) return { patched: false };
+
+  const ctx = { toolset, standVersion, client: () => server.getClientVersion?.() ?? null };
 
   const originalList = handlers.get('tools/list');
   const originalCall = handlers.get('tools/call');
@@ -231,9 +254,57 @@ export function installProtocolPatches(mcp) {
 
   if (originalCall) {
     server.setRequestHandler(CallToolRequestSchema, (request, extra) =>
-      logged(request, () => foldLegacyConditions(request, extra, originalCall)),
+      usageLogged(ctx, request, extra, () => logged(request, () => foldLegacyConditions(request, extra, originalCall)), {
+        log,
+        legacyKeys: legacyKeysOf(request),
+      }),
     );
   }
 
+  installUsageHooks(server, handlers, ctx, log);
+
   return { patched: Boolean(originalList && originalCall) };
+}
+
+/**
+ * Остальные события журнала использования: начало сессии, чтение ресурсов и промптов.
+ *
+ * Ресурсы и промпты — это регламент и справка. Когда агент уходит их читать посреди работы,
+ * значит, описаний инструментов ему не хватило, и в сводке это место должно быть видно.
+ */
+function installUsageHooks(server, handlers, ctx, log) {
+  const originalInit = handlers.get('initialize');
+  if (originalInit) {
+    server.setRequestHandler(InitializeRequestSchema, async (request, extra) => {
+      const result = await originalInit(request, extra);
+      log.record({
+        event: 'session_open',
+        ...sessionFields(ctx, extra),
+        client: request?.params?.clientInfo
+          ? { name: request.params.clientInfo.name ?? null, version: request.params.clientInfo.version ?? null }
+          : null,
+        protocolVersion: request?.params?.protocolVersion ?? null,
+      });
+      return result;
+    });
+  }
+
+  const watch = (method, schema, event, target) => {
+    const original = handlers.get(method);
+    if (!original) return;
+    server.setRequestHandler(schema, async (request, extra) => {
+      const started = Date.now();
+      let outcome = 'ok';
+      try {
+        return await original(request, extra);
+      } catch (err) {
+        outcome = 'throw';
+        throw err;
+      } finally {
+        log.record({ event, ...sessionFields(ctx, extra), target: target(request), durationMs: Date.now() - started, outcome });
+      }
+    });
+  };
+  watch('resources/read', ReadResourceRequestSchema, 'resource', (request) => request?.params?.uri ?? null);
+  watch('prompts/get', GetPromptRequestSchema, 'prompt', (request) => request?.params?.name ?? null);
 }

@@ -134,7 +134,7 @@ export async function createServer({ selection = resolveSelection('all') } = {})
 
   /* Ставится последним: обработчики tools/list и tools/call к этому моменту уже на месте,
      а патч забирает прежние себе и вызывает их сам. */
-  installProtocolPatches(server);
+  installProtocolPatches(server, { toolset: selection.key, standVersion: currentImageTag() ?? 'unknown' });
 
   return server;
 }
