@@ -161,6 +161,10 @@ env:
   # Язык описаний инструментов MCP: их читает модель, а не человек.
   LT_LANG: value:ru
 
+  # Журнал использования инструментов в state/usage/. 0 выключает.
+  LT_USAGE_LOG: value:1
+  LT_USAGE_KEEP_DAYS: value:30
+
 volumes:
   artifacts: /var/www/html/artifacts
   baselines: /var/www/html/baselines
