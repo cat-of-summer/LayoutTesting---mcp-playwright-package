@@ -9,48 +9,17 @@ on:
   pull_request: {}
   workflow_dispatch:
     inputs:
-      run_ci:
-        description: 'Build and test (job ci)'
-        required: false
-        type: boolean
-        default: true
-      run_release:
-        description: 'Create a Release and publish to registries (tag only)'
-        required: false
-        type: boolean
-        default: true
-      run_cd:
-        description: 'Deploy (job cd)'
-        required: false
-        type: boolean
-        default: true
-      environment:
-        description: 'Override the environment (resolved automatically by default)'
-        required: false
-        type: string
-        default: ''
-      runs_on:
-        description: 'Override RUNS_ON: ubuntu-latest,windows-latest'
-        required: false
-        type: string
-        default: ''
-      publish_method:
-        description: 'Override PUBLISH_METHOD'
-        required: false
-        type: choice
-        options: ['', 'npm', 'docker', 'packagist']
-        default: ''
       commits:
-        description: 'Comma-separated commits to deploy'
+        description: 'Comma-separated commits to deploy. Empty = deploy the whole tree.'
         required: false
         type: string
         default: ''
       deploy_mirror:
-        description: 'Keep all:false; delete files removed in commits:true; mirror sync (deletes untracked):full'
+        description: 'Deletions on the server: false = keep all, true = delete files removed in the commits, full = exact mirror. default = DEPLOY_MIRROR variable.'
         required: false
         type: choice
-        options: ['false', 'true', 'full']
-        default: 'false'
+        options: ['default', 'false', 'true', 'full']
+        default: 'default'
 
 permissions:
   contents: write
@@ -67,11 +36,5 @@ jobs:
       PACKAGIST_API_TOKEN: ${{ secrets.PACKAGIST_API_TOKEN }}
       SECRETS_JSON: ${{ secrets.SECRETS_JSON }}
     with:
-      run_ci: ${{ inputs.run_ci == null && true || inputs.run_ci }}
-      run_release: ${{ inputs.run_release == null && true || inputs.run_release }}
-      run_cd: ${{ inputs.run_cd == null && true || inputs.run_cd }}
-      environment: ${{ inputs.environment || '' }}
-      runs_on: ${{ inputs.runs_on || '' }}
-      publish_method: ${{ inputs.publish_method || '' }}
       commits: ${{ inputs.commits || '' }}
-      deploy_mirror: ${{ inputs.deploy_mirror || 'false' }}
+      deploy_mirror: ${{ inputs.deploy_mirror || '' }}
