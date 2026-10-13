@@ -172,6 +172,13 @@ volumes:
   state: /var/www/html/state
   figma: /var/www/html/figma
 
+# Папка на хосте для screenshot с saveTo: кадр ложится сразу туда, без скачивания по url.
+# Путь на хосте — EXPORTS_DIR в .env; стенд читает ту же переменную, чтобы назвать путь в ответе.
+binds:
+  exports:
+    path: /var/www/html/exports
+    host: ./exports
+
 services:
   traefik: {mode: off}
   network: {mode: off}

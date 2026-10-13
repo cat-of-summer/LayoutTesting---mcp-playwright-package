@@ -15,6 +15,8 @@ services:
     working_dir: /var/www/html
     volumes:
       - ./data:/var/www/html
+      # Выгрузка screenshot с saveTo в папку хоста; путь — EXPORTS_DIR в .env.
+      - ${EXPORTS_DIR:-./exports}:/var/www/html/exports
     ports:
       - "${MCP_ACCESS:-127.0.0.1:8931:8931}"
     extra_hosts:
