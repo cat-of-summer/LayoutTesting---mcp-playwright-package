@@ -610,7 +610,8 @@ docker compose exec playwright lt audit --url http://nginx_myshop/ --timeout 600
 - `exports/` — папка на хосте, куда `screenshot` с `saveTo` кладёт копию кадра. Это bind, а не том:
   путь на хосте задаёт `EXPORTS_DIR` в `.env` (по умолчанию `./exports` рядом с `docker-compose.yml`).
   Стенд читает ту же переменную и поэтому принимает `saveTo` абсолютным путём хоста внутри неё,
-  а в ответе возвращает `hostPath`. Без монтирования `saveTo` отвечает ошибкой с командой `curl` по `url`
+  а в ответе возвращает `hostPath`. Стенд в WSL (`EXPORTS_DIR=/mnt/o/Projects`) понимает и `O:/Projects/…`
+  и добавляет в ответ `windowsPath`. Без монтирования `saveTo` отвечает ошибкой с командой `curl` по `url`
 - `state/` — сохранённые логины и [журнал использования](#журнал-использования) в `state/usage/`.
   Наружу не отдаётся и в git не кладётся
 
