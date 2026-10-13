@@ -147,6 +147,17 @@ test('выгрузка: путь от корня, абсолютный путь 
   await assert.rejects(exportFile(source, 'D:/elsewhere/x.png', { dir }), /вне папки выгрузки/);
   await assert.rejects(exportFile(source, '../x.png', { dir }), /выходит за пределы папки выгрузки/);
 
+  /* Стенд в WSL: compose видит /mnt/o/…, агент на Windows пишет O:/… — это одна папка. */
+  process.env.EXPORTS_DIR = '/mnt/o/Projects';
+  const wsl = await exportFile(source, 'O:\\Projects\\game\\w.png', { dir });
+  assert.equal(wsl.path, 'game/w.png');
+  assert.equal(wsl.hostPath, '/mnt/o/Projects/game/w.png');
+  assert.equal(wsl.windowsPath, 'O:/Projects/game/w.png');
+  assert.equal((await exportFile(source, '/mnt/o/Projects/game/l.png', { dir })).path, 'game/l.png');
+  process.env.EXPORTS_DIR = '/mnt/o';
+  assert.equal((await exportFile(source, 'o:/x/d.png', { dir })).windowsPath, 'O:/x/d.png', 'корень диска');
+  await assert.rejects(exportFile(source, 'D:/x.png', { dir }), /вне папки выгрузки/);
+
   process.env.EXPORTS_DIR = './exports';
   const relative = await exportFile(source, 'r.png', { dir });
   assert.equal(relative.hostPath, './exports/r.png');

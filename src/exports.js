@@ -24,15 +24,34 @@ const hostRoot = () => {
 /** Абсолютный путь хоста: /home/…, O:/…, O:\…, \\server\share. */
 const isHostAbsolute = (value) => /^([a-z]:[\\/]|\/|\\\\)/i.test(value);
 
+/**
+ * Тот же каталог глазами Windows, если стенд развёрнут в WSL: /mnt/o/Projects — это O:/Projects.
+ *
+ * Compose в WSL принимает только путь Linux, а агент на Windows знает свои папки как O:/…, и без
+ * сопоставления абсолютный saveTo отвергался бы как «вне папки выгрузки», а hostPath называл бы
+ * путь, которого в его оболочке нет.
+ */
+export function windowsForm(root) {
+  const m = /^\/mnt\/([a-z])(\/.*)?$/i.exec(root || '');
+  return m ? `${m[1].toUpperCase()}:${m[2] || '/'}` : null;
+}
+
+/** Путь от корня, если value лежит под ним. Регистр без учёта: диск пишут и O:, и o:. */
+function under(value, root) {
+  if (!root || !isHostAbsolute(root)) return null;
+  const v = value.toLowerCase();
+  const r = root.toLowerCase().replace(/\/+$/, '');
+  if (v === r || v === `${r}/`) return '';
+  return v.startsWith(`${r}/`) ? value.slice(r.length + 1) : null;
+}
+
 /** Путь от корня выгрузки: относительный как есть, абсолютный хоста — через EXPORTS_DIR. */
 function relativeTarget(saveTo) {
   const value = String(saveTo).trim().replace(/\\/g, '/');
   if (!isHostAbsolute(value)) return value;
   const root = hostRoot();
-  /* Регистр сравниваем без учёта: диск на Windows пишут и O:, и o:. */
-  if (root && isHostAbsolute(root) && (value.toLowerCase() === root.toLowerCase() || value.toLowerCase().startsWith(`${root.toLowerCase()}/`))) {
-    return value.slice(root.length).replace(/^\/+/, '');
-  }
+  const rel = under(value, root) ?? under(value, windowsForm(root));
+  if (rel !== null) return rel;
   throw new Error(
     root
       ? `saveTo ${saveTo} вне папки выгрузки ${root}. Укажите путь внутри неё или от её корня.`
@@ -70,9 +89,11 @@ export async function exportFile(source, saveTo, { url = null, dir = DIRS.export
 
   const inside = path.relative(dir, target).split(path.sep).join('/');
   const root = hostRoot();
+  const windows = windowsForm(root);
   return {
     path: inside,
     hostPath: root ? `${root}/${inside}` : null,
+    ...(windows ? { windowsPath: `${windows.replace(/\/+$/, '')}/${inside}` } : {}),
     ...(root && !isHostAbsolute(root) ? { note: `${root} — относительно каталога, где развёрнут стенд` } : {}),
   };
 }
