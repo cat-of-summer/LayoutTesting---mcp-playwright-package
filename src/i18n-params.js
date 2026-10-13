@@ -213,16 +213,24 @@ const EN = {
   'allow не глушит движение: переходы и анимации остаются живыми':
     'allow leaves the motion alone: transitions and animations keep running',
   'Свой User-Agent: часть сайтов отдаёт headless 403': 'Own User-Agent: some sites answer headless with 403',
-  'Не нужен для scroll, для dialog и для press с кликом по координатам':
-    'Not required for scroll, for dialog, and for press or a click by coordinates',
-  'Текст для fill и type, клавиша для press, значение для select, accept | dismiss | текст ответа для dialog':
-    'Text for fill and type, key for press, option value for select, accept | dismiss | reply text for dialog',
+  'Касания: pointer: coarse, touch-события, tap': 'Touch: pointer: coarse, touch events, tap',
+  'Устройство Playwright целиком: "iPhone 13" — размер, DPR, UA, касания':
+    'A whole Playwright device: "iPhone 13" — size, DPR, UA, touch',
+  'Копию — в папку на хосте (EXPORTS_DIR): путь от неё или абсолютный внутри неё':
+    'A copy into the host folder (EXPORTS_DIR): a path relative to it or an absolute one inside it',
+  'Не нужен при steps': 'Not needed with steps',
+  'Не нужен для scroll, dialog, клавиш и действий по координатам':
+    'Not required for scroll, dialog, keys and actions by coordinates',
+  'Текст для fill и type, клавиша для press, down и up, значение для select, accept | dismiss | текст ответа для dialog':
+    'Text for fill and type, key for press, down and up, option value for select, accept | dismiss | reply text for dialog',
   'Для upload: пути к файлам относительно рабочего каталога стенда':
     'For upload: file paths relative to the stand working directory',
-  'Смещение прокрутки по горизонтали; для click без селектора — координата':
-    'Horizontal scroll amount; for a click without a selector, the x coordinate',
-  'Смещение прокрутки по вертикали; для click без селектора — координата':
-    'Vertical scroll amount; for a click without a selector, the y coordinate',
+  'Точка для click, tap, drag: от угла элемента при selector, иначе страницы. Для scroll — смещение':
+    'The point for click, tap, drag: from the element corner with selector, else from the page. For scroll — the offset',
+  'То же по вертикали': 'The same, vertically',
+  'Для drag: куда отпустить, в той же системе, что x и y': 'For drag: where to release, in the same frame as x and y',
+  'мс: press — держать клавишу, wait без selector — пауза, drag — длительность жеста (300)':
+    'ms: press — hold the key, wait without selector — a pause, drag — gesture length (300)',
   'Сколько ждать элемент, мс. По умолчанию 30000': 'How long to wait for the element, ms. Default 30000',
   'Кликнуть, не дожидаясь кликабельности: элемент под pointer-events: none иначе ждёт весь таймаут':
     'Click without waiting for the element to be actionable: under pointer-events: none it otherwise waits out the whole timeout',

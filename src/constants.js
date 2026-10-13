@@ -30,6 +30,11 @@ export const DIRS = {
    * выбрасывать то, за что заплачено лимитом REST API. Секретов здесь нет — они в state/figma/.
    */
   figma: path.join(ROOT, 'figma'),
+  /**
+   * Папка на хосте, смонтированная bind'ом (EXPORTS_DIR в .env): screenshot с saveTo кладёт
+   * кадр сразу туда, без скачивания по url. Нет монтирования — нет и каталога.
+   */
+  exports: path.join(ROOT, 'exports'),
 };
 
 export const BROWSERS = ['chromium', 'firefox', 'webkit'];

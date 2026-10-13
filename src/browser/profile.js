@@ -1,3 +1,4 @@
+import { devices } from 'playwright';
 import { VIEWPORTS } from '../config.js';
 import { statePath } from './storage.js';
 
@@ -33,6 +34,18 @@ export const PROFILE_DEFAULTS = {
    */
   scrollbars: 'auto',
   userAgent: undefined,
+  /**
+   * Касания. Пресет viewport mobile — только размер окна: pointer: coarse не срабатывает,
+   * maxTouchPoints равен нулю, и мобильный оверлей с геймпадом через стенд было не проверить.
+   *
+   * touch включает один hasTouch: его хватает на pointer: coarse, hover: none и touch-события
+   * во всех трёх движках. isMobile сюда не входит намеренно — без <meta viewport> он раскладывает
+   * страницу на 980px, и «окно 520 с касаниями» молча превращалось бы в другую ширину. Телефон
+   * целиком (UA, isMobile, DPR, размер) — это device.
+   */
+  touch: false,
+  /** Имя устройства Playwright: "iPhone 13", "Pixel 7". Разворачивается в normalizeProfile. */
+  device: null,
   /** Троттлинг сети и CPU — только chromium (через CDP). */
   throttle: null,
   /**
@@ -65,6 +78,25 @@ export function hostResolverRules(hostMap) {
   return `--host-resolver-rules=${entries.map(([host, ip]) => `MAP ${host} ${ip}`).join(',')}`;
 }
 
+/**
+ * Дескриптор устройства Playwright по имени.
+ *
+ * Регистр не важен: агент пишет «iphone 13» так же часто, как «iPhone 13». На промахе — до
+ * пяти имён, где встречаются все слова запроса: список целиком — двести с лишним строк, и в
+ * ошибке он только мешал бы.
+ */
+export function resolveDevice(name) {
+  const wanted = String(name).trim().toLowerCase();
+  const names = Object.keys(devices);
+  const exact = names.find((n) => n.toLowerCase() === wanted);
+  if (exact) return { name: exact, ...devices[exact] };
+  const words = wanted.split(/\s+/).filter(Boolean);
+  const close = names.filter((n) => words.every((w) => n.toLowerCase().includes(w))).slice(0, 5);
+  throw new Error(
+    `Устройство ${name} не найдено. ${close.length ? `Похожие: ${close.join(', ')}.` : 'Например: iPhone 13, Pixel 7, iPad Mini, Galaxy S9+.'}`,
+  );
+}
+
 export function resolveViewport(value) {
   if (!value) return VIEWPORTS.desktop;
   if (typeof value === 'object') return value;
@@ -93,7 +125,16 @@ const NORMALIZED = Symbol('profile:normalized');
 export function normalizeProfile(input = {}) {
   if (input && input[NORMALIZED]) return input;
   const { auth, ...rest } = input;
-  const p = { ...PROFILE_DEFAULTS, ...rest };
+  /* Устройство — основа, явные параметры поверх, как с именованными профилями: device
+     "iPhone 13" с viewport "390x500" — тот же телефон, но с другим окном. undefined в явных не
+     должен затирать значение устройства, поэтому их отбрасываем. */
+  const device = rest.device ? resolveDevice(rest.device) : null;
+  const explicit = Object.fromEntries(Object.entries(rest).filter(([, v]) => v !== undefined));
+  const p = { ...PROFILE_DEFAULTS, ...(device ? deviceConditions(device) : {}), ...explicit };
+  if (device) p.device = device.name;
+  /* hasTouch и isMobile — то, что уходит в контекст. touch: false при device снимает касания. */
+  p.hasTouch = Boolean(p.touch);
+  p.isMobile = Boolean(device?.isMobile);
   if (auth) p.httpCredentials = parseAuth(auth);
   /*
    * Одного снятия служебного CSS мало: reducedMotion по умолчанию reduce, а аккуратно
@@ -120,6 +161,16 @@ export function normalizeProfile(input = {}) {
   return p;
 }
 
+/** Условия, которые дескриптор устройства задаёт за агента. */
+function deviceConditions(device) {
+  return {
+    viewport: device.viewport,
+    deviceScaleFactor: device.deviceScaleFactor,
+    userAgent: device.userAgent,
+    touch: Boolean(device.hasTouch),
+  };
+}
+
 /** Короткий стабильный ключ профиля — используется в именах файлов и baseline. */
 export function profileKey(profile) {
   const p = normalizeProfile(profile);
@@ -133,6 +184,10 @@ export function profileKey(profile) {
     p.zoom !== 100 ? `zoom${p.zoom}` : '',
     p.textZoom !== 100 ? `text${p.textZoom}` : '',
     p.pseudoLoc ? 'pseudo' : '',
+    /* Касания меняют раскладку через pointer: coarse и hover: none, isMobile — через
+       meta viewport: эталон, снятый без них, с таким кадром сравнивать нельзя. */
+    p.hasTouch ? 'touch' : '',
+    p.isMobile ? 'mobile' : '',
   ];
   return parts.filter(Boolean).join('_');
 }
@@ -149,6 +204,8 @@ export function contextOptions(profile) {
     locale: p.locale,
     timezoneId: p.timezoneId,
     userAgent: p.userAgent,
+    ...(p.hasTouch ? { hasTouch: true } : {}),
+    ...(p.isMobile ? { isMobile: true } : {}),
     ignoreHTTPSErrors: true,
     ...(p.httpCredentials ? { httpCredentials: p.httpCredentials } : {}),
     ...(p.extraHTTPHeaders ? { extraHTTPHeaders: p.extraHTTPHeaders } : {}),

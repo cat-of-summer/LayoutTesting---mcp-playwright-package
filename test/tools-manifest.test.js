@@ -77,11 +77,18 @@ const options = { skip: enabled ? false : 'нужен LT_FULL_TESTS=1 и пол�
  * type у browser_act, keepAlive у browser_open, parts: tiles и geometry у figma_export. Описания
  * ужаты до строки, подробности — в help.
  *
+ * 72 705 на 2026-10-13: отзыв с проверки браузерных игр, где касания, зажатые клавиши и
+ * перетаскивание агент проверял скриптами Playwright в обход стенда. touch и device у browser_open
+ * (около 200), действия tap, down, up, drag, параметры to, duration и пакет steps у browser_act
+ * (около 570; поля шага в схеме не повторяются — их разбирает обработчик), saveTo у screenshot
+ * (около 120). Рост оплачен тем, что раньше делалось вне стенда или через browser_eval с
+ * dispatchEvent — в журнале таких вызовов 85. perToolSchema поднят вслед за browser_open.
+ *
  * Число здесь — цена полного набора, то есть адреса /mcp. Сколько стоит сокращённая выборка,
  * бюджетом не закреплено намеренно: это производная от состава групп, и её сторожит
  * selection.test.js, который следит за составом, а не за размером.
  */
-const BUDGET = { total: 72000, perToolSchema: 2450, tools: 63 };
+const BUDGET = { total: 73000, perToolSchema: 2700, tools: 63 };
 
 /*
  * Инструменты, где схема кратно тяжелее описания, и это не дефект.

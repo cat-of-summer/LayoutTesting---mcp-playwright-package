@@ -21,6 +21,7 @@ import {
 } from '../browser/pool.js';
 import { captureFrames } from '../browser/frames.js';
 import { ACTIONS, perform } from '../browser/act.js';
+import { MAX_STEPS, runSteps } from '../browser/batch.js';
 import { diffBoxes, settleBoxes } from '../browser/boxes.js';
 import { profileKey } from '../browser/profile.js';
 import { evaluateOnPage } from '../browser/evaluate.js';
@@ -59,6 +60,9 @@ export function register(server) {
         unsupported: session.unsupported,
         ...(session.keepAlive ? { keepAlive: true } : {}),
       };
+      /* Сказать сразу, а не ошибкой посреди работы: сессия, у которой агент ушёл писать код или
+         гонять свой скрипт, закрывалась по простою, а про keepAlive он узнавал уже из ошибки. */
+      if (!session.keepAlive) result.idle = idleNote();
       if (url) result.navigation = await gotoAndSettle(session, url);
       /* Без адреса заморозка всё равно задана сессией — сказать о ней сразу, а не на первом переходе. */
       if (!url && (profile.animations ?? session.profile.animations) !== 'allow') {
@@ -110,23 +114,31 @@ export function register(server) {
     {
       title: t({ ru: 'Действие на странице', en: "Act on the page" }),
       description: t({
-        ru: 'Клик, ввод текста, нажатие клавиши, наведение, прокрутка, выбор в списке, ожидание селектора, выбор файлов и ответ на alert с confirm. Нужен, когда проверяемое состояние возникает только после действия: раскрытое меню, открытая вкладка, заполненная форма, страница после логина. type — ввод по клавише, для масок; anchors — что сдвинулось после действия. Готовые селекторы удобно брать из page_snapshot.',
-        en: "Click, type, press a key, hover, scroll, select an option, wait for a selector, pick files for upload or decide what to do with alert and confirm. Needed when the state you want to check only appears after an action: an expanded menu, an opened tab, a filled form, a page behind a login. type — key-by-key input, for masks; anchors — what shifted after the action. Ready-to-use selectors come from page_snapshot.",
+        ru: 'Клик, ввод, клавиши (в том числе зажатые), касание, перетаскивание, наведение, прокрутка, выбор в списке, ожидание, выбор файлов и ответ на alert с confirm. Нужен, когда проверяемое состояние возникает только после действия: меню, вкладка, форма, логин, ход в игре. steps — пакет шагов одним вызовом, без задержки между ними; anchors — что сдвинулось. Подробности — help с tool: browser_act.',
+        en: "Click, type, keys (held ones too), tap, drag, hover, scroll, select an option, wait, pick files for upload or decide what to do with alert and confirm. Needed when the state you want to check only appears after an action: a menu, a tab, a form, a login, a move in a game. steps — a batch of steps in one call, with no delay between them; anchors — what shifted. Details — help with tool: browser_act.",
       }),
       inputSchema: {
         sessionId: z.string(),
-        action: z.enum(ACTIONS),
-        selector: z.string().optional().describe(d('Не нужен для scroll, для dialog и для press с кликом по координатам')),
+        action: z.enum(ACTIONS).optional().describe(d('Не нужен при steps')),
+        selector: z.string().optional().describe(d('Не нужен для scroll, dialog, клавиш и действий по координатам')),
         value: z
           .string()
           .optional()
-          .describe(d('Текст для fill и type, клавиша для press, значение для select, accept | dismiss | текст ответа для dialog')),
+          .describe(d('Текст для fill и type, клавиша для press, down и up, значение для select, accept | dismiss | текст ответа для dialog')),
         files: z
           .array(z.string())
           .optional()
           .describe(d('Для upload: пути к файлам относительно рабочего каталога стенда')),
-        x: z.number().optional().describe(d('Смещение прокрутки по горизонтали; для click без селектора — координата')),
-        y: z.number().optional().describe(d('Смещение прокрутки по вертикали; для click без селектора — координата')),
+        x: z.number().optional().describe(d('Точка для click, tap, drag: от угла элемента при selector, иначе страницы. Для scroll — смещение')),
+        y: z.number().optional().describe(d('То же по вертикали')),
+        to: z
+          .object({ x: z.number(), y: z.number() })
+          .optional()
+          .describe(d('Для drag: куда отпустить, в той же системе, что x и y')),
+        duration: z
+          .number()
+          .optional()
+          .describe(d('мс: press — держать клавишу, wait без selector — пауза, drag — длительность жеста (300)')),
         timeout: z.number().optional().describe(d('Сколько ждать элемент, мс. По умолчанию 30000')),
         force: z
           .boolean()
@@ -140,16 +152,27 @@ export function register(server) {
           .number()
           .optional()
           .describe(d('Ждать затихания якорей, мс (1500)')),
+        steps: z
+          .array(z.record(z.string(), z.unknown()))
+          .optional()
+          .describe(
+            t({
+              ru: `Пакет до ${MAX_STEPS} шагов подряд; поля шага — как у вызова, плюс action screenshot (name, selector, saveTo) и eval (expression)`,
+              en: `A batch of up to ${MAX_STEPS} steps in a row; step fields are those of the call, plus action screenshot (name, selector, saveTo) and eval (expression)`,
+            }),
+          ),
       },
     },
-    async ({ sessionId, anchors, settle, ...step }) => {
+    async ({ sessionId, anchors, settle, steps, ...step }) => {
       const session = getSession(sessionId);
-      if (!anchors?.length) return done(session, await perform(session, step));
+      if (!steps && !step.action) throw new Error('Нужен action — или steps, пакет шагов.');
+      const act = () => (steps ? runSteps(session, steps) : perform(session, step));
+      if (!anchors?.length) return done(session, await act());
 
       /* Якоря снимаются после того, как страница затихла и до, и после: иначе в «до» попадёт
          хвост прошлого перехода, а в «после» — середина анимации открытия. */
       const { boxes: before } = await settleBoxes(session.page, anchors, { timeout: settle ?? 1500 });
-      const payload = await perform(session, step);
+      const payload = await act();
       const { boxes: after, settled } = await settleBoxes(session.page, anchors, { timeout: settle ?? 1500 });
       const diff = diffBoxes(before, after);
       return done(session, {
@@ -392,11 +415,23 @@ export function register(server) {
  */
 function done(session, payload) {
   const navigated = takeNavigationSince(session);
-  return json({
-    ok: true,
+  /* Пакет, оборванный на шаге, — ошибка вызова, но с выполненными шагами в ответе: иначе
+     агент повторил бы их вслепую по уже изменённой странице. */
+  const failed = Boolean(payload.failed);
+  const result = json({
+    ok: !failed,
     ...payload,
     url: session.page.url(),
     ...(navigated ? { navigatedSince: navigated } : {}),
+  });
+  return failed ? { ...result, isError: true } : result;
+}
+
+function idleNote() {
+  const min = Math.round(CONFIG.sessionIdleMs / 60000);
+  return t({
+    ru: `Закроется после ${min} мин без вызовов; для долгой работы — browser_open с keepAlive: true`,
+    en: `Closes after ${min} min without calls; for long work — browser_open with keepAlive: true`,
   });
 }
 

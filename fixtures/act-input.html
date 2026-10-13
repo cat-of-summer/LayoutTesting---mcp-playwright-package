@@ -1,0 +1,42 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width">
+<title>Ввод: клавиши, указатель, касания</title>
+<!-- Журнал событий для act-input-e2e: зажатые клавиши, перетаскивание по canvas, касания.
+     Время — performance.now(), чтобы тест мерил длительность удержания и шаг между точками. -->
+<style>
+  body { margin: 0; font: 14px sans-serif; }
+  #board { position: absolute; left: 100px; top: 80px; width: 300px; height: 200px; background: #eee; touch-action: none; }
+  #off { position: absolute; left: 100px; top: 320px; }
+  #cover-wrap { position: absolute; left: 100px; top: 380px; }
+  #cover { position: absolute; inset: 0; background: transparent; }
+</style>
+</head>
+<body>
+<canvas id="board" width="300" height="200"></canvas>
+<button id="off" disabled>Неактивна</button>
+<div id="cover-wrap"><button id="under">Под крышкой</button><div id="cover"></div></div>
+<script>
+  window.log = [];
+  const at = () => Math.round(performance.now());
+  const board = document.getElementById('board');
+  const local = (e) => {
+    const r = board.getBoundingClientRect();
+    return { x: Math.round(e.clientX - r.left), y: Math.round(e.clientY - r.top) };
+  };
+  document.addEventListener('keydown', (e) => { if (!e.repeat) log.push({ type: 'keydown', key: e.key, t: at(), trusted: e.isTrusted }); });
+  document.addEventListener('keyup', (e) => log.push({ type: 'keyup', key: e.key, t: at() }));
+  for (const type of ['pointerdown', 'pointermove', 'pointerup']) {
+    board.addEventListener(type, (e) => log.push({ type, pointerType: e.pointerType, ...local(e), t: at() }));
+  }
+  for (const type of ['touchstart', 'touchmove', 'touchend']) {
+    board.addEventListener(type, (e) => {
+      const touch = e.changedTouches[0];
+      log.push({ type, ...(touch ? local(touch) : {}), t: at() });
+    }, { passive: true });
+  }
+</script>
+</body>
+</html>

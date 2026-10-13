@@ -79,9 +79,11 @@ const HINTS = [
   {
     groups: ['visual'],
     ru: `- «покажи, как выглядит», «сделай скриншот», «сравни с макетом» — screenshot, compare_pages
-  (попиксельно), compare_layout (по DOM, когда тексты и картинки различаются);`,
+  (попиксельно), compare_layout (по DOM, когда тексты и картинки различаются); «отдай кадр файлом» —
+  screenshot с saveTo: копия ложится в папку хоста (EXPORTS_DIR), скачивать по url не нужно;`,
     en: `- "show me how it looks", "take a screenshot", "compare against the mockup" — screenshot,
-  compare_pages (pixel diff), compare_layout (DOM diff, when texts and images differ);`,
+  compare_pages (pixel diff), compare_layout (DOM diff, when texts and images differ); "give me the
+  frame as a file" — screenshot with saveTo: the copy lands in the host folder (EXPORTS_DIR), no download;`,
   },
   {
     groups: ['a11y'],
@@ -124,10 +126,18 @@ const HINTS = [
     groups: ['session'],
     ru: `- «заполни форму», «загрузи файл», «страница показала alert», «что именно ушло на сервер» —
   browser_act (click, fill, upload, dialog) и browser_route с record: он записывает состав
-  запроса, а не только факт попадания;`,
+  запроса, а не только факт попадания;
+- «проверь игру», «мобильный оверлей», «свайп», «зажать клавишу», «перетащить» — browser_open с
+  device ("iPhone 13") или touch: true, дальше browser_act: tap, drag (координаты от угла
+  элемента — canvas), press с duration, down/up и steps — пакет шагов с паузами и кадрами одним
+  вызовом, без задержки между вызовами. Скрипты Playwright в обход стенда для этого не нужны;`,
     en: `- "fill the form", "upload a file", "the page shows an alert", "what did the form actually
   send" — browser_act (click, fill, upload, dialog) and browser_route with record, which
-  captures the request body rather than just the fact that a rule matched;`,
+  captures the request body rather than just the fact that a rule matched;
+- "test the game", "mobile overlay", "swipe", "hold a key", "drag" — browser_open with device
+  ("iPhone 13") or touch: true, then browser_act: tap, drag (coordinates from the element corner —
+  a canvas), press with duration, down/up and steps — a batch of steps with pauses and frames in one
+  call, with no delay between calls. No Playwright scripts around the stand are needed for this;`,
   },
   {
     groups: ['figma'],

@@ -9,15 +9,16 @@ import { z } from 'zod';
 import { d } from '../i18n-params.js';
 import { t } from '../i18n.js';
 import { BROWSERS, VIEWPORTS } from '../config.js';
-import { ACTIONS } from '../browser/act.js';
+import { STATE_ACTIONS } from '../browser/act.js';
 
 /**
  * Шаг действия для аудита в состояниях и form_audit: действие, селектор, значение — как у
  * browser_act. Координаты, таймаут и force сюда не вынесены: каждое поле схемы оплачивается в
- * манифесте, а открыть модалку или меню можно и без них.
+ * манифесте, а открыть модалку или меню можно и без них. По той же причине и действия — без
+ * tap, down, up и drag.
  */
 export const stepSchema = z.object({
-  action: z.enum(ACTIONS),
+  action: z.enum(STATE_ACTIONS),
   selector: z.string().optional(),
   value: z.string().optional(),
 });
@@ -177,6 +178,8 @@ export const profileSchema = {
   locale: z.string().optional(),
   timezoneId: z.string().optional(),
   userAgent: z.string().optional().describe(d('Свой User-Agent: часть сайтов отдаёт headless 403')),
+  touch: z.boolean().optional().describe(d('Касания: pointer: coarse, touch-события, tap')),
+  device: z.string().optional().describe(d('Устройство Playwright целиком: "iPhone 13" — размер, DPR, UA, касания')),
   freezeTime: z.boolean().optional().describe(d('Заморозить Date и Math.random')),
   throttle: z
     .object({ network: z.string().optional(), cpu: z.number().optional() })

@@ -24,6 +24,7 @@ import { comparePages } from '../checks/compare.js';
 import { compareLayout } from '../checks/compare-dom.js';
 import { buildVisualGuide } from '../checks/guide.js';
 import { json, linkBlocks, text } from './shared.js';
+import { exportFile } from '../exports.js';
 import { t } from '../i18n.js';
 
 export function register(server) {
@@ -59,6 +60,7 @@ export function register(server) {
         quality: z.number().optional().describe(d('Качество jpeg и webp, 1–100 (по умолчанию 80)')),
         maxWidth: z.number().optional().describe(d('Уменьшить до этой ширины — для вставки в документы')),
         inline: z.boolean().optional().describe(d('Вложить уменьшенную картинку в ответ')),
+        saveTo: z.string().optional().describe(d('Копию — в папку на хосте (EXPORTS_DIR): путь от неё или абсолютный внутри неё')),
         runId: z.string().optional(),
       },
     },
@@ -75,6 +77,7 @@ export function register(server) {
       quality,
       maxWidth,
       inline = false,
+      saveTo,
       runId,
     }) => {
       const session = getSession(sessionId);
@@ -102,6 +105,7 @@ export function register(server) {
        */
       const failures = summarizeFailures(session.logs.network.slice(session.logMarks?.network || 0));
       const payload = failures ? { ...shot, warnings: failures } : shot;
+      if (saveTo) payload.savedTo = await exportFile(shot.path, saveTo, { url: shot.url });
 
       const img = inline ? await inlineImage(shot.path) : null;
       /* Обрезку вложенной картинки объявляем: иначе агент разбирает верхнюю треть страницы,
