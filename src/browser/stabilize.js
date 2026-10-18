@@ -145,7 +145,13 @@ export async function stabilize(
     placeholderSize = 1000,
   } = {},
 ) {
-  if (killMotion) await page.addStyleTag({ content: KILL_MOTION_CSS }).catch(() => {});
+  /* Метка — чтобы проверки CSS страницы (lint_css по сессии) не принимали стили стенда за её собственные. */
+  if (killMotion) {
+    await page
+      .addStyleTag({ content: KILL_MOTION_CSS })
+      .then((handle) => handle.evaluate((el) => el.setAttribute('data-lt-motion', '')))
+      .catch(() => {});
+  }
 
   if (pseudoLoc) {
     await page.evaluate((map) => {

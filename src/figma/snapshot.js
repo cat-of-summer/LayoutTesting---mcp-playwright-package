@@ -296,9 +296,11 @@ function componentOf(raw, context) {
     for (const [name, prop] of Object.entries(raw.componentProperties || {})) {
       props[name.replace(/#[^#]*$/, '')] = prop?.value ?? prop;
     }
-    return strip({ id: raw.componentId, name: meta?.name, set: set?.name, key: meta?.key, props });
+    /* setId — чтобы figma_variants по экземпляру нашёл весь набор вариантов, а не гадал по имени. */
+    return strip({ id: raw.componentId, name: meta?.name, set: set?.name, setId: meta?.componentSetId, key: meta?.key, props });
   }
-  if (raw.type === 'COMPONENT' || raw.type === 'COMPONENT_SET') return { definition: true };
+  if (raw.type === 'COMPONENT') return strip({ definition: true, setId: context.components?.[raw.id]?.componentSetId });
+  if (raw.type === 'COMPONENT_SET') return { definition: true };
   return undefined;
 }
 
@@ -821,4 +823,99 @@ export async function ensureNode(input, options = {}) {
   if (!nodeId) throw new Error('Нужен узел, а не файл целиком: ссылка с node-id или запись ключ:id.');
   const { found, requests } = await ensureNodes(fileKey, [nodeId], options);
   return { ...found.get(nodeId), fileKey, nodeId, requests };
+}
+
+/**
+ * Поиск по снятому: имя слоя или текст во всех снимках файла текущей версии. Без редактора и без
+ * запросов — но только по тому, что уже снималось.
+ */
+export async function searchCached(fileKey, query, { limit = 30, cacheDir = DIRS.figma } = {}) {
+  const meta = await readMeta(fileKey, { cacheDir });
+  if (!meta?.roots || !meta.version) return { results: [], roots: 0 };
+  const q = String(query).toLowerCase();
+  const results = [];
+  const seen = new Set();
+  let roots = 0;
+  for (const entry of Object.values(meta.roots)) {
+    if (entry.version !== meta.version || entry.model !== MODEL) continue;
+    const snapshot = await readJson(path.join(cacheDir, fileKey, entry.file));
+    if (!snapshot?.nodes) continue;
+    roots += 1;
+    const page = snapshot.ancestors?.find((item) => item.type === 'PAGE')?.name;
+    for (const node of Object.values(snapshot.nodes)) {
+      if (results.length >= limit) break;
+      if (seen.has(node.id)) continue;
+      const hit = String(node.name || '').toLowerCase().includes(q) || String(node.text?.chars || '').toLowerCase().includes(q);
+      if (!hit) continue;
+      seen.add(node.id);
+      let variant = null;
+      let set = null;
+      for (let up = node; up; up = snapshot.nodes[up.parent]) {
+        const parent = snapshot.nodes[up.parent];
+        if (up.type === 'COMPONENT' && parent?.type === 'COMPONENT_SET') {
+          variant = up;
+          set = parent;
+          break;
+        }
+        if (up.type === 'COMPONENT_SET') {
+          set = up;
+          break;
+        }
+      }
+      const root = snapshot.nodes[snapshot.root];
+      results.push(
+        strip({
+          id: node.id,
+          name: node.name,
+          type: node.type,
+          page,
+          frame: root && root.id !== node.id ? { id: root.id, name: root.name } : undefined,
+          text: node.text?.chars ? node.text.chars.slice(0, 80) : undefined,
+          set: set
+            ? strip({
+                id: set.id,
+                name: set.name,
+                variant: variant?.name,
+                variantId: variant?.id,
+                variants: (set.children || []).map((id) => snapshot.nodes[id]?.name).filter(Boolean).slice(0, 12),
+              })
+            : undefined,
+        }),
+      );
+    }
+  }
+  return { results, roots };
+}
+
+/** Тот же поиск по сырому документу REST (file целиком). */
+export function searchRestDocument(document, query, { limit = 30 } = {}) {
+  const q = String(query).toLowerCase();
+  const results = [];
+  const visit = (node, trail) => {
+    if (results.length >= limit || !node) return;
+    const hit = String(node.name || '').toLowerCase().includes(q) || (node.type === 'TEXT' && String(node.characters || '').toLowerCase().includes(q));
+    if (hit && node.type !== 'DOCUMENT' && node.type !== 'CANVAS') {
+      const page = trail.find((item) => item.type === 'CANVAS');
+      const frame = trail[trail.indexOf(page) + 1];
+      const variantIndex = trail.findLastIndex((item, i) => item.type === 'COMPONENT' && trail[i - 1]?.type === 'COMPONENT_SET');
+      const set = variantIndex > 0 ? trail[variantIndex - 1] : trail.findLast((item) => item.type === 'COMPONENT_SET');
+      const variant = variantIndex > 0 ? trail[variantIndex] : node.type === 'COMPONENT' && trail.at(-1)?.type === 'COMPONENT_SET' ? node : null;
+      results.push(
+        strip({
+          id: node.id,
+          name: node.name,
+          type: node.type,
+          page: page?.name,
+          frame: frame && frame !== node ? { id: frame.id, name: frame.name } : undefined,
+          text: node.type === 'TEXT' ? String(node.characters).slice(0, 80) : undefined,
+          set: set
+            ? strip({ id: set.id, name: set.name, variant: variant?.name, variantId: variant?.id, variants: (set.children || []).map((c) => c.name).slice(0, 12) })
+            : undefined,
+        }),
+      );
+    }
+    for (const child of node.children || []) visit(child, [...trail, node]);
+  };
+  visit(document, []);
+  return results;
 }

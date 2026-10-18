@@ -1,0 +1,35 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<title>Подписи под соседней строкой</title>
+<style>
+  body { margin: 0; font: 16px/1.4 sans-serif; background: #fff; }
+  /* Высота строки сетки задана по картинке: подпись вылезает из figure вниз, под следующую строку. */
+  .gallery { display: grid; grid-template-columns: repeat(2, 160px); grid-auto-rows: 120px; gap: 0; padding: 20px; }
+  .gallery figure { margin: 0; height: 120px; }
+  .gallery img { display: block; width: 160px; height: 120px; background: #345; }
+  .gallery figcaption { position: relative; }
+  /* Картинки второй строки лежат выше подписей первой. */
+  .gallery figure:nth-child(n+3) img { position: relative; z-index: 1; }
+  .scheme { position: relative; width: 400px; height: 200px; margin: 40px 20px; }
+  .scheme img { position: absolute; inset: 0; width: 400px; height: 200px; }
+  .scheme p { position: relative; margin: 0; width: 180px; font-size: 14px; }
+  .scheme .on-clear { top: 20px; left: 10px; }
+  .scheme .on-ink { top: 60px; left: 210px; }
+</style>
+</head>
+<body>
+<div class="gallery">
+  <figure><img src="half-transparent.png" alt=""><figcaption><span>[1] Подпись первого фото</span></figcaption></figure>
+  <figure><img src="half-transparent.png" alt=""><figcaption><span>[2] Подпись второго фото</span></figcaption></figure>
+  <figure><img src="half-transparent.png" alt=""><figcaption>[3]</figcaption></figure>
+  <figure><img src="half-transparent.png" alt=""><figcaption>[4]</figcaption></figure>
+</div>
+<div class="scheme">
+  <img src="half-transparent.png" alt="">
+  <p class="on-clear">Подпись над прозрачной частью схемы</p>
+  <p class="on-ink">Подпись поверх нарисованной части</p>
+</div>
+</body>
+</html>

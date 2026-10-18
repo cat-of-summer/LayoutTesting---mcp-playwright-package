@@ -1,0 +1,38 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<title>Ховер краской</title>
+<style>
+  body { margin: 0; font: 16px/1.4 sans-serif; background: #0a0b10; color: #fff; }
+  /* Шапка прячется при прокрутке вниз: класс меняется на каждом шаге обхода. */
+  .hdr { position: fixed; top: 0; left: 0; right: 0; height: 60px; background: #222; transition: transform .2s; }
+  .hdr.is-hidden { transform: translateY(-100%); }
+  .spacer { height: 1400px; }
+  .card { display: inline-block; width: 220px; height: 140px; margin: 20px; padding: 16px; background: #1b1d26; }
+  .notch path { fill: #333; transition: fill .2s; }
+  /* Рабочий ховер: меняется только заливка выреза у SVG-потомка. */
+  .svc:hover .notch path { fill: #e7eb70; }
+  /* Мёртвый ховер: правило есть, но ставит тот же цвет — на глаз ничего не меняется. */
+  .tech:hover .notch path { fill: #333; }
+</style>
+</head>
+<body>
+<header class="hdr">Шапка</header>
+<div class="spacer"></div>
+<div class="card svc">Услуга
+  <svg class="notch" width="40" height="40" viewBox="0 0 40 40"><path d="M0 0h40v40H0z"/></svg>
+</div>
+<div class="card tech">Технология
+  <svg class="notch" width="40" height="40" viewBox="0 0 40 40"><path d="M0 0h40v40H0z"/></svg>
+</div>
+<div class="card plain">Без ховера</div>
+<script>
+  let lastY = 0;
+  addEventListener('scroll', () => {
+    document.querySelector('.hdr').classList.toggle('is-hidden', scrollY > lastY);
+    lastY = scrollY;
+  });
+</script>
+</body>
+</html>

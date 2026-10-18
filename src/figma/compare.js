@@ -1114,6 +1114,142 @@ export function pageSectionHeights({ root, groups }) {
   });
 }
 
+/*
+ * Посадка текста в маленьких плашках — по чернилам глифов, а не по текстовому боксу.
+ *
+ * Тег события: поля 3/10 одинаковые, но капс Inter 10/16 в браузере сидит выше, чем в Figma, и
+ * снизу визуально больше. Текстовые боксы при этом совпадают до пикселя — разницу даёт метрика
+ * шрифта, видимая только на картинке. Здесь в кропе плашки макета и страницы ищется рамка
+ * чернил, и сравниваются зазоры сверху и снизу.
+ */
+const PILL_MAX_H = 32;
+
+async function inkGaps(file, rect) {
+  const width = Math.max(1, Math.round(rect.w));
+  const height = Math.max(1, Math.round(rect.h));
+  const { data, info } = await sharp(file)
+    .extract({ left: Math.max(0, Math.round(rect.x)), top: Math.max(0, Math.round(rect.y)), width, height })
+    .ensureAlpha()
+    .raw()
+    .toBuffer({ resolveWithObject: true });
+  /* Фон плашки — пиксель у левого края посередине: внутри поля, но мимо скругления. */
+  const at = (x, y) => (y * info.width + x) * 4;
+  const bgIndex = at(Math.min(2, info.width - 1), Math.floor(info.height / 2));
+  const bg = [data[bgIndex], data[bgIndex + 1], data[bgIndex + 2]];
+  let top = null;
+  let bottom = null;
+  for (let y = 0; y < info.height; y += 1) {
+    let ink = false;
+    for (let x = Math.floor(info.width * 0.15); x < Math.ceil(info.width * 0.85) && !ink; x += 1) {
+      const i = at(x, y);
+      ink = Math.abs(data[i] - bg[0]) + Math.abs(data[i + 1] - bg[1]) + Math.abs(data[i + 2] - bg[2]) > 90;
+    }
+    if (ink) {
+      if (top === null) top = y;
+      bottom = y;
+    }
+  }
+  return top === null ? null : { top, bottom: info.height - 1 - bottom };
+}
+
+/**
+ * Плашки с одним текстом высотой до 32px: зазоры чернил в макете и на странице. image — рендер
+ * кадра в масштабе 1, pageFile — снимок страницы целиком.
+ */
+export async function inkOffsets({ pairs, image, imageMeta, pageFile, pageMeta, pageOrigin, lift, limit = 12 }) {
+  const out = [];
+  for (const pair of pairs) {
+    if (out.length >= limit) break;
+    const frame = pair.design.frame;
+    if (!frame?.box || frame.box.h > PILL_MAX_H || frame.box.h < 10) continue;
+    const design = { x: frame.box.x, y: frame.box.y + lift, w: frame.box.w, h: frame.box.h };
+    /* На странице — та же рамка вокруг текста, с теми же отступами, что в макете. */
+    const page = {
+      x: pageOrigin.x + pair.page.box.x - (pair.design.box.x - frame.box.x),
+      y: pageOrigin.y + pair.page.box.y - (pair.design.box.y - frame.box.y),
+      w: frame.box.w,
+      h: frame.box.h,
+    };
+    const fits = (r, meta) => r.x >= 0 && r.y >= 0 && r.x + r.w <= meta.width && r.y + r.h <= meta.height;
+    if (!fits(design, imageMeta) || !fits(page, pageMeta)) continue;
+    const [d, p] = await Promise.all([inkGaps(image, design).catch(() => null), inkGaps(pageFile, page).catch(() => null)]);
+    if (!d || !p) continue;
+    /* Сдвиг посадки: насколько чернила на странице выше, чем в макете, при той же высоте плашки. */
+    const shift = round((p.top - p.bottom - (d.top - d.bottom)) / 2, 1);
+    if (Math.abs(shift) < 1) continue;
+    out.push({
+      text: clip(pair.design.text, 30),
+      frame: frame.name,
+      selector: pair.page.selector,
+      design: d,
+      page: p,
+      shift,
+      why: shift < 0
+        ? `глифы на странице сидят выше на ${Math.abs(shift)}px, чем в макете: метрика шрифта в браузере другая — выровняйте padding (сверху меньше на ${Math.abs(shift)}px, снизу больше) или line-height`
+        : `глифы на странице сидят ниже на ${shift}px, чем в макете — выровняйте padding или line-height`,
+    });
+  }
+  return out;
+}
+
+/* Полоса стыка: столько пикселей выше и ниже границы секций. */
+const SEAM = 40;
+
+/**
+ * Стыки соседних секций — полоса на границе в макете и на странице.
+ *
+ * Фон секций в макете — картинка с прозрачностью поверх общего тёмного фона, и она тянется на
+ * всю высоту секции. Вёрстка заменила её своим canvas на секцию, и на границах фон обрывался,
+ * а затемнение героя кончалось за карточкой. Внутри секций разница была небольшой, на стыках —
+ * видна сразу; сравнение по секциям стыков не смотрело вовсе.
+ */
+async function compareSeams({ frame, shifts, lift, meta, image, page, pageOrigin, dir, name }) {
+  const out = [];
+  for (let i = 0; i + 1 < frame.length; i += 1) {
+    const upper = frame[i];
+    const lower = frame[i + 1];
+    const border = lower.box.y;
+    const top = Math.max(0, Math.round(border - SEAM));
+    const height = Math.min(Math.round(border + SEAM), meta.height) - top;
+    if (height < 10) continue;
+    const width = meta.width;
+    const stem = `${name}-seam-${String(i + 1).padStart(2, '0')}`;
+    const designBand = path.join(dir, `${stem}-design.png`);
+    await sharp(image.image.path).extract({ left: 0, top, width, height }).png().toFile(designBand);
+    const shiftY = shifts[i + 1]?.y ?? shifts[i]?.y ?? 0;
+    const clip = {
+      x: Math.max(0, Math.round(pageOrigin.x)),
+      y: Math.max(0, Math.round(pageOrigin.y + top - lift + shiftY)),
+    };
+    clip.width = Math.max(1, Math.min(width, pageOrigin.docW - clip.x));
+    clip.height = Math.max(1, Math.min(height, pageOrigin.docH - clip.y));
+    const pageBand = path.join(dir, `${stem}-page.png`);
+    await fs.writeFile(pageBand, await page.screenshot({ fullPage: true, clip, type: 'png' }));
+    const pageMeta = await sharp(pageBand).metadata();
+    const cw = Math.min(width, pageMeta.width);
+    const ch = Math.min(height, pageMeta.height);
+    for (const [file, w, h] of [[designBand, width, height], [pageBand, pageMeta.width, pageMeta.height]]) {
+      if (cw !== w || ch !== h) {
+        await sharp(file).extract({ left: 0, top: 0, width: cw, height: ch }).png().toFile(`${file}.tmp`);
+        await fs.rename(`${file}.tmp`, file);
+      }
+    }
+    const diffFile = path.join(dir, `${stem}.diff.png`);
+    const result = await odiffCompare(designBand, pageBand, diffFile, { threshold: 0.1, antialiasing: true, outputDiffMask: false });
+    const diffPercentage = result.match ? 0 : Number(result.diffPercentage || 0);
+    if (result.match) await fs.rm(diffFile, { force: true });
+    out.push({
+      between: [upper.name, lower.name],
+      y: round(border),
+      diffPercentage: round(diffPercentage, 3),
+      design: artifactRef(designBand),
+      page: artifactRef(pageBand),
+      ...(result.match ? {} : { diff: artifactRef(diffFile) }),
+    });
+  }
+  return out.sort((a, b) => b.diffPercentage - a.diffPercentage).slice(0, 5);
+}
+
 /**
  * Попиксельно по секциям, а не по кадру целиком.
  *
@@ -1140,12 +1276,21 @@ async function compareSections({ figmaRef, snapshot, rootId, page, selector, dir
     };
   }, selector);
   const { pairs } = pairTexts(design.items, probed.items);
-  const frame = frameSections(snapshot, rootId);
-  const heights = await page.evaluate(pageSectionHeights, { root: selector, groups: sectionGroups(frame, pairs) }).catch(() => []);
+  /*
+   * Рамки секций — в координатах рендера кадра, а тексты design.items — от низа нарисованной
+   * строки браузера. Без поправки секции сравнивались с текстами, сдвинутыми на её высоту, и
+   * сдвиг секции считался по чужим текстам.
+   */
+  const lift = design.chrome?.height ?? 0;
+  const frame = frameSections(snapshot, rootId).filter((section) => section.node !== design.chrome?.node);
+  const flow = frame.map((section) => ({ ...section, box: { ...section.box, y: section.box.y - lift } }));
+  const heights = await page.evaluate(pageSectionHeights, { root: selector, groups: sectionGroups(flow, pairs) }).catch(() => []);
 
   const sections = [];
+  const shifts = [];
   for (const [index, section] of frame.entries()) {
-    const { texts, shift } = sectionShift(section, pairs);
+    const { texts, shift } = sectionShift(flow[index], pairs);
+    shifts[index] = shift;
     const pageH = heights[index];
     const heightOf = pageH == null ? { design: section.box.h, page: null } : { design: section.box.h, page: round(pageH), delta: round(pageH - section.box.h) };
     const left = Math.min(Math.max(0, section.box.x), meta.width - 1);
@@ -1161,7 +1306,7 @@ async function compareSections({ figmaRef, snapshot, rootId, page, selector, dir
     /* Снимок страницы — в координатах документа: fullPage делает clip абсолютным. */
     const clipBox = {
       x: Math.max(0, Math.round(pageOrigin.x + section.box.x + shift.x)),
-      y: Math.max(0, Math.round(pageOrigin.y + section.box.y + shift.y)),
+      y: Math.max(0, Math.round(pageOrigin.y + section.box.y - lift + shift.y)),
     };
     clipBox.width = Math.max(1, Math.min(width, pageOrigin.docW - clipBox.x));
     clipBox.height = Math.max(1, Math.min(height, pageOrigin.docH - clipBox.y));
@@ -1202,6 +1347,20 @@ async function compareSections({ figmaRef, snapshot, rootId, page, selector, dir
     });
   }
 
+  const seams = await compareSeams({ frame, shifts, lift, meta, image, page, pageOrigin, dir, name });
+  const pageFull = path.join(dir, `${name}-page-full.png`);
+  await fs.writeFile(pageFull, await page.screenshot({ fullPage: true, type: 'png' }));
+  const pills = await inkOffsets({
+    pairs,
+    image: image.image.path,
+    imageMeta: meta,
+    pageFile: pageFull,
+    pageMeta: await sharp(pageFull).metadata(),
+    pageOrigin,
+    lift,
+  }).catch(() => []);
+  await fs.rm(pageFull, { force: true });
+
   /* Высоты — в порядке секций сверху вниз: так видно, с какой секции начинается разница. */
   const sectionHeights = sections.map((section) => ({ name: section.name, node: section.node, ...section.height }));
   sections.sort((a, b) => b.diffPercentage - a.diffPercentage);
@@ -1209,6 +1368,16 @@ async function compareSections({ figmaRef, snapshot, rootId, page, selector, dir
     count: sections.length,
     matched: sections.filter((section) => section.match).length,
     sectionHeights,
+    ...(pills.length ? { inkOffsets: pills } : {}),
+    ...(seams.length
+      ? {
+          seams,
+          seamsNote: t({
+            ru: 'Стыки соседних секций: полоса ±40px на границе в макете и на странице. Большой процент на стыке при малом внутри секций — фон секции оборван или затемнение кончается не там: у макета заливка тянется на всю высоту.',
+            en: 'Seams between neighbouring sections: a ±40px band at the border in the design and on the page. A large percentage at a seam with small ones inside the sections means a broken section background or a gradient ending in the wrong place: in the design the fill spans the full height.',
+          }),
+        }
+      : {}),
     sectionHeightsNote: t({
       ru: 'Высота секции на странице — у общего предка её текстов, в который не попадают тексты соседних секций; page: null — такого предка нет (секция не обёрнута своим элементом или в ней нет совпавших текстов).',
       en: 'A section height on the page is taken from the common ancestor of its texts that holds no texts of neighbouring sections; page: null — there is no such ancestor (the section has no wrapper of its own or no matched texts).',

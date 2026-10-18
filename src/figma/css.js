@@ -323,6 +323,11 @@ export function paintNotes(node) {
     }
   }
   if (node.isMask) notes.push('узел — маска: обрезает слои выше себя в том же родителе; в CSS это clip-path или mask-image');
+  /* В Figma размытие подложки прозрачностью слоя не ослабляется, в браузере opacity гасит и
+     подложку: иконки кольца с op 0.4 и blur(6px) в вёрстке почти без блюра. */
+  if (node.opacity != null && node.opacity < 1 && (node.effects || []).some((effect) => effect.type === 'backdrop')) {
+    notes.push(`прозрачность слоя ${round(node.opacity)} вместе с размытием подложки: в браузере opacity гасит и backdrop-filter — прозрачность переносите на содержимое (заливку, иконку), а не на элемент`);
+  }
   return notes.length ? notes : undefined;
 }
 

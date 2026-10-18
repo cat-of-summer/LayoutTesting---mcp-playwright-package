@@ -18,7 +18,7 @@ A quick-choice table: what you came with and what to look at it with.
 | I do not know a node's color, stroke, radius, opacity | `figma_inspect` with `mode: "outline"` — paint sits in the curly braces |
 | The text is cut with an ellipsis | `figma_inspect` with `mode: "text"`, or the `text` section of `figma_spec` |
 | I do not know what an element does | `figma_behavior`, `figma_comments` |
-| I do not know what a variant switches into | `figma_sync` on the link from `notSynced` |
+| I do not know what a variant switches into | `figma_sync` from `next` of `blocking` in `figma_behavior` |
 | I do not know what to export from here | the `assets` section of `figma_spec`: `plan` holds ready export lists |
 | I need an icon | `figma_export` with `kind: "svg"` on the node id |
 | The icons on the page are black | `monochrome: true` in the export answer — set the wrapper `color` from the `color` field |

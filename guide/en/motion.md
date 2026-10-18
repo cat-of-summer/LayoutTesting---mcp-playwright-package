@@ -6,7 +6,7 @@ The direction of a transition, its parameters, the initial states, and the full 
 
 ENTRY: the human's answers are in, including how much animation.
 STEPS:
-  1. figma_behavior(frames) — trigger, duration, easing; every notSynced → figma_sync.
+  1. figma_behavior(frames) — trigger, duration, easing; blocking → figma_sync from its next.
   2. figma_spec(both endpoints of a transition) — the paint "from" and "to", the direction from both.
   3. Initial states of the intro — in CSS under the .js class, not only in JS.
   4. Hover of overlapping elements — without changing z-index; a hover that is not in the design — said in the report.
@@ -17,7 +17,7 @@ STEPS:
 
 ```
 figma_behavior                            → trigger, duration, easing, grouping
-figma_sync(link targets from notSynced)   → what a variant switches into
+figma_sync(next from blocking)            → what a variant switches into
 figma_spec(target)                        → the paint of the target state
 ```
 
@@ -28,7 +28,7 @@ A link gives you "from → to". To understand the direction, capture **both** st
 > `{op0.2}` over `rgba(0,0,0,0.1)` — an almost transparent film — so the veil actually **arrives**.
 > The direction was only recovered once both states were captured.
 
-`notSynced` is never left as is: the hover variant of a link component stayed unpulled, and the
+`blocking` is never left as is: the hover variant of a link component stayed unpulled, and the
 hover was invented (shadow plus offset) instead of the one that was drawn.
 
 ## 8.2 The initial state lives in CSS, not only in JS
@@ -75,4 +75,4 @@ Every animation respects `prefers-reduced-motion`.
 ## Gate
 
 For every animation the trigger, both endpoints, the duration and the curve are known; the
-initial states are set in CSS; for every element there is a list of states; `notSynced` is empty.
+initial states are set in CSS; for every element there is a list of states; there is no `blocking`.

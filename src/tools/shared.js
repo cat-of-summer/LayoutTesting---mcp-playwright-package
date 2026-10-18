@@ -23,12 +23,23 @@ export const stepSchema = z.object({
   value: z.string().optional(),
 });
 
-/** Состояние страницы: имя и шаги, которые его создают. */
+/**
+ * Состояние страницы: имя и шаги, которые его создают. each — группа однотипных элементов (пины
+ * карты, табы, точки слайдера): каждый кликается по очереди и даёт своё состояние.
+ */
 export const statesSchema = z
-  .array(z.object({ name: z.string().optional(), steps: z.array(stepSchema) }))
+  .array(
+    z.object({
+      name: z.string().optional(),
+      steps: z.array(stepSchema).optional(),
+      each: z.string().optional(),
+      action: z.enum(['click', 'hover']).optional(),
+      max: z.number().optional(),
+    }),
+  )
   .optional()
   .describe(
-    d('Шаги browser_act, открывающие модалку или меню: проверить и там'),
+    d('Шаги browser_act, открывающие модалку или меню: проверить и там. each: селектор группы (пины, табы) — каждый элемент кликается (action) по очереди, до max (12). Пауза — wait с числом мс в value'),
   );
 
 /** Расширения, которые нет смысла отдавать как utf8. */

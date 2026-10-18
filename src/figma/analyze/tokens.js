@@ -18,6 +18,7 @@ import { bemName, deltaE, SAME_COLOR, SIMILAR_COLOR, textStyleKey, visibleNodes 
 import { matchColor, matchLength } from '../project.js';
 import { findComponents } from './components.js';
 import { compareBreakpoints, sameScreen } from './breakpoints.js';
+import { isStateVariant } from '../variants.js';
 
 const WEIGHTS = { 300: 'light', 400: 'regular', 500: 'medium', 600: 'semibold', 700: 'bold', 800: 'extrabold', 900: 'black' };
 
@@ -29,10 +30,11 @@ function bump(map, key, ref, extra = {}) {
   return entry;
 }
 
-function addColor(map, color, kind, ref, figmaName) {
+function addColor(map, color, kind, ref, figmaName, role = null) {
   if (!color) return;
-  const entry = bump(map, colorCss(color), ref, { color, kinds: {}, figma: new Set(), unbound: 0 });
+  const entry = bump(map, colorCss(color), ref, { color, kinds: {}, figma: new Set(), unbound: 0, roles: {} });
   entry.kinds[kind] = (entry.kinds[kind] || 0) + 1;
+  if (role) entry.roles[role] = (entry.roles[role] || 0) + 1;
   if (figmaName) entry.figma.add(figmaName);
   else entry.unbound += 1;
 }
@@ -62,6 +64,7 @@ function mergeColors(map) {
       near.unbound += entry.unbound;
       near.merged = [...(near.merged || []), entry.key];
       for (const [kind, count] of Object.entries(entry.kinds)) near.kinds[kind] = (near.kinds[kind] || 0) + count;
+      for (const [role, count] of Object.entries(entry.roles || {})) near.roles[role] = (near.roles[role] || 0) + count;
       for (const name of entry.figma) near.figma.add(name);
       continue;
     }
@@ -73,6 +76,49 @@ function mergeColors(map) {
       .map((other) => other.key);
   }
   return kept;
+}
+
+/*
+ * Роль цвета: где он стоит. Дизайнер пишет «загорается зелёным, как активные элементы UI-кита», а
+ * токен green #81F989 в макете стоит только у тега «Успешно»; фирменный цвет активных состояний —
+ * Dark Yell #E7EB70. По имени токена этого не понять, по месту — сразу. state — внутри варианта
+ * компонента со значением-состоянием (Hover, Active, Selected) или экземпляра в таком варианте;
+ * tag — внутри тега, бейджа, статуса.
+ */
+const TAG_NAME = /\b(tag|badge|status|chip|pill)\b|тег|бейдж|статус|плашк/i;
+const STATE_PROP = /hover|active|pressed|selected|current|checked|focus|наведен|актив|выбран/i;
+
+function roleOf(snapshot, node, rootId, cache) {
+  if (cache.has(node.id)) return cache.get(node.id);
+  let role = null;
+  if (node.type === 'COMPONENT' && isStateVariant(node.name)) role = 'state';
+  else if (node.type === 'INSTANCE' && Object.values(node.component?.props || {}).some((value) => typeof value === 'string' && STATE_PROP.test(value))) role = 'state';
+  else if (TAG_NAME.test(node.name || '') || TAG_NAME.test(node.component?.name || '') || TAG_NAME.test(node.component?.set || '')) role = 'tag';
+  if (!role && node.id !== rootId && node.parent && snapshot.nodes[node.parent]) role = roleOf(snapshot, snapshot.nodes[node.parent], rootId, cache);
+  cache.set(node.id, role);
+  return role;
+}
+
+/**
+ * Палитра состояний: цвета вариантов-состояний с долей среди всех их употреблений. Её же берут
+ * подсказки figma_comments и проверка цветов :hover в lint_css.
+ */
+export function statePalette(colorTokens) {
+  const total = colorTokens.reduce((sum, entry) => sum + (entry.roles?.state || 0), 0);
+  if (!total) return [];
+  return colorTokens
+    .filter((entry) => entry.roles?.state)
+    .map((entry) => ({ name: entry.name, value: entry.value, share: round(entry.roles.state / total, 2), uses: entry.roles.state }))
+    .sort((a, b) => b.share - a.share);
+}
+
+/** «Dark Yell: 87% активных состояний; green: только тег статуса». */
+function roleSummary(colorTokens, palette) {
+  const parts = palette.slice(0, 3).map((entry) => `${entry.name.replace(/^--/, '')} ${entry.value}: ${Math.round(entry.share * 100)}% цветов в состояниях`);
+  for (const entry of colorTokens) {
+    if (entry.roles?.tag && entry.roles.tag === entry.uses) parts.push(`${entry.name.replace(/^--/, '')} ${entry.value}: только теги и статусы`);
+  }
+  return parts.length ? parts.slice(0, 6).join('; ') : null;
 }
 
 function colorName(entry, counters) {
@@ -137,25 +183,27 @@ export function collectTokens(frames, { project = null, minUses = 2 } = {}) {
   for (const frame of frames) {
     const variables = frame.snapshot.variables || {};
     const named = (id) => (id ? variables[id]?.name : null);
+    const roles = new Map();
 
     for (const { node } of visibleNodes(frame.snapshot, frame.rootId)) {
       const ref = `${frame.ref}:${node.id}`;
       const kind = node.type === 'TEXT' ? 'text' : 'bg';
+      const role = roleOf(frame.snapshot, node, frame.rootId, roles);
 
       (node.fills || []).forEach((paint, index) => {
         const figma = named(paint.vars?.color) || named(node.vars?.fills?.[index]) || node.styles?.fill;
-        if (paint.kind === 'solid') addColor(colors, paint.color, kind, ref, figma);
+        if (paint.kind === 'solid') addColor(colors, paint.color, kind, ref, figma, role);
         else if (paint.kind !== 'image' && node.box) bump(gradients, paintCss(paint, node.box), ref, { figma });
       });
       (node.strokes || []).forEach((paint, index) => {
         if (paint.kind === 'solid') {
-          addColor(colors, paint.color, 'border', ref, named(paint.vars?.color) || named(node.vars?.strokes?.[index]) || node.styles?.stroke);
+          addColor(colors, paint.color, 'border', ref, named(paint.vars?.color) || named(node.vars?.strokes?.[index]) || node.styles?.stroke, role);
         }
       });
       if (node.stroke?.weight) bump(borders, `${round(node.stroke.weight)}px`, ref);
 
       for (const effect of node.effects || []) {
-        if (effect.color) addColor(colors, effect.color, 'shadow', ref, node.styles?.effect);
+        if (effect.color) addColor(colors, effect.color, 'shadow', ref, node.styles?.effect, role);
         if (effect.type === 'drop' || effect.type === 'inner') bump(shadows, shadowCss(effect), ref, { figma: node.styles?.effect });
         /* Радиус размытия Figma вдвое больше того, что понимает blur(). */
         if (effect.type === 'blur') bump(effects, `filter: blur(${round(effect.blur / 2)}px)`, ref);
@@ -202,6 +250,7 @@ export function collectTokens(frames, { project = null, minUses = 2 } = {}) {
         ...(entry.figma.size && entry.unbound ? { unbound: entry.unbound } : {}),
         ...(entry.merged.length ? { merged: entry.merged } : {}),
         ...(entry.similar.length ? { similar: entry.similar } : {}),
+        ...(Object.keys(entry.roles || {}).length ? { roles: entry.roles } : {}),
         refs: entry.refs,
         color: entry.color,
       };
@@ -291,8 +340,12 @@ export function collectTokens(frames, { project = null, minUses = 2 } = {}) {
     responsive = responsive.slice(0, 30);
   }
 
+  const palette = statePalette(colorTokens);
+  const roles = roleSummary(colorTokens, palette);
   return {
     colors: colorTokens,
+    ...(palette.length ? { stateColors: palette.slice(0, 8) } : {}),
+    ...(roles ? { roles } : {}),
     gradients: [...gradients.values()].filter((entry) => entry.uses >= minUses).map((entry) => ({ name: `--gradient-${bemName(entry.figma || '') || entry.uses}`, value: entry.key, uses: entry.uses, refs: entry.refs })),
     typography: typographyTokens,
     spacing: { step: gridStep(spacingValues), values: scale(spacing, 'space') },

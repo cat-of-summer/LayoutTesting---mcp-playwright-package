@@ -86,6 +86,17 @@ figma_export(figma: [nodes], kind: "image", scale: 2)
   nodes with the same name and a different `scaleMode` are two different files: one such file
   overwrote the other.
 
+**A section background is a full-height picture.** `backgrounds` in `figma_spec` lists the
+containers with an image fill: its opacity, the color under it and the frame. Such a background
+spans the full height of the block and is carried over with its opacity rather than replaced by
+a canvas of your own per section: at the seams it broke off, and the hero gradient ended past the
+card. `figma_compare` with `sections: true` checks the seams — the `seams` field.
+
+**A traced raster goes out as a raster.** A "Traced Image" node or a frame with a white fill under a
+vector arrives in svg as a white rectangle under the path: on a dark background there is a white
+edge. `figma_spec` marks such a node `kind: render` with the reason, `figma_export kind: svg` —
+with a `warning`; when svg is needed, `dropBackground: true` removes the backdrop.
+
 ## 4.4 Processing
 
 - **A render arrives as PNG** — 3 MB for one shape. `image_convert` to WebP brought it to 232 KB

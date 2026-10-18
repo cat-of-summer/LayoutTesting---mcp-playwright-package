@@ -412,3 +412,73 @@ export function collectAnnotations(frames) {
   }
   return out;
 }
+
+/*
+ * Слово дизайнера — не имя токена.
+ *
+ * «Загорается зелёным», «цвет зелёный фирменный», «подсвечивается зелёным, как активные элементы
+ * в UI-ките» — и агент взял токен green #81F989. А зелёным дизайнер называл фирменный #E7EB70
+ * (Dark Yell), которым горят все активные состояния кита; #81F989 в макете стоит только у тега
+ * «Успешно». Подсказка ставит рядом со словом то, что в макете на деле горит в состояниях.
+ */
+const COLOR_WORDS = [
+  { re: /зел[её]н|green/i, word: 'зелёный', hue: [70, 170] },
+  { re: /ж[её]лт|yellow/i, word: 'жёлтый', hue: [40, 75] },
+  { re: /красн|red\b/i, word: 'красный', hue: [340, 20] },
+  { re: /оранж|orange/i, word: 'оранжевый', hue: [15, 45] },
+  { re: /син(ий|им|его|ей|ем)|blue/i, word: 'синий', hue: [200, 255] },
+  { re: /голуб|cyan/i, word: 'голубой', hue: [170, 205] },
+  { re: /фиолет|purple|violet/i, word: 'фиолетовый', hue: [255, 300] },
+  { re: /фирменн|брендов|акцент|brand|accent/i, word: 'фирменный', hue: null },
+];
+
+function hueOf(hex) {
+  const m = /^#([0-9a-f]{2})([0-9a-f]{2})([0-9a-f]{2})/i.exec(hex || '');
+  if (!m) return null;
+  const [r, g, b] = m.slice(1).map((v) => parseInt(v, 16) / 255);
+  const max = Math.max(r, g, b);
+  const min = Math.min(r, g, b);
+  if (max - min < 0.08) return null;
+  let h;
+  if (max === r) h = ((g - b) / (max - min)) % 6;
+  else if (max === g) h = (b - r) / (max - min) + 2;
+  else h = (r - g) / (max - min) + 4;
+  return Math.round(((h * 60) + 360) % 360);
+}
+
+const inHue = (hue, [from, to]) => hue != null && (from <= to ? hue >= from && hue <= to : hue >= from || hue <= to);
+
+/**
+ * Подсказка к цветовым словам в тредах. palette — statePalette из figma_tokens: цвета вариантов-
+ * состояний с долей. Возвращает null, если цветовых слов нет.
+ */
+export function colorWordHint(threads, palette = []) {
+  const found = new Map();
+  for (const thread of threads) {
+    const texts = [thread.message, ...(thread.replies || []).map((reply) => reply.message)].filter(Boolean);
+    for (const text of texts) {
+      for (const entry of COLOR_WORDS) {
+        if (!entry.re.test(text)) continue;
+        const hit = found.get(entry.word) || { ...entry, threads: [] };
+        if (!hit.threads.includes(thread.id)) hit.threads.push(thread.id);
+        found.set(entry.word, hit);
+      }
+    }
+  }
+  if (!found.size) return null;
+  const top = palette.slice(0, 3);
+  const words = [...found.values()].map((entry) => {
+    const matching = entry.hue ? palette.filter((color) => inHue(hueOf(color.value), entry.hue)) : top.slice(0, 1);
+    return {
+      word: entry.word,
+      threads: entry.threads.slice(0, 5),
+      ...(matching.length ? { stateColors: matching.slice(0, 3) } : {}),
+      note: !palette.length
+        ? 'Цветов состояний в снятых кадрах нет: снимите кадры UI-кита с вариантами (hover, active) и сверьтесь с figma_tokens.stateColors.'
+        : matching.length
+          ? `«${entry.word}» в состояниях макета — это ${matching.map((color) => `${color.name} ${color.value}`).join(', ')}: берите этот цвет, а не токен с похожим именем.`
+          : `Ни один цвет состояний макета не ${entry.word}: в состояниях стоят ${top.map((color) => `${color.name} ${color.value}`).join(', ')}. Слово дизайнера, вероятно, про один из них — уточните, прежде чем брать токен по имени.`,
+    };
+  });
+  return { words };
+}

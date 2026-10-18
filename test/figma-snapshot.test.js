@@ -144,6 +144,7 @@ test('нормализация: раскладка, текст, цвет, инс
     id: '5:1',
     name: 'State=Default',
     set: 'Button',
+    setId: '5:0',
     key: 'k1',
     props: { State: 'Default' },
   });

@@ -143,7 +143,31 @@ function watchInPage({ selector, timeoutMs, ignore = [] }) {
 
     /* Цели наблюдения: сам элемент, то, чем он управляет, и его ближайший контейнер. */
     const controls = root.getAttribute('aria-controls');
-    const watched = [root, controls ? document.getElementById(controls) : null, root.parentElement].filter((el) => el && (el === root || !inIgnored(el)));
+    const controlled = controls ? document.getElementById(controls) : null;
+    const watched = [root, controlled, root.parentElement].filter((el) => el && (el === root || !inIgnored(el)));
+
+    /*
+     * Фон страницы: fixed- и sticky-слои, не связанные с целью. Шапка, которая прячется и
+     * появляется при прокрутке, меняла класс на каждом шаге обхода, и «ответил» доставался
+     * случайным целям. Такие мутации считаются отдельно, в ambient, и в вердикт не идут.
+     */
+    const pinned = new WeakMap();
+    const inUnrelatedPinned = (el) => {
+      if (!el || el.nodeType !== 1) return false;
+      if (pinned.has(el)) return pinned.get(el);
+      let node = el;
+      let verdict = false;
+      while (node && node.nodeType === 1 && node !== document.body) {
+        const position = getComputedStyle(node).position;
+        if (position === 'fixed' || position === 'sticky') {
+          verdict = !node.contains(root) && !(controlled && (node.contains(controlled) || controlled.contains(node)));
+          break;
+        }
+        node = node.parentElement;
+      }
+      pinned.set(el, verdict);
+      return verdict;
+    };
 
     /*
      * Прокручиваемые области ищутся по всей странице, а не среди предков.
@@ -173,9 +197,14 @@ function watchInPage({ selector, timeoutMs, ignore = [] }) {
     const attrs = [];
     let added = 0;
     let removed = 0;
+    let ambient = 0;
     const observer = new MutationObserver((records) => {
       for (const record of records) {
         if (inIgnored(record.target)) continue;
+        if (inUnrelatedPinned(record.target)) {
+          ambient += 1;
+          continue;
+        }
         if (record.type === 'attributes' && attrs.length < 10) {
           attrs.push({
             attr: record.attributeName,
@@ -218,7 +247,7 @@ function watchInPage({ selector, timeoutMs, ignore = [] }) {
       if (elapsed >= timeoutMs) {
         observer.disconnect();
         resolve({
-          changed: { moved: signature() !== before, added, removed, attrs },
+          changed: { moved: signature() !== before, added, removed, attrs, ...(ambient ? { ambient } : {}) },
           timing: {
             settled: false,
             /* Геометрия не менялась вовсе: ответ без движения (цвет, класс), а не бесконечная анимация. */
@@ -233,7 +262,7 @@ function watchInPage({ selector, timeoutMs, ignore = [] }) {
       if (still >= 4 && firstChangeMs !== null) {
         observer.disconnect();
         resolve({
-          changed: { moved: signature() !== before, added, removed, attrs },
+          changed: { moved: signature() !== before, added, removed, attrs, ...(ambient ? { ambient } : {}) },
           timing: {
             settled: true,
             frames,
@@ -251,6 +280,141 @@ function watchInPage({ selector, timeoutMs, ignore = [] }) {
     requestAnimationFrame(step);
   });
 }
+
+/*
+ * Свойства, которыми ховер меняет вид без движения. Ховер карточки — это заливка выреза у
+ * SVG-потомка, цвет кнопки внутри, обводка, радиус; геометрию и DOM он не трогает вовсе. Пока
+ * аудит смотрел только их, рабочий и мёртвый ховер одинаково получали «молчит».
+ */
+export const HOVER_PROPS = [
+  'color', 'background-color', 'background-image', 'border-top-color', 'border-right-color', 'border-bottom-color',
+  'border-left-color', 'border-top-left-radius', 'outline-color', 'outline-style', 'box-shadow', 'text-shadow', 'fill',
+  'stroke', 'opacity', 'filter', 'backdrop-filter', 'transform', 'text-decoration-line', 'text-decoration-color',
+];
+
+/**
+ * Снимок вида цели и её потомков: computed styles по HOVER_PROPS, до 200 узлов, плюс ::before и
+ * ::after у самой цели. Ключ узла — путь индексов от цели: так до и после сопоставляются без
+ * селекторов. Заодно — самый длинный transition в поддереве и есть ли на странице правило
+ * :hover, которое касается цели или её потомков.
+ */
+export function styleSnapshot({ selector, props }) {
+  const root = document.querySelector(selector);
+  if (!root) return null;
+  const nodes = {};
+  let maxTransitionMs = 0;
+  const seconds = (value) =>
+    Math.max(0, ...String(value || '0s').split(',').map((part) => (/ms$/.test(part.trim()) ? parseFloat(part) : parseFloat(part) * 1000) || 0));
+  const name = (el) => {
+    const cls = (el.getAttribute('class') || '').trim().split(/\s+/).filter(Boolean)[0];
+    /* Текст — и у контейнера, если короткий: по нему потомок варианта макета находится на странице. */
+    const full = (el.textContent || '').trim().replace(/\s+/g, ' ');
+    const text = full.length <= 40 ? full.slice(0, 30) : '';
+    return `${el.tagName.toLowerCase()}${cls ? `.${cls}` : ''}${text ? ` «${text}»` : ''}`;
+  };
+  const read = (style) => Object.fromEntries(props.map((prop) => [prop, style.getPropertyValue(prop)]));
+  const walk = (el, key, depth) => {
+    if (Object.keys(nodes).length >= 200) return;
+    const style = getComputedStyle(el);
+    maxTransitionMs = Math.max(maxTransitionMs, seconds(style.transitionDuration) + seconds(style.transitionDelay));
+    nodes[key] = { name: name(el), style: read(style) };
+    if (depth === 0) {
+      for (const pseudo of ['::before', '::after']) {
+        const ps = getComputedStyle(el, pseudo);
+        if (ps.content && ps.content !== 'none') nodes[`${key}${pseudo}`] = { name: `${name(el)}${pseudo}`, style: read(ps) };
+      }
+    }
+    Array.from(el.children).forEach((child, i) => walk(child, `${key}/${i}`, depth + 1));
+  };
+  walk(root, '0', 0);
+
+  /* Объявлен ли ховер вообще: правило с :hover, база которого — цель, её предок или потомок. */
+  let hoverRule = false;
+  const scan = (list) => {
+    for (const rule of Array.from(list || [])) {
+      if (hoverRule) return;
+      if (rule.selectorText && rule.selectorText.includes(':hover')) {
+        for (const part of rule.selectorText.split(',')) {
+          if (!part.includes(':hover')) continue;
+          const host = part.slice(0, part.indexOf(':hover')).replace(/::?[a-z-]+(\([^)]*\))?/gi, '').trim();
+          try {
+            if (host && (root.matches(host) || root.closest(host) || root.querySelector(host))) hoverRule = true;
+          } catch {
+            /* Чужой селектор может быть невалиден для matches. */
+          }
+        }
+      }
+      if (rule.cssRules) scan(rule.cssRules);
+    }
+  };
+  for (const sheet of Array.from(document.styleSheets)) {
+    try {
+      scan(sheet.cssRules);
+    } catch {
+      /* Чужой домен не отдаёт правила. */
+    }
+  }
+  const rect = root.getBoundingClientRect();
+  return { nodes, maxTransitionMs: Math.min(maxTransitionMs, 2000), hoverRule, box: { x: rect.x, y: rect.y, width: rect.width, height: rect.height } };
+}
+
+/**
+ * Ховер одного элемента: вид до и после наведения, с ожиданием самого длинного перехода. То же,
+ * что делает interaction_audit для каждой цели, — для figma_variants, который сверяет это с
+ * разницей вариантов макета.
+ */
+export async function hoverStyleDiff(page, selector, { limit = 60 } = {}) {
+  const locator = page.locator(selector).first();
+  await locator.scrollIntoViewIfNeeded({ timeout: 2000 }).catch(() => {});
+  await page.mouse.move(0, 0).catch(() => {});
+  await settle(page, 1200);
+  const before = await page.evaluate(styleSnapshot, { selector, props: HOVER_PROPS });
+  if (!before) throw new Error(`На странице нет элемента ${selector}`);
+  await locator.hover({ timeout: 3000, force: true });
+  await page.waitForTimeout(Math.min(before.maxTransitionMs + 80, 1100));
+  const after = await page.evaluate(styleSnapshot, { selector, props: HOVER_PROPS });
+  await page.mouse.move(0, 0).catch(() => {});
+  return { changes: diffStyles(before, after, limit), hoverRule: before.hoverRule };
+}
+
+/** Что изменилось между двумя снимками вида: [{ node, prop, from, to }]. */
+export function diffStyles(before, after, limit = 12) {
+  const out = [];
+  if (!before || !after) return out;
+  for (const [key, node] of Object.entries(after.nodes)) {
+    const was = before.nodes[key];
+    if (!was) continue;
+    for (const [prop, value] of Object.entries(node.style)) {
+      if (was.style[prop] !== value) out.push({ node: node.name, prop, from: was.style[prop], to: value });
+    }
+  }
+  return out.slice(0, limit);
+}
+
+/** Доля изменившихся пикселей между двумя PNG одного размера. */
+export async function pixelChange(a, b) {
+  if (!a || !b) return null;
+  const { default: sharp } = await import('sharp');
+  const [x, y] = await Promise.all([a, b].map((png) => sharp(png).ensureAlpha().raw().toBuffer({ resolveWithObject: true })));
+  if (x.info.width !== y.info.width || x.info.height !== y.info.height) return 1;
+  let changed = 0;
+  const total = x.info.width * x.info.height;
+  for (let i = 0; i < x.data.length; i += 4) {
+    if (Math.abs(x.data[i] - y.data[i]) + Math.abs(x.data[i + 1] - y.data[i + 1]) + Math.abs(x.data[i + 2] - y.data[i + 2]) > 24) changed += 1;
+  }
+  return total ? changed / total : 0;
+}
+
+/* Кадр цели в окне: page.screenshot с clip не ждёт, пока элемент замрёт, в отличие от locator. */
+const shot = (page, box) =>
+  box && box.width >= 1 && box.height >= 1
+    ? page
+        .screenshot({
+          clip: { x: Math.max(0, box.x), y: Math.max(0, box.y), width: Math.min(box.width, 1600), height: Math.min(box.height, 1200) },
+          timeout: 3000,
+        })
+        .catch(() => null)
+    : Promise.resolve(null);
 
 /**
  * Подождать, пока страница перестанет двигаться после возврата.
@@ -307,21 +471,52 @@ async function act(locator, action) {
   }
 }
 
-/** Не изменилось ничего: ни геометрия, ни состав DOM, ни атрибуты. */
+/** Не изменилось ничего: ни геометрия, ни состав DOM, ни атрибуты. Мутации фоновых fixed-слоёв не в счёт. */
 const isSilent = (result) =>
   !result.error && !result.changed.moved && !result.changed.added && !result.changed.removed && !result.changed.attrs.length;
+
+/* Ховер, изменивший меньше этой доли пикселей цели, на глаз не виден: курсор, сглаживание. */
+const VISIBLE_PIXELS = 0.005;
 
 export async function runInteractions(
   page,
   { selectors = null, actions = ['click'], maxTargets = 30, timeoutMs = 1200, maxItems = 20, ignore = [] } = {},
 ) {
   const targets = await page.evaluate(pickTargets, { selectors, maxTargets });
+  /*
+   * Табы и переключатели с одинаковыми панелями: переключение работает, а видно только смену
+   * номера. Так было с новостями главной — пять одинаковых заголовков из макета.
+   */
+  const sameContent = await page
+    .evaluate(() => {
+      const panels = Array.from(document.querySelectorAll('[role="tab"][aria-controls], [aria-controls][aria-selected]'))
+        .map((tab) => document.getElementById(tab.getAttribute('aria-controls')))
+        .filter(Boolean);
+      const texts = panels.map((panel) => (panel.textContent || '').replace(/\s+/g, ' ').trim()).filter(Boolean);
+      return texts.length >= 2 && new Set(texts).size === 1 ? texts.length : 0;
+    })
+    .catch(() => 0);
   const results = [];
   const silent = [];
+  const hoverInvisible = [];
+  const hoverNone = [];
 
   for (const target of targets) {
     for (const action of actions) {
       const locator = page.locator(target.selector).first();
+      /*
+       * Сначала прокрутить к цели и дождаться, пока страница уляжется, и только потом начинать
+       * наблюдение. Иначе прокрутку, которую Playwright делает перед действием, и шапку,
+       * спрятавшуюся при ней, аудит засчитывал как ответ цели.
+       */
+      await locator.scrollIntoViewIfNeeded({ timeout: 2000 }).catch(() => {});
+      if (action === 'hover') await page.mouse.move(0, 0).catch(() => {});
+      await settle(page, timeoutMs);
+
+      const look =
+        action === 'hover' ? await page.evaluate(styleSnapshot, { selector: target.selector, props: HOVER_PROPS }).catch(() => null) : null;
+      const before = look ? await shot(page, look.box) : null;
+      const startedAt = Date.now();
       /*
        * Наблюдение запускается до действия и не ожидается сразу: иначе оно бы встало в очередь
        * ПОСЛЕ клика и пропустило первые кадры — а именно в первом кадре и видно рывок.
@@ -339,14 +534,38 @@ export async function runInteractions(
         continue;
       }
 
+      /* Вид после ховера: дождаться самого длинного перехода в поддереве, не дольше секунды. */
+      let styles = [];
+      let pixels = null;
+      if (look) {
+        const left = Math.min(look.maxTransitionMs + 50, 1000) - (Date.now() - startedAt);
+        if (left > 0) await page.waitForTimeout(left);
+        const after = await page.evaluate(styleSnapshot, { selector: target.selector, props: HOVER_PROPS }).catch(() => null);
+        styles = diffStyles(look, after);
+        pixels = await pixelChange(before, await shot(page, look.box)).catch(() => null);
+      }
+      const visible = styles.length > 0 || (pixels ?? 0) >= VISIBLE_PIXELS;
+
       const quiet = isSilent(result);
-      if (quiet) silent.push(`${target.selector} (${action})`);
+      let verdict = quiet ? 'молчит' : 'ответил';
+      if (quiet && look && visible) verdict = 'ответил стилем';
+      const name = `${target.selector} (${action})`;
+      if (quiet && action === 'click') silent.push(name);
+      if (quiet && action === 'hover' && !visible) {
+        /* Ховер объявлен в стилях, а видимо ничего не меняется: это и есть мёртвый ховер. */
+        if (look?.hoverRule) {
+          verdict = 'ховер без видимого изменения';
+          hoverInvisible.push(name);
+        } else hoverNone.push(target.selector);
+      }
       results.push({
         ...target,
         action,
-        verdict: quiet ? 'молчит' : 'ответил',
+        verdict,
         ...(forced ? { forced } : {}),
         ...(quiet ? {} : { changed: result.changed, timing: result.timing }),
+        ...(styles.length ? { styles } : {}),
+        ...(pixels !== null && look ? { pixels: Math.round(pixels * 1000) / 10 } : {}),
       });
 
       /* Возврат страницы: закрыть тем же способом, каким открыли, и увести курсор с наведения. */
@@ -368,6 +587,19 @@ export async function runInteractions(
       ? { note: `Показаны первые ${maxTargets} элементов — остальные не проверялись. Сузьте selectors или поднимите maxTargets.` }
       : {}),
     silent,
+    ...(sameContent
+      ? { sameContent: `у ${sameContent} панелей табов одинаковое содержимое — переключение работает, но его не видно: проверьте на разных данных` }
+      : {}),
+    ...(hoverInvisible.length ? { hoverInvisible } : {}),
+    ...(hoverNone.length
+      ? {
+          hoverNone: {
+            count: hoverNone.length,
+            selectors: hoverNone.slice(0, 10),
+            note: 'Наведение ничего не меняет, и правила :hover для них нет — сверьте с макетом, должен ли быть ховер.',
+          },
+        }
+      : {}),
     targets: results.slice(0, maxItems),
     ...(results.length > maxItems ? { truncated: `Показано ${maxItems} из ${results.length}` } : {}),
   };

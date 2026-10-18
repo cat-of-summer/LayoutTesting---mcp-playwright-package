@@ -14,7 +14,9 @@ import { z } from 'zod';
 import { d } from '../i18n-params.js';
 import { t } from '../i18n.js';
 import { CONFIG, DIRS, FIGMA } from '../config.js';
-import { capped, json, linkBlocks } from './shared.js';
+import { capped, json, linkBlocks, statesSchema } from './shared.js';
+import { pageReady } from '../checks/ready.js';
+import { comparedFrames, frameRuns, recordBehavior, recordFrame } from '../runs.js';
 import { inlineImage } from '../checks/visual.js';
 import { checkFigmaApi } from '../figma/api-check.js';
 import { issueTokenNow, lastTokenIssue, resolveToken } from '../figma/auth.js';
@@ -23,29 +25,32 @@ import { exportImages, exportRender, exportSvg } from '../figma/export.js';
 import { cssItems, outlineLines, textItems, unresolvedOf, usedVariables } from '../figma/inspect.js';
 import { assetInventory } from '../figma/assets.js';
 import { getRestClient } from '../figma/rest.js';
-import { addRequests, ensureNode, ensureNodes, findNode, frameIndex, pathOf, syncFigma } from '../figma/snapshot.js';
+import { addRequests, childNodes, ensureNode, ensureNodes, findNode, frameIndex, pathOf, searchCached, searchRestDocument, syncFigma } from '../figma/snapshot.js';
+import { compareHover, diffVariants, isStateVariant, pickPair } from '../figma/variants.js';
+import { hoverStyleDiff } from '../checks/interaction.js';
 import { groupRefs, parseFigmaRef, refOf } from '../figma/url.js';
 import { diffSnapshots, fetchVersions, parseMoment, pickVersions, snapshotAt } from '../figma/history.js';
 import { loadProject, projectSummary } from '../figma/project.js';
 import { browserChrome } from '../figma/analyze/common.js';
 import { round } from '../figma/css.js';
 import { inferStructure } from '../figma/analyze/structure.js';
-import { findComponents } from '../figma/analyze/components.js';
-import { collectTokens } from '../figma/analyze/tokens.js';
+import { findComponents, sameBlocks } from '../figma/analyze/components.js';
+import { collectTokens, statePalette } from '../figma/analyze/tokens.js';
 import { compareBreakpoints } from '../figma/analyze/breakpoints.js';
 import {
   baseName,
   buildThreads,
   collectAnnotations,
+  colorWordHint,
   commentsDigest,
   fetchComments,
   missingFrames,
   placeThreads,
   readCachedComments,
 } from '../figma/analyze/comments.js';
-import { describeBehavior, uiKitTarget } from '../figma/analyze/behavior.js';
+import { blockingOf, describeBehavior, uiKitTarget } from '../figma/analyze/behavior.js';
 import { compareWithDesign, probePage, scrollbarGutter } from '../figma/compare.js';
-import { measurePairs, measureSpacing, pageBoxes } from '../figma/spacing.js';
+import { alignHints, measurePairs, measureSpacing, pageBoxes } from '../figma/spacing.js';
 import { gotoAndSettle, sessionAt, withSession } from '../browser/pool.js';
 
 /* /v1/me стоит запроса tier 3. figma_status зовут, когда что-то не работает, — то есть подряд. */
@@ -234,10 +239,10 @@ export function suggestWidths(result) {
  * Покрытие сверки по кадру — что для него уже запускали, а что нет.
  *
  * semantic запускали восемь раз, pixel — ни разу, и «готово» написали по высотам секций. Реестр
- * живёт в памяти процесса и ключуется кадром с версией: сверка старой версии макета покрытием
- * новой не считается. Ответ каждой сверки несёт, чего для этого кадра ещё не было.
+ * ключуется кадром с версией: сверка старой версии макета покрытием новой не считается. Ответ
+ * каждой сверки несёт, чего для этого кадра ещё не было. Хранится в журнале прогонов (runs.js):
+ * в памяти процесса он терялся при каждом перезапуске стенда.
  */
-const coverage = new Map();
 
 /*
  * Экраны, снятые figma_sync: файл → кадр → имя и ширина.
@@ -260,29 +265,37 @@ export function rememberScreens(result) {
   }
 }
 
-const stamp = () => new Date().toISOString().slice(11, 16);
+/* Время прогона в ответе: часы и минуты, полная дата лежит в журнале. */
+const clock = (iso) => (iso ? String(iso).slice(11, 16) : null);
 
-export function noteCoverage(ref, version, { mode = 'both', sections = false, width = null, frameWidth = null } = {}) {
-  const key = `${ref}@${version}`;
-  const entry = coverage.get(key) || { semantic: null, pixel: null, sections: null, widths: [] };
-  if (mode !== 'pixel') entry.semantic = stamp();
-  if (mode !== 'semantic') entry.pixel = stamp();
-  if (sections) entry.sections = stamp();
-  if (width && !entry.widths.includes(width)) entry.widths.push(width);
-  coverage.set(key, entry);
+/**
+ * Отметить сверку кадра и вернуть покрытие. result — ответ compareWithDesign: из него в журнал
+ * идут итог и худшие секции, их потом показывает page_ready.
+ */
+export function noteCoverage(ref, version, { mode = 'both', sections = false, width = null, frameWidth = null, result = null } = {}) {
+  const at = new Date().toISOString();
+  const offWidth = width && frameWidth && Math.abs(width - frameWidth) > 2;
+  const patch = { width: offWidth ? null : width };
+  /* Сверка не в той ширине кадр не покрывает — так и пишется в widthWarning, и в журнал не идёт. */
+  if (!offWidth) {
+    if (mode !== 'pixel') patch.semantic = at;
+    if (mode !== 'semantic') patch.pixel = at;
+    if (sections) patch.sections = { at, ...sectionDigest(result) };
+    if (result?.url) patch.url = result.url;
+  }
+  const entry = recordFrame(ref, version, patch);
 
   const missing = ['semantic', 'sections'].filter((kind) => !entry[kind]);
   const never = t({ ru: 'не запускался', en: 'not run' });
   const fileKey = String(ref).split(':')[0];
-  const compared = new Set([...coverage.keys()].map((k) => k.split('@')[0]));
+  const compared = comparedFrames();
   const notCompared = [...(screens.get(fileKey) || new Map())]
     .filter(([screen]) => !compared.has(screen))
     .map(([screen, info]) => ({ node: screen, name: info.name, width: info.width, ...(info.breakpoint ? { breakpoint: info.breakpoint } : {}) }));
-  const offWidth = width && frameWidth && Math.abs(width - frameWidth) > 2;
   return {
-    semantic: entry.semantic || never,
-    pixel: entry.pixel || never,
-    sections: entry.sections || never,
+    semantic: clock(entry.semantic) || never,
+    pixel: clock(entry.pixel) || never,
+    sections: clock(entry.sections?.at) || never,
     ...(entry.widths.length ? { widths: entry.widths } : {}),
     ...(missing.length
       ? {
@@ -312,7 +325,250 @@ export function noteCoverage(ref, version, { mode = 'both', sections = false, wi
   };
 }
 
+/** Худшие секции сверки — для журнала и page_ready. */
+export function sectionDigest(result) {
+  const list = result?.sections?.sections;
+  if (!Array.isArray(list)) return {};
+  return {
+    worst: list
+      .filter((section) => section.compared !== false && typeof section.diffPercentage === 'number')
+      .slice(0, 5)
+      .map((section) => ({ node: section.node, name: section.name, diffPercentage: section.diffPercentage, match: section.match })),
+    ...(Array.isArray(result.sections.seams) ? { seams: result.sections.seams.slice(0, 3) } : {}),
+  };
+}
+
 const withProject = async (project) => (project && (project.url || project.css || project.scss) ? loadProject(project) : null);
+
+/**
+ * Сверка страницы с кадром — тело figma_compare. Вынесено, чтобы его же вызывал page_ready:
+ * готовность догоняет недостающую посекционную сверку сама, а не советует её.
+ */
+export async function runFigmaCompare({ figma, sessionId, url, selector, mode = 'both', sections = false, tolerance, threshold, limit }) {
+  const client = getRestClient();
+  const { snapshot, node, fileKey } = await ensureNode(figma, { client, editor: editorChannel });
+  const ref = refOf(fileKey, node.id);
+  const options = {
+    figmaRef: ref,
+    snapshot,
+    rootId: node.id,
+    selector,
+    mode,
+    sections,
+    client,
+    editor: editorChannel,
+    ...(tolerance ? { tolerance } : {}),
+    ...(threshold ? { threshold } : {}),
+    ...(limit ? { limit } : {}),
+  };
+  /* Предупреждать о ширине окна имеет смысл только для экрана: карточку сверяют в любом окне. */
+  const frameWidth = screenReason({ type: node.type, size: `${node.box?.w}x${node.box?.h}` }) ? null : Math.round(node.box.w);
+  /* Окно, расширенное на гуттер полосы прокрутки, по контенту той же ширины, что кадр. */
+  const withCoverage = (result, page, widened = 0) => ({
+    ...result,
+    coverage: noteCoverage(ref, snapshot.version, {
+      mode,
+      sections,
+      width: page.viewportSize() ? page.viewportSize().width - widened : null,
+      frameWidth,
+      result: { ...result, url: page.url() },
+    }),
+  });
+
+  if (sessionId) {
+    const { session, navigation } = await sessionAt(sessionId, url);
+    const { page } = session;
+    return { ...withCoverage(await compareWithDesign({ ...options, page }), page), ...(navigation ? { navigation } : {}) };
+  }
+  if (!url) throw new Error('Нужен sessionId открытой сессии или url страницы.');
+
+  /* Своя сессия открывается шириной кадра: сравнивать десктопный макет с мобильной вёрсткой
+     бессмысленно, а ширину по умолчанию агент задать забывает. */
+  const width = Math.max(320, Math.round(node.box?.w || 1440));
+  return withSession({ viewport: `${width}x900` }, async (session) => {
+    const navigation = await gotoAndSettle(session, url);
+    /* Полоса прокрутки страницы отнимает ширину: окно расширяется на неё, чтобы контент был шириной кадра. */
+    const gutter = await session.page.evaluate(scrollbarGutter).catch(() => 0);
+    if (gutter > 0) {
+      await session.page.setViewportSize({ width: width + gutter, height: 900 });
+      await session.page.waitForTimeout(150);
+    }
+    const result = await compareWithDesign({ ...options, page: session.page, widenedBy: gutter });
+    return { ...withCoverage(result, session.page, gutter), navigation };
+  });
+}
+
+/**
+ * Разница вариантов компонента и, с sessionId, сверка ховера на странице с ней — тело
+ * figma_variants.
+ */
+export async function runFigmaVariants({ figma, from, to, sessionId, selector, limit = 40 }) {
+  const client = getRestClient();
+  const { snapshot, node, fileKey } = await ensureNode(figma, { client, editor: editorChannel });
+  let set = node;
+  let setSnapshot = snapshot;
+  let current = null;
+  let wanted = to;
+  if (node.type !== 'COMPONENT_SET') {
+    if (node.type === 'INSTANCE') current = node.component?.id;
+    if (node.type === 'COMPONENT') {
+      current = node.id;
+      /* Ссылка ведёт на сам вариант-состояние (Hover): он и есть «куда», «откуда» — базовый. */
+      if (!from && !to && isStateVariant(node.name)) wanted = node.name;
+    }
+    const parent = snapshot.nodes[node.parent];
+    const setId =
+      node.component?.setId ||
+      (parent?.type === 'COMPONENT_SET' ? parent.id : null) ||
+      snapshot.ancestors?.findLast?.((item) => item.type === 'COMPONENT_SET')?.id;
+    if (!setId) {
+      throw new Error(
+        `Узел ${refOf(fileKey, node.id)} (${node.type}) не принадлежит набору вариантов, либо снимок снят старой версией стенда без ссылки на набор: ` +
+          'повторите figma_sync с refresh: true или передайте ссылку на сам набор (COMPONENT_SET).',
+      );
+    }
+    ({ node: set, snapshot: setSnapshot } = await ensureNode(refOf(fileKey, setId), { client, editor: editorChannel }));
+  }
+  const variants = childNodes(setSnapshot, set).filter((child) => child.type === 'COMPONENT');
+  if (variants.length < 2) throw new Error(`В наборе «${set.name}» меньше двух вариантов — сравнивать нечего.`);
+  const pair = pickPair(variants, { from, to: wanted, current });
+  if (pair.error) throw new Error(`${pair.error}. Варианты набора: ${variants.map((variant) => variant.name).slice(0, 20).join('; ')}`);
+
+  const diff = diffVariants(setSnapshot, pair.from.id, setSnapshot, pair.to.id);
+  /* Геометрия последней: смена радиуса или обводки двигает рамки всех потомков, и сдвиги
+     заслоняют то, ради чего вариант нарисован, — краску. */
+  const ordered = [...diff.changes.filter((c) => c.category !== 'geometry'), ...diff.changes.filter((c) => c.category === 'geometry')];
+  const out = {
+    set: { ref: refOf(fileKey, set.id), name: set.name, variants: variants.map((variant) => variant.name).slice(0, 30) },
+    from: { ref: refOf(fileKey, pair.from.id), name: pair.from.name },
+    to: { ref: refOf(fileKey, pair.to.id), name: pair.to.name },
+    changed: diff.changes.length,
+    changes: ordered.slice(0, limit).map(({ text, ...change }) => change),
+    ...(diff.changes.length > limit ? { note: `Показано ${limit} из ${diff.changes.length}: поднимите limit` } : {}),
+    ...(diff.onlyFrom.length ? { onlyFrom: diff.onlyFrom } : {}),
+    ...(diff.onlyTo.length ? { onlyTo: diff.onlyTo } : {}),
+  };
+  if (!sessionId) {
+    return {
+      ...out,
+      hint: 'Каждое изменение — и у корня, и у потомков — переносится в правило состояния. Сверить ховер на странице: тот же вызов с sessionId и selector.',
+    };
+  }
+  if (!selector) throw new Error('Для сверки со страницей нужен selector элемента, на который наводить.');
+  const { session } = await sessionAt(sessionId);
+  const hover = await hoverStyleDiff(session.page, selector);
+  const page = compareHover(diff, hover.changes);
+  return {
+    ...out,
+    page: {
+      selector,
+      verdict: page.missingOnPage.length ? 'ховер на странице не совпадает с вариантом' : 'ховер совпадает с вариантом',
+      ...page,
+      ...(hover.changes.length ? {} : { note: 'Наведение на странице не поменяло ничего из сверяемых свойств' }),
+    },
+  };
+}
+
+/** Поиск по всему файлу Figma по тексту или имени слоя — тело figma_find. */
+export async function runFigmaFind({ figma, query, deep = false, limit = 30 }) {
+  const { fileKey } = parseFigmaRef(figma);
+  if (!String(query || '').trim()) throw new Error('Нужен query: текст или часть имени слоя.');
+  const client = getRestClient();
+  let results = null;
+  let source = null;
+  let fallback = null;
+  if (await editorChannel.usable()) {
+    try {
+      results = await editorChannel.find(fileKey, { query, limit });
+      source = 'editor: все страницы файла';
+    } catch (err) {
+      fallback = err.message;
+    }
+  }
+  if (!results && deep) {
+    const res = await client.file(fileKey);
+    results = searchRestDocument(res.document, query, { limit });
+    source = 'rest: файл целиком';
+  }
+  let roots = null;
+  if (!results) {
+    const cached = await searchCached(fileKey, query, { limit });
+    results = cached.results;
+    roots = cached.roots;
+    source = `снимки: ${cached.roots} снятых узлов`;
+  }
+  const withRef = (item) => ({
+    ref: refOf(fileKey, item.id),
+    ...item,
+    ...(item.set ? { set: { ...item.set, ref: refOf(fileKey, item.set.id), ...(item.set.variantId ? { variantRef: refOf(fileKey, item.set.variantId) } : {}) } } : {}),
+  });
+  return {
+    query,
+    source,
+    found: results.length,
+    results: results.map(withRef),
+    ...(fallback ? { editorFallback: fallback } : {}),
+    ...(roots !== null
+      ? {
+          note: results.length
+            ? 'Искалось только по снятому. Остальные страницы файла — через канал редактора или deep: true.'
+            : 'В снятом не нашлось. Канал редактора ищет по всем страницам; без него — deep: true: весь файл одним запросом REST, на больших файлах это дорого.',
+        }
+      : {}),
+  };
+}
+
+/** Поведение по прототипу — тело figma_behavior; page_ready берёт из него blocking. */
+export async function runFigmaBehavior({ figma, limit, offset = 0 }) {
+  const client = getRestClient();
+  const { frames, requests } = await loadFrames(figma, client);
+  const behavior = describeBehavior(frames);
+
+  /* Цель связи часто лежит за пределами снятых кадров: модалка, другой экран, вариант
+     компонента. Сначала ищем её в уже снятом, а чего нет — называем честно, а не молчим. */
+  const files = [...new Set(groupRefs(figma).map((group) => group.fileKey))];
+  const unresolved = [];
+  for (const group of behavior.grouped) {
+    /* Файл связи — файл кадра, где она нарисована, а не первый из запрошенных. */
+    const own = group.frame ? parseFigmaRef(group.frame)?.fileKey : null;
+    delete group.frame;
+    if (!group.to || group.toName) continue;
+    for (const fileKey of own ? [own, ...files.filter((key) => key !== own)] : files) {
+      const hit = await findNode(fileKey, group.to);
+      if (hit) {
+        group.toName = hit.node.name;
+        group.toRef = refOf(fileKey, group.to);
+        const page = hit.snapshot.ancestors?.find((item) => item.type === 'PAGE')?.name;
+        if (page) group.toPage = page;
+        Object.assign(group, uiKitTarget(hit.node, hit.snapshot, group.fromSet) || {});
+        /* Смена варианта по наведению или нажатию: что именно меняется, покажет разница
+           вариантов — по всем потомкам, а не по краске корня. */
+        if (hit.node.type === 'COMPONENT' && (group.action === 'NODE:CHANGE_TO' || /HOVER|PRESS/.test(group.trigger || ''))) {
+          group.next = { tool: 'figma_variants', args: { figma: group.toRef } };
+        }
+        break;
+      }
+    }
+    if (!group.toName) unresolved.push({ group, ref: refOf(own || files[0], group.to) });
+  }
+  for (const group of behavior.states) delete group.frame;
+  for (const group of behavior.overlays) delete group.frame;
+  const blocking = blockingOf(unresolved);
+
+  return {
+    ...(blocking ? { blocking: [blocking] } : {}),
+    frames: frames.map((frame) => frame.ref),
+    ...(requests.tier1 || requests.tier2 || requests.tier3 ? { requests } : {}),
+    edges: behavior.edges,
+    ...capped(behavior.grouped, { limit: limit ?? 30, offset }),
+    overlays: behavior.overlays,
+    states: behavior.states,
+    sticky: behavior.sticky,
+    scrollAreas: behavior.scrollAreas,
+    ...(behavior.motion.length ? { motion: behavior.motion } : {}),
+    ...(behavior.unconfirmed ? { unconfirmed: behavior.unconfirmed } : {}),
+  };
+}
 
 export function register(server) {
   server.registerTool(
@@ -608,8 +864,10 @@ export function register(server) {
        * решалось на глаз. Пустой unresolved — критерий закрытия фазы, непустой — список работы.
        */
       const unresolved = unresolvedOf(snapshot, node.id, { stats, assets: out.assets ?? (want.has('assets') ? null : assetInventory(snapshot, node.id)), hidden });
+      const align = alignHints(snapshot, node.id, { limit: 10 });
       return json({
         ...out,
+        ...(align.length ? { alignHints: align } : {}),
         ...(Object.keys(skipped).length ? { skipped } : {}),
         ...(stats.clippedTexts
           ? { textsClipped: `${stats.clippedTexts} текстов обрезаны многоточием в outline и css — целиком они в разделе text` }
@@ -690,6 +948,15 @@ export function register(server) {
       const { frames, requests } = await loadFrames(figma, client);
       const loaded = await withProject(project);
       const result = findComponents(frames, { project: loaded });
+      /* Блок, чей кадр уже сверялся со страницей, уже свёрстан: адрес из журнала прогонов. */
+      const versions = Object.fromEntries(frames.map((frame) => [frame.ref, frame.snapshot.version]));
+      const same = sameBlocks(frames).map((block) => ({
+        ...block,
+        members: block.members.map((member) => {
+          const url = frameRuns(member.frame, versions[member.frame])?.url;
+          return { ...member, ref: refOf(member.frame.split(':')[0], member.node), ...(url ? { implementedOn: url } : {}) };
+        }),
+      }));
       return json({
         frames: frames.map((frame) => frame.ref),
         ...(requests.tier1 || requests.tier2 || requests.tier3 ? { requests } : {}),
@@ -697,6 +964,15 @@ export function register(server) {
         counted: result.counted,
         ...capped(result.clusters, { limit: limit ?? 25, offset }),
         singles: result.singles,
+        ...(same.length
+          ? {
+              sameBlocks: same,
+              sameBlocksNote: t({
+                ru: 'Блоки одной формы в разных кадрах — вероятно, один и тот же блок: верстается один раз и переиспользуется. implementedOn — кадр уже сверялся с этой страницей: возьмите вёрстку оттуда, а не делайте заново.',
+                en: 'Blocks of the same shape in different frames are probably the same block: build it once and reuse it. implementedOn — the frame has already been compared with that page: take the markup from there instead of building it again.',
+              }),
+            }
+          : {}),
       });
     },
   );
@@ -780,8 +1056,11 @@ export function register(server) {
         const probed = await page.evaluate(probePage, selector ?? null);
         if (probed.error) throw new Error(probed.error);
         const spacing = measureSpacing(snapshot, node.id, probed, { tolerance });
+        /* Почти совпадающие координаты соседних карточек: вероятно, одна линия. */
+        const align = alignHints(snapshot, node.id);
         const out = {
           node: refOf(fileKey, node.id),
+          ...(align.length ? { alignHints: align } : {}),
           measured: spacing.rows.length,
           off: spacing.off.length,
           ...(spacing.steps.length ? { steps: spacing.steps } : {}),
@@ -833,53 +1112,7 @@ export function register(server) {
         limit: z.number().optional().describe(d('Сколько строк или записей показать')),
       },
     },
-    async ({ figma, sessionId, url, selector, mode = 'both', sections = false, tolerance, threshold, limit }) => {
-      const client = getRestClient();
-      const { snapshot, node, fileKey } = await ensureNode(figma, { client, editor: editorChannel });
-      const ref = refOf(fileKey, node.id);
-      const options = {
-        figmaRef: ref,
-        snapshot,
-        rootId: node.id,
-        selector,
-        mode,
-        sections,
-        client,
-        editor: editorChannel,
-        ...(tolerance ? { tolerance } : {}),
-        ...(threshold ? { threshold } : {}),
-        ...(limit ? { limit } : {}),
-      };
-      /* Предупреждать о ширине окна имеет смысл только для экрана: карточку сверяют в любом окне. */
-      const frameWidth = screenReason({ type: node.type, size: `${node.box?.w}x${node.box?.h}` }) ? null : Math.round(node.box.w);
-      /* Окно, расширенное на гуттер полосы прокрутки, по контенту той же ширины, что кадр. */
-      const withCoverage = (result, page, widened = 0) => ({
-        ...result,
-        coverage: noteCoverage(ref, snapshot.version, { mode, sections, width: page.viewportSize() ? page.viewportSize().width - widened : null, frameWidth }),
-      });
-
-      if (sessionId) {
-        const { session, navigation } = await sessionAt(sessionId, url);
-        const { page } = session;
-        return json({ ...withCoverage(await compareWithDesign({ ...options, page }), page), ...(navigation ? { navigation } : {}) });
-      }
-      if (!url) throw new Error('Нужен sessionId открытой сессии или url страницы.');
-
-      /* Своя сессия открывается шириной кадра: сравнивать десктопный макет с мобильной вёрсткой
-         бессмысленно, а ширину по умолчанию агент задать забывает. */
-      const width = Math.max(320, Math.round(node.box?.w || 1440));
-      return withSession({ viewport: `${width}x900` }, async (session) => {
-        const navigation = await gotoAndSettle(session, url);
-        /* Полоса прокрутки страницы отнимает ширину: окно расширяется на неё, чтобы контент был шириной кадра. */
-        const gutter = await session.page.evaluate(scrollbarGutter).catch(() => 0);
-        if (gutter > 0) {
-          await session.page.setViewportSize({ width: width + gutter, height: 900 });
-          await session.page.waitForTimeout(150);
-        }
-        const result = await compareWithDesign({ ...options, page: session.page, widenedBy: gutter });
-        return json({ ...withCoverage(result, session.page, gutter), navigation });
-      });
-    },
+    async (args) => json(await runFigmaCompare(args)),
   );
 
   server.registerTool(
@@ -908,6 +1141,7 @@ export function register(server) {
       const frames = [];
       const threads = [];
       const notes = [];
+      const contextFrames = [];
 
       for (const group of groupRefs(figma)) {
         const own = [];
@@ -929,7 +1163,10 @@ export function register(server) {
           notes.push(`Кадры ${context.notSynced.join(', ')} не сняты: комментарии в них не привязаны к элементам. figma_sync по ним.`);
         }
         threads.push(...placeThreads(buildThreads(data.comments, [...own, ...context.frames], { resolved, targets }), await frameIndex(group.fileKey)));
+        contextFrames.push(...context.frames);
       }
+      /* Цветовое слово в треде — рядом цвета, которые в макете на деле горят в состояниях. */
+      const colorHint = colorWordHint(threads, statePalette(collectTokens([...frames, ...contextFrames], { minUses: 1 }).colors));
 
       return json({
         frames: frames.map((frame) => frame.ref),
@@ -937,6 +1174,7 @@ export function register(server) {
         ...(requests.tier1 || requests.tier2 || requests.tier3 ? { requests } : {}),
         ...capped(threads, { limit: limit ?? 30, offset }),
         annotations: collectAnnotations(frames).slice(0, 30),
+        ...(colorHint ? { colorHint } : {}),
         ...(notes.length ? { warnings: notes } : {}),
       });
     },
@@ -1070,51 +1308,101 @@ export function register(server) {
         offset: z.number().optional().describe(d('С какой записи продолжить: значение из подсказки note')),
       },
     },
-    async ({ figma, limit, offset = 0 }) => {
+    async (args) => {
+      const result = await runFigmaBehavior(args);
+      recordBehavior(result.frames.join(','), result.blocking?.[0]);
+      return json(result);
+    },
+  );
+
+  server.registerTool(
+    'figma_find',
+    {
+      title: t({ ru: 'Поиск по файлу макета', en: 'Search the design file' }),
+      description: t({
+        ru: 'Ищет по всему файлу Figma текст или имя слоя — «Загрузить больше», «Hover», «Фильтры» — по всем страницам, а не только по снятым кадрам. У найденного внутри варианта компонента — набор и его варианты: состояние из UI-кита по ссылке из комментария находится одним вызовом.',
+        en: 'Searches the whole Figma file for a text or a layer name — "Load more", "Hover", "Filters" — across every page, not only the synced frames. A hit inside a component variant comes with its set and the variants: a UI kit state mentioned in a comment is found in one call.',
+      }),
+      inputSchema: {
+        figma: z.string().describe(d('Файл: ссылка figma.com или ключ, узел не обязателен')),
+        query: z.string().describe(d('Текст или часть имени слоя')),
+        deep: z.boolean().optional().describe(d('Без канала редактора: весь файл одним запросом REST, а не только снятое')),
+        limit: z.number().optional().describe(d('Сколько строк или записей показать')),
+      },
+    },
+    async (args) => json(await runFigmaFind(args)),
+  );
+
+  server.registerTool(
+    'figma_variants',
+    {
+      title: t({ ru: 'Разница вариантов', en: 'Variant difference' }),
+      description: t({
+        ru: 'Что меняется между двумя вариантами компонента — Default и Hover, обычный и выбранный — по всем потомкам: заливка, обводка, радиус, эффекты, цвет текста, видимость слоёв. С sessionId и selector наводит на элемент страницы и сверяет его ховер с этой разницей: что из варианта не перенесено.',
+        en: 'What changes between two component variants — Default and Hover, normal and selected — across every descendant: fill, stroke, radius, effects, text color, layer visibility. With sessionId and selector it hovers the page element and checks its hover against that difference: what of the variant was not carried over.',
+      }),
+      inputSchema: {
+        figma: z.string().describe(d('Набор вариантов, один из вариантов или экземпляр: ссылка figma.com или ключ:id')),
+        from: z.string().optional().describe(d('Исходный вариант: имя, значение свойства (Default) или Свойство=значение')),
+        to: z.string().optional().describe(d('Целевой вариант. По умолчанию — состояние рядом с исходным, Hover первым')),
+        sessionId: z.string().optional().describe(d('Сессия с открытой страницей: сверить ховер элемента с разницей вариантов')),
+        selector: z.string().optional().describe(d('Элемент страницы, на который наводить')),
+        limit: z.number().optional().describe(d('Сколько строк или записей показать')),
+      },
+    },
+    async (args) => json(await runFigmaVariants(args)),
+  );
+
+  /*
+   * Готовность страницы — обязательный шаг перед отчётом. Живёт в группе figma, а не в
+   * composite: без макета она тоже работает, но нужна прежде всего вёрстке по макету, и только
+   * здесь под рукой сверка и поведение прототипа.
+   */
+  server.registerTool(
+    'page_ready',
+    {
+      title: t({ ru: 'Готова ли страница', en: 'Is the page ready' }),
+      description: t({
+        ru: 'Обязательная проверка перед отчётом «готово»: сам догоняет то, что не запускалось, — посекционную сверку каждого кадра, прокликанный и наведённый интерактив, наложения на каждой ширине и в состояниях, формы, не снятые цели прототипа. Отвечает ready: true или false и списком блокеров, у каждого — готовый следующий вызов. Свежие прогоны из журнала берёт как есть.',
+        en: 'The mandatory check before a "done" report: it runs whatever has not been run — the per-section comparison of every frame, clicked and hovered interactivity, overlaps at every width and in states, forms, unsynced prototype targets. Answers ready: true or false with a list of blockers, each with a ready next call. Fresh runs from the journal are reused as is.',
+      }),
+      inputSchema: {
+        url: z.string().optional().describe(d('Адрес страницы. Без него — адрес открытой сессии sessionId')),
+        sessionId: z.string().optional().describe(d('Сессия, из которой взять адрес страницы')),
+        frames: z.array(z.string()).optional().describe(d('Кадры макета этой страницы всех ширин: ссылки figma.com или ключ:id')),
+        widths: z.array(z.number()).optional().describe(d('Ширины прогона. По умолчанию — ширины кадров и стандартные между ними')),
+        states: statesSchema,
+        maxAgeMin: z.number().optional().describe(d('Прогоны из журнала моложе этого (мин) не повторяются. По умолчанию 30')),
+        run: z.enum(['missing', 'all']).optional().describe(d('missing (по умолчанию) — только недостающее и устаревшее; all — всё заново')),
+      },
+    },
+    async ({ url, sessionId, frames = [], widths, states, maxAgeMin, run }) => {
+      const target = url || (sessionId ? sessionAt(sessionId).then(({ session }) => session.page.url()) : null);
+      const address = await target;
+      if (!address || /^about:/.test(address)) throw new Error('Нужен url страницы или sessionId сессии, в которой она открыта.');
       const client = getRestClient();
-      const { frames, requests } = await loadFrames(figma, client);
-      const behavior = describeBehavior(frames);
-
-      /* Цель связи часто лежит за пределами снятых кадров: модалка, другой экран, вариант
-         компонента. Сначала ищем её в уже снятом, а чего нет — называем честно, а не молчим. */
-      const files = [...new Set(groupRefs(figma).map((group) => group.fileKey))];
-      const unresolved = [];
-      for (const group of behavior.grouped) {
-        if (!group.to || group.toName) continue;
-        for (const fileKey of files) {
-          const hit = await findNode(fileKey, group.to);
-          if (hit) {
-            group.toName = hit.node.name;
-            group.toRef = refOf(fileKey, group.to);
-            const page = hit.snapshot.ancestors?.find((item) => item.type === 'PAGE')?.name;
-            if (page) group.toPage = page;
-            Object.assign(group, uiKitTarget(hit.node, hit.snapshot, group.fromSet) || {});
-            break;
-          }
-        }
-        if (!group.toName) unresolved.push(refOf(files[0], group.to));
-      }
-
-      return json({
-        frames: frames.map((frame) => frame.ref),
-        ...(requests.tier1 || requests.tier2 || requests.tier3 ? { requests } : {}),
-        edges: behavior.edges,
-        ...capped(behavior.grouped, { limit: limit ?? 30, offset }),
-        overlays: behavior.overlays,
-        states: behavior.states,
-        sticky: behavior.sticky,
-        scrollAreas: behavior.scrollAreas,
-        ...(behavior.motion.length ? { motion: behavior.motion } : {}),
-        ...(behavior.unconfirmed ? { unconfirmed: behavior.unconfirmed } : {}),
-        ...(unresolved.length
-          ? {
-              notSynced: {
-                note: 'Цели этих связей не сняты — что это за экраны и варианты, покажет figma_sync по этим ссылкам.',
-                refs: [...new Set(unresolved)].slice(0, 15),
-              },
-            }
-          : {}),
-      });
+      const deps = {
+        frameInfo: async (figma) => {
+          const { snapshot, node, fileKey } = await ensureNode(figma, { client, editor: editorChannel });
+          const frameWidth = screenReason({ type: node.type, size: `${node.box?.w}x${node.box?.h}` }) ? null : Math.round(node.box.w);
+          return { ref: refOf(fileKey, node.id), version: snapshot.version, width: frameWidth };
+        },
+        compareFrame: (info, pageUrl) => runFigmaCompare({ figma: info.ref, url: pageUrl, sections: true }),
+        paletteOf: async (refs) => {
+          const { frames: loaded } = await loadFrames(refs, client);
+          return statePalette(collectTokens(loaded, { minUses: 1 }).colors);
+        },
+        behaviorOf: async (refs) => {
+          const result = await runFigmaBehavior({ figma: refs, limit: 1 });
+          recordBehavior(result.frames.join(','), result.blocking?.[0]);
+          return result.blocking?.[0] || null;
+        },
+      };
+      const width = Math.max(...(widths?.length ? widths : [1440]));
+      const result = await withSession({ viewport: `${width}x900`, animations: 'allow' }, (session) =>
+        pageReady(session, { url: address, frames, widths, states, maxAgeMin, run }, deps),
+      );
+      return json(result);
     },
   );
 
@@ -1151,11 +1439,12 @@ export function register(server) {
           .enum(['render', 'fill'])
           .optional()
           .describe(d('Для svg: fill — контур заливки без обводки')),
+        dropBackground: z.boolean().optional().describe(d('Для svg трейса растра: убрать светлую подложку кадра')),
       },
     },
-    async ({ figma, kind = 'render', scale, clip, inline = false, parts = 'auto', geometry = 'render' }) => {
+    async ({ figma, kind = 'render', scale, clip, inline = false, parts = 'auto', geometry = 'render', dropBackground = false }) => {
       const options = { client: getRestClient(), editor: editorChannel };
-      if (kind === 'svg') return json(await exportSvg(figma, { ...options, geometry }));
+      if (kind === 'svg') return json(await exportSvg(figma, { ...options, geometry, dropBackground }));
       if (kind === 'image') return json(await exportImages(figma, { ...options, scales: scale ? [scale] : [1, 2] }));
 
       if (clip && figma.length !== 1) throw new Error('clip относится к одному узлу: передайте ровно одну ссылку.');

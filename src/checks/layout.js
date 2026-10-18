@@ -207,13 +207,50 @@ function collectLayoutIssues(options) {
     if (self === -1) return false; // элемент чем-то перекрыт — судить не о чем
 
     for (const under of stack.slice(self + 1)) {
-      if (/^(img|picture|video|canvas|svg)$/i.test(under.tagName)) return true;
+      if (/^(img|picture|video|canvas|svg)$/i.test(under.tagName)) return under;
       const s = getComputedStyle(under);
       if (s.backgroundImage && s.backgroundImage.includes('url(')) return true;
       const c = parseColor(s.backgroundColor);
       if (c && c.a > 0.5) return false;
     }
     return false;
+  };
+
+  /**
+   * Чернила картинки под текстом: доля непрозрачных пикселей <img> в пересечении с текстом.
+   *
+   * Подписи «Преимуществ» пересекали прозрачную PNG-схему на 285×65 px, и textOverImage говорил
+   * то же, что про текст над пустым углом той же картинки: рамка на рамке. Прозрачное поле PNG —
+   * не фон под текстом, а сама схема — да. Картинка с чужого домена без CORS пиксели не отдаёт:
+   * тогда ink: null и вердикт глазами.
+   */
+  const inkUnder = (img, rect) => {
+    if (!img || img.tagName !== 'IMG' || !img.complete || !img.naturalWidth) return null;
+    const frame = img.getBoundingClientRect();
+    const left = Math.max(rect.left, frame.left);
+    const top = Math.max(rect.top, frame.top);
+    const right = Math.min(rect.right, frame.right);
+    const bottom = Math.min(rect.bottom, frame.bottom);
+    if (right - left < 1 || bottom - top < 1) return 0;
+    const sx = ((left - frame.left) / frame.width) * img.naturalWidth;
+    const sy = ((top - frame.top) / frame.height) * img.naturalHeight;
+    const sw = ((right - left) / frame.width) * img.naturalWidth;
+    const sh = ((bottom - top) / frame.height) * img.naturalHeight;
+    const cw = Math.max(1, Math.min(200, Math.round(right - left)));
+    const ch = Math.max(1, Math.min(200, Math.round(bottom - top)));
+    try {
+      const canvas = document.createElement('canvas');
+      canvas.width = cw;
+      canvas.height = ch;
+      const ctx = canvas.getContext('2d', { willReadFrequently: true });
+      ctx.drawImage(img, sx, sy, sw, sh, 0, 0, cw, ch);
+      const data = ctx.getImageData(0, 0, cw, ch).data;
+      let ink = 0;
+      for (let i = 3; i < data.length; i += 4) if (data[i] > 25) ink += 1;
+      return Math.round((ink / (cw * ch)) * 100) / 100;
+    } catch {
+      return null;
+    }
   };
 
   const parseColor = (value) => {
@@ -456,13 +493,18 @@ function collectLayoutIssues(options) {
             cover = cover || top;
           }
         }
-        if (coveredCount === points.length) {
+        /* Две точки из трёх — уже половина строки под чужим слоем; три из трёх требовали
+           закрытия целиком, и подпись, закрытая снизу, проходила чистой. */
+        if (coveredCount >= 2) {
           issues.coveredText.push({
             selector: cssPath(el),
             text: ownText.slice(0, 60),
             coveredBy: cssPath(cover),
             box: box(rect),
-            why: 'во всех пробных точках сверху лежит непрозрачный элемент — текст не виден',
+            why:
+              coveredCount === points.length
+                ? 'во всех пробных точках сверху лежит непрозрачный элемент — текст не виден'
+                : 'в двух пробных точках из трёх сверху лежит непрозрачный элемент — текст закрыт частично',
           });
         }
       }
@@ -477,13 +519,22 @@ function collectLayoutIssues(options) {
         .trim();
       if (ownText.length > 1) {
         const overImage = backgroundIsImage(el, rect);
-        if (overImage && issues.textOverImage.length < maxItems) {
+        const ink = overImage && overImage !== true ? inkUnder(overImage, rect) : null;
+        /* Текст над прозрачным полем PNG — не над картинкой: чернил под ним нет. */
+        if (overImage && ink !== 0 && issues.textOverImage.length < maxItems) {
           issues.textOverImage.push({
             selector: cssPath(el),
             text: ownText.slice(0, 60),
             color: style.color,
             fontSize: style.fontSize,
-            why: 'текст поверх изображения — контраст числом не измерить, проверьте глазами на скриншоте',
+            ink,
+            ...(overImage !== true ? { image: cssPath(overImage) } : {}),
+            why:
+              ink === null
+                ? 'текст поверх изображения — контраст числом не измерить, проверьте глазами на скриншоте'
+                : ink > 0.05
+                  ? `текст лежит на нарисованной части картинки (${Math.round(ink * 100)}% пикселей под ним непрозрачны) — разведите текст и картинку или проверьте, что так в макете`
+                  : 'под текстом почти прозрачная часть картинки — скорее всего, читается',
           });
         }
         const fg = overImage ? null : parseColor(style.color);
@@ -602,6 +653,87 @@ function collectLayoutIssues(options) {
         }
       }
     }
+  }
+
+  /*
+   * Текст, вылезший из своего контейнера под соседа.
+   *
+   * На /news/detail подпись figcaption вылезала из своей figure — высота строки сетки считалась
+   * по картинке, — и картинки следующей строки закрывали подписи «[1]», «[2]». Проба по
+   * диагонали текста этого не видела: закрыта только выступающая полоса, а не весь текст. Здесь
+   * точки ставятся именно в выступающую часть. Элементы ниже сгиба прокручиваются к себе —
+   * elementsFromPoint видит только экран, — и прокрутка потом возвращается.
+   */
+  if (issues.coveredText.length < maxItems) {
+    const inlineOnly = (el) => Array.from(el.children).every((child) => getComputedStyle(child).display.startsWith('inline'));
+    const hasText = (el) => (el.textContent || '').trim().length > 1 && inlineOnly(el);
+    const known = new Set(issues.coveredText.map((item) => item.selector));
+    const candidates = [];
+    for (const { el, style, rect } of visible) {
+      if (candidates.length >= 30) break;
+      if (style.position === 'absolute' || style.position === 'fixed' || !hasText(el)) continue;
+      let host = el.parentElement;
+      while (host && getComputedStyle(host).display.startsWith('inline')) host = host.parentElement;
+      if (!host || host === document.body) continue;
+      const hs = getComputedStyle(host);
+      if (hs.overflowX !== 'visible' || hs.overflowY !== 'visible') continue;
+      const hr = host.getBoundingClientRect();
+      const out = { bottom: rect.bottom - hr.bottom, top: hr.top - rect.top, right: rect.right - hr.right, left: hr.left - rect.left };
+      const side = Object.entries(out).sort((a, b) => b[1] - a[1])[0];
+      if (side[1] <= 2) continue;
+      candidates.push({ el, host, side: side[0], depth: side[1] });
+    }
+    const scrollX = window.scrollX;
+    const scrollY = window.scrollY;
+    for (const { el, host, side, depth } of candidates) {
+      if (issues.coveredText.length >= maxItems) break;
+      let rect = el.getBoundingClientRect();
+      if (rect.top < 0 || rect.bottom > vh) {
+        window.scrollTo(scrollX, Math.max(0, window.scrollY + rect.top - vh / 3));
+        rect = el.getBoundingClientRect();
+      }
+      const hr = host.getBoundingClientRect();
+      /* Полоса, торчащая за край контейнера, — в ней и ставятся точки. */
+      const strip =
+        side === 'bottom'
+          ? { left: rect.left, right: rect.right, top: Math.max(rect.top, hr.bottom), bottom: rect.bottom }
+          : side === 'top'
+            ? { left: rect.left, right: rect.right, top: rect.top, bottom: Math.min(rect.bottom, hr.top) }
+            : side === 'right'
+              ? { left: Math.max(rect.left, hr.right), right: rect.right, top: rect.top, bottom: rect.bottom }
+              : { left: rect.left, right: Math.min(rect.right, hr.left), top: rect.top, bottom: rect.bottom };
+      const y = (strip.top + strip.bottom) / 2;
+      const x = (strip.left + strip.right) / 2;
+      const points = side === 'bottom' || side === 'top'
+        ? [0.2, 0.5, 0.8].map((k) => [strip.left + (strip.right - strip.left) * k, y])
+        : [0.2, 0.5, 0.8].map((k) => [x, strip.top + (strip.bottom - strip.top) * k]);
+      let cover = null;
+      for (const [px, py] of points) {
+        if (px < 0 || py < 0 || px > vw || py > vh) continue;
+        const stack = document.elementsFromPoint(px, py);
+        const top = stack[0];
+        if (!top || top === el || el.contains(top) || top.contains(el)) continue;
+        const ts = getComputedStyle(top);
+        const bg = parseColor(ts.backgroundColor);
+        if (/^(img|video|canvas|iframe|svg|picture)$/i.test(top.tagName) || (bg && bg.a > 0.9) || ts.backgroundImage.includes('url(')) {
+          cover = top;
+          break;
+        }
+      }
+      const selector = cssPath(el);
+      if (cover && !known.has(selector)) {
+        issues.coveredText.push({
+          selector,
+          text: label(el),
+          coveredBy: cssPath(cover),
+          container: cssPath(host),
+          box: box(rect),
+          reason: 'вышел за контейнер',
+          why: `текст вылез из ${cssPath(host)} на ${Math.round(depth)}px (${side}) и попал под ${cssPath(cover)} — высота контейнера не учитывает текст`,
+        });
+      }
+    }
+    window.scrollTo(scrollX, scrollY);
   }
 
   /*
@@ -841,22 +973,50 @@ export async function computedStyles(page, selector, props, { pseudo = null, all
  * переставляется по списку и возвращается к исходному; по каждой ширине — счётчики и первые
  * находки, отдельно worst — где хуже всего.
  */
+/*
+ * Порядок, в котором находки попадают в короткую выжимку ширины. Раньше выжимка шла по порядку
+ * категорий в отчёте, и coveredText с textOverImage, стоящие в конце, отрезались всегда: подпись
+ * под картинкой соседней строки оставалась в счётчике, а в ответе её не было.
+ */
+const TOP_ORDER = ['documentOverflow', 'overlaps', 'coveredText', 'clippedText', 'textOverImage', 'brokenImages', 'boxOverflow', 'tinyTargets'];
+
+/** По одной находке из каждой категории по кругу, с серьёзных: восемь строк на ширину. */
+export function topIssues(report, limit = 8) {
+  const lists = Object.entries(report.issues || {})
+    .filter(([, value]) => Array.isArray(value) && value.length)
+    .sort(([a], [b]) => rank(a) - rank(b));
+  const out = [];
+  for (let round = 0; round < 3 && out.length < limit; round += 1) {
+    for (const [category, list] of lists) {
+      if (list[round] && out.length < limit) out.push({ category, ...list[round] });
+    }
+  }
+  return out;
+}
+const rank = (category) => {
+  const index = TOP_ORDER.indexOf(category);
+  return index === -1 ? TOP_ORDER.length : index;
+};
+
+/** Выжимка отчёта по одной ширине: то же, что кладёт в byWidth прогон по ширинам. */
+export const widthSummary = (report) => ({
+  total: report.total,
+  counts: report.counts,
+  top: topIssues(report),
+  ...(report.motion ? { motion: report.motion } : {}),
+});
+
 export async function layoutAuditAcrossWidths(page, widths, options = {}) {
   const original = page.viewportSize() || { width: 1440, height: 900 };
   const settle = () => page.evaluate(() => new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve))));
   const byWidth = {};
   const worst = [];
-  const top = (report) =>
-    Object.entries(report.issues || {})
-      .filter(([, value]) => Array.isArray(value) && value.length)
-      .flatMap(([category, list]) => list.slice(0, 3).map((issue) => ({ category, ...issue })))
-      .slice(0, 8);
   try {
     for (const width of [...new Set(widths)].sort((a, b) => a - b)) {
       await page.setViewportSize({ width, height: original.height });
       await settle();
       const report = await layoutAudit(page, { ...options, maxItems: Math.min(options.maxItems || 50, 10) });
-      byWidth[width] = { total: report.total, counts: report.counts, top: top(report), ...(report.motion ? { motion: report.motion } : {}) };
+      byWidth[width] = widthSummary(report);
       worst.push({ width, total: report.total });
     }
   } finally {

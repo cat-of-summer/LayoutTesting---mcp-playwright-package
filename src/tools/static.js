@@ -11,6 +11,23 @@ import { getSession } from '../browser/pool.js';
 import { validateHtmlWithVnu, validateHtmlLocal, lintCss } from '../checks/static.js';
 import { json, text } from './shared.js';
 import { t } from '../i18n.js';
+import { lintLiveCss } from '../checks/css-live.js';
+import { getRestClient } from '../figma/rest.js';
+import { editorChannel } from '../figma/editor.js';
+import { ensureNodes } from '../figma/snapshot.js';
+import { groupRefs } from '../figma/url.js';
+import { collectTokens, statePalette } from '../figma/analyze/tokens.js';
+
+/** Палитра состояний макета по ссылкам: цвета вариантов hover, active, selected. */
+async function paletteOf(refs) {
+  const client = getRestClient();
+  const frames = [];
+  for (const group of groupRefs(refs)) {
+    const { found } = await ensureNodes(group.fileKey, group.nodeIds, { client, editor: editorChannel });
+    for (const id of group.nodeIds) frames.push({ snapshot: found.get(id).snapshot, rootId: id, ref: `${group.fileKey}:${id}` });
+  }
+  return statePalette(collectTokens(frames, { minUses: 1 }).colors);
+}
 
 export function register(server) {
   server.registerTool(
@@ -56,15 +73,23 @@ export function register(server) {
     {
       title: t({ ru: 'Проверка CSS', en: "Check CSS" }),
       description: t({
-        ru: 'Stylelint по CSS: файлам рабочего каталога стенда или переданному коду. Отвечает на вопрос «правильно ли написан стиль», а не «почему он не применился» — на второй отвечает matched_rules.',
-        en: "Stylelint over CSS: files in the stand working directory, or code passed inline. Answers \"is this stylesheet written correctly\", not \"why is my rule not applied\" — the latter is matched_rules.",
+        ru: 'Stylelint по CSS: файлам рабочего каталога стенда или переданному коду. С sessionId — все таблицы открытой страницы вместе с библиотечными: переменные, которые никто не читает, переменные состояний библиотеки, оставшиеся по умолчанию, а с figma — цвета :hover и .is-active вне палитры состояний макета.',
+        en: "Stylelint over CSS: files in the stand working directory, or code passed inline. With sessionId — every stylesheet of the open page, library ones included: custom properties nobody reads, library state variables left at their defaults, and with figma — :hover and .is-active colors outside the design's state palette.",
       }),
       inputSchema: {
         files: z.array(z.string()).optional().describe(d('Пути относительно рабочего каталога, глоб поддерживается')),
         code: z.string().optional(),
         config: z.record(z.any()).optional(),
+        sessionId: z.string().optional().describe(d('Проверить CSS открытой страницы: переменные и цвета состояний')),
+        figma: z.array(z.string()).optional().describe(d('С sessionId: кадры UI-кита и страницы — палитра состояний макета для цветов :hover')),
       },
     },
-    async ({ files, code, config }) => json(await lintCss({ files, code, config })),
+    async ({ files, code, config, sessionId, figma }) => {
+      if (sessionId) {
+        const palette = figma?.length ? await paletteOf(figma) : null;
+        return json(await lintLiveCss(getSession(sessionId).page, { palette }));
+      }
+      return json(await lintCss({ files, code, config }));
+    },
   );
 }

@@ -48,6 +48,19 @@ error text) and collect the palette from `figma_spec` with `sections: ["css"]` f
 block, not for some. On one landing page `figma_tokens` crashed, the palette was collected from
 `css` for half the blocks — and the dash color in a list of sub-items ended up invented.
 
+**Color by role, not by name.** For every color `figma_tokens` returns `roles` — where it is used:
+`state` — in state variants (Hover, Active, Selected), `tag` — in tags and statuses; `stateColors` is
+the state palette with shares, `roles` a summary line. "Lights up green" was written about the brand
+#E7EB70 that every active state of the kit uses, while the agent took the green #81F989 token — in
+the design it only colors the "Успешно" tag. Hover, focus and selected colors come from
+`stateColors`; an invented hover outside that palette is a blocker in `page_ready` and in
+`lint_css` with `figma`.
+
+**A library theme goes by its variables, not by a guess.** A datepicker, a slider, a select are
+themed with library variables; after theming run `lint_css` with `sessionId` with the widget open:
+`unusedCustomProperty` with `didYouMean` — the library has no variable by that name,
+`libraryDefault` — a state variable (the selected date, the range) was left at its default.
+
 ## 3.2 Components
 
 ```

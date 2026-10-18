@@ -106,6 +106,44 @@ export function uiKitTarget(target, targetSnapshot, sourceSet = null) {
   };
 }
 
+/*
+ * Триггеры, цель которых — состояние элемента на этой же странице: наведение, нажатие,
+ * переключение варианта. Не снятая цель такой связи — это ховер, который перенесут по краске
+ * корня и потеряют жёлтую кнопку в потомке: так и случилось с карточкой миссии.
+ */
+const STATE_TRIGGERS = new Set(['ON_HOVER', 'ON_PRESS', 'MOUSE_ENTER', 'MOUSE_LEAVE', 'WHILE_HOVERING', 'WHILE_PRESSING']);
+
+/**
+ * Блокирующие находки по не снятым целям связей: в начало ответа и с готовым вызовом.
+ *
+ * Раньше это было полем notSynced в хвосте ответа — его пропускали. unresolved: [{ group, ref }].
+ */
+export function blockingOf(unresolved) {
+  const byRef = new Map();
+  for (const { group, ref } of unresolved) {
+    const state = STATE_TRIGGERS.has(group.trigger) || group.action === 'NODE:CHANGE_TO';
+    const entry = byRef.get(ref) || { ref, triggers: new Set(), state: false, from: [] };
+    entry.triggers.add(group.trigger);
+    entry.state ||= state;
+    for (const source of group.sources || []) if (entry.from.length < 3) entry.from.push(source.label || source.id);
+    byRef.set(ref, entry);
+  }
+  const entries = [...byRef.values()].sort((a, b) => Number(b.state) - Number(a.state));
+  if (!entries.length) return null;
+  const refs = entries.map((entry) => entry.ref);
+  return {
+    kind: 'notSynced',
+    what: `Цели ${entries.length} связей прототипа не сняты${entries.some((e) => e.state) ? ', среди них состояния элементов (hover, нажатие, вариант)' : ''} — фаза не закрыта, пока они не разобраны`,
+    targets: entries.slice(0, 15).map((entry) => ({
+      ref: entry.ref,
+      triggers: [...entry.triggers],
+      ...(entry.state ? { state: true } : {}),
+      from: entry.from,
+    })),
+    next: { tool: 'figma_sync', args: { figma: refs.slice(0, 15) } },
+  };
+}
+
 export function describeBehavior(frames, { lookup = null } = {}) {
   const names = new Map();
   for (const frame of frames) {
@@ -187,6 +225,7 @@ export function describeBehavior(frames, { lookup = null } = {}) {
         ...(edge.url ? { url: edge.url } : {}),
         ...(edge.overlay ? { overlay: edge.overlay } : {}),
         ...(edge.transition ? { transition: edge.transition } : {}),
+        frame: edge.frame,
         sources: [],
         count: 0,
       });
@@ -194,6 +233,18 @@ export function describeBehavior(frames, { lookup = null } = {}) {
     const group = groups.get(key);
     group.count += 1;
     if (group.sources.length < 6) group.sources.push({ id: edge.from, label: edge.label });
+  }
+
+  /*
+   * Переключаемые элементы с одинаковым содержимым. Новости главной: в макете пять одинаковых
+   * заголовков, переключение по наведению перенесли — и работает оно, а меняется только номер.
+   * С такими данными эффект не виден ни дизайнеру, ни проверке.
+   */
+  for (const group of groups.values()) {
+    const labels = group.sources.map((source) => String(source.label || '').trim()).filter(Boolean);
+    if (group.count >= 2 && labels.length >= 2 && new Set(labels).size === 1 && /CHANGE_TO|SWAP|NAVIGATE|SCROLL_TO/.test(group.action || '')) {
+      group.sameContent = 'содержимое переключаемых элементов в макете одинаковое — эффект переключения не будет виден: попросите разные данные или проверьте на своих';
+    }
   }
 
   const states = [...groups.values()].filter((group) => group.action === 'NODE:CHANGE_TO');

@@ -333,7 +333,8 @@ const EN = {
   'Не закрывать по простою': 'Do not close when idle',
   'Что должно остаться на месте: сдвиг — в anchors.moved': 'What must stay in place: shifts go to anchors.moved',
   'Ждать затихания якорей, мс (1500)': 'Wait for anchors to settle, ms (1500)',
-  'Шаги browser_act, открывающие модалку или меню: проверить и там': 'browser_act steps that open a modal or menu: check there too',
+  'Шаги browser_act, открывающие модалку или меню: проверить и там. each: селектор группы (пины, табы) — каждый элемент кликается (action) по очереди, до max (12). Пауза — wait с числом мс в value':
+    'browser_act steps that open a modal or menu: check there too. each: a group selector (pins, tabs) — every element is clicked (action) in turn, up to max (12). A pause is wait with milliseconds in value',
   'Какие формы (form)': 'Which forms (form)',
   'Шаги browser_act, открывающие форму': 'browser_act steps that reveal the form',
   'Годные значения: селектор или name → значение': 'Valid values: selector or name → value',
@@ -343,6 +344,23 @@ const EN = {
   'Пары узел ↔ селектор: расстояния между соседями списка': 'Node ↔ selector pairs: distances between list neighbours',
   'Для render: children — по секциям, tiles — каждый потомок отдельно и контакт-лист': 'For render: children — by section, tiles — each child separately plus a contact sheet',
   'Для svg: fill — контур заливки без обводки': 'For svg: fill — the fill outline without the stroke',
+  'Адрес страницы. Без него — адрес открытой сессии sessionId': 'The page address. Without it, the address open in session sessionId',
+  'Сессия, из которой взять адрес страницы': 'The session to take the page address from',
+  'Кадры макета этой страницы всех ширин: ссылки figma.com или ключ:id': 'Design frames of this page at every width: figma.com links or key:id entries',
+  'Ширины прогона. По умолчанию — ширины кадров и стандартные между ними': 'Widths to run at. By default the frame widths and the standard ones between them',
+  'Прогоны из журнала моложе этого (мин) не повторяются. По умолчанию 30': 'Runs in the journal younger than this (min) are not repeated. Default 30',
+  'missing (по умолчанию) — только недостающее и устаревшее; all — всё заново': 'missing (default) — only what is missing or stale; all — everything again',
+  'Набор вариантов, один из вариантов или экземпляр: ссылка figma.com или ключ:id': 'A variant set, one of its variants or an instance: a figma.com link or a key:id entry',
+  'Исходный вариант: имя, значение свойства (Default) или Свойство=значение': 'The source variant: a name, a property value (Default) or Property=value',
+  'Целевой вариант. По умолчанию — состояние рядом с исходным, Hover первым': 'The target variant. By default the state next to the source one, Hover first',
+  'Сессия с открытой страницей: сверить ховер элемента с разницей вариантов': 'A session with the page open: check the element hover against the variant difference',
+  'Элемент страницы, на который наводить': 'The page element to hover',
+  'Проверить CSS открытой страницы: переменные и цвета состояний': 'Check the CSS of the open page: custom properties and state colors',
+  'С sessionId: кадры UI-кита и страницы — палитра состояний макета для цветов :hover': 'With sessionId: UI kit and page frames — the design state palette for :hover colors',
+  'Для svg трейса растра: убрать светлую подложку кадра': 'For svg of a traced raster: remove the light frame backdrop',
+  'Файл: ссылка figma.com или ключ, узел не обязателен': 'The file: a figma.com link or a key, a node is optional',
+  'Текст или часть имени слоя': 'A text or part of a layer name',
+  'Без канала редактора: весь файл одним запросом REST, а не только снятое': 'Without the editor channel: the whole file in one REST request, not only what was synced',
 };
 
 /**

@@ -18,7 +18,7 @@
 | Не знаю цвет, обводку, радиус, прозрачность узла | `figma_inspect` с `mode: "outline"` — краска в фигурных скобках |
 | Текст обрезан многоточием | `figma_inspect` с `mode: "text"` или раздел `text` у `figma_spec` |
 | Не знаю, что делает элемент | `figma_behavior`, `figma_comments` |
-| Не знаю, во что переключается вариант | `figma_sync` по ссылке из `notSynced` |
+| Не знаю, во что переключается вариант | `figma_sync` по `next` из `blocking` у `figma_behavior` |
 | Не знаю, что отсюда скачивать | раздел `assets` у `figma_spec`: `plan` — готовые списки для экспорта |
 | Нужна иконка | `figma_export` с `kind: "svg"` по id узла |
 | Иконки на странице чёрные | `monochrome: true` в ответе экспорта — задать `color` обёртки из поля `color` |

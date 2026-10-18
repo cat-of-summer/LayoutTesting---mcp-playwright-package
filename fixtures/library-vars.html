@@ -1,0 +1,29 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<title>Тема библиотеки угадыванием имён</title>
+<style id="library">
+  /* «Библиотека» в духе air-datepicker: переменные темы и правила, которые их читают. */
+  .lib { --lib-cell-background-color-in-range: #a2ddf6; --lib-background-color-in-range: #eee; --lib-cell-background-color-selected: #4eb5e6; }
+  .lib-cell.-in-range- { background: var(--lib-cell-background-color-in-range); }
+  .lib-cell.-other-month-.-in-range- { background: var(--lib-background-color-in-range); }
+  .lib-cell.-selected- { color: #fff; background: var(--lib-cell-background-color-selected); }
+</style>
+<style id="project">
+  /* Тема проекта: одна переменная задана верно, одна — не та, третьей у библиотеки нет вовсе. */
+  :root { --brand: #e7eb70; }
+  .lib { --lib-background-color-in-range: var(--brand); --lib-cell-background-color-selected: var(--brand); --lib-color-selected: #000; }
+  .news__arrow:hover { color: #81f989; }
+  .btn:hover { background: var(--brand); }
+</style>
+</head>
+<body>
+<div class="lib">
+  <span class="lib-cell -in-range-">12</span>
+  <span class="lib-cell -selected-">13</span>
+</div>
+<a class="news__arrow" href="#">→</a>
+<button class="btn" type="button">Кнопка</button>
+</body>
+</html>

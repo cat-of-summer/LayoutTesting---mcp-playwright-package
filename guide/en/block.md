@@ -204,6 +204,16 @@ Five reading rules:
 > — 367px in the design against 666px in the markup. A `border-bottom` cannot be limited that way;
 > the line had to be a pseudo-element.
 
+**Almost one line is one line.** `alignHints` in `figma_spec` and `figma_spacing`: same-named
+descendants of neighbouring cards that differ by 1–5px (the "Подробнее" buttons at 642 and 645) — the
+designer expects a straight line, so the build aligns them rather than carrying the difference over.
+In small pills `figma_compare` with `sections: true` checks how the glyphs sit by their ink —
+`inkOffsets`: caps sit higher in the browser than in Figma with the same padding.
+
+**Identical demo data.** `sameContent` in `figma_behavior` and `interaction_audit` — switchable
+elements have identical content, so the effect will not be visible. Check on different data and tell
+the human.
+
 ## 10.6 Stress-test the block — the widths between the frames
 
 ```
@@ -250,9 +260,21 @@ the modal (open, close by the backdrop, close by Esc), the form (submit, see the
 see a validation error), the menu, dropdowns, tabs. Hover **every** element that has a hover — in
 the live session, by eye on a screenshot.
 
+**A hover is checked against the design variant, not by the root paint.** For a hover drawn as a
+component variant, `figma_variants(variant, sessionId, selector)` shows the difference between the
+variants across every descendant and hovers the page element: `missingOnPage` is what of the variant
+was not carried over. The mission card hover was carried over by the root fill and lost the yellow
+button inside and the 4 → 12 radius. A hover declared in CSS that changes nothing visible comes back
+from `interaction_audit` in `hoverInvisible`.
+
 **States that are not on the page at check time.** An audit sees what is open right now: a modal
 close button of 15×15 and menu items are invisible to it while closed. Every modal and menu —
-`layout_audit` with `states: [{name, steps}]`, steps of the same shape as `browser_act`.
+`layout_audit` with `states: [{name, steps}]`, steps of the same shape as `browser_act`. Together
+with `widths` the state is recreated at every width; where the target of the first step is not
+visible (a filter button that exists only on mobile) it is `skipped`, and the other widths are
+still checked. A pause while an animation finishes is `wait` with milliseconds in `value`. A group
+of similar elements — map pins, tabs, dots — is `{each: "[data-pin]"}`: each is clicked in turn,
+and overlaps are looked for in every such state.
 
 **Forms — `form_audit`.** An empty submit, one invalid value per field, fixing after an error, a
 valid submit — from a clean page, typed key by key. It catches what lives between the end points:
@@ -292,7 +314,8 @@ Repeat 10.5 (both steps) after all the fixes.
 10.4–10.8 are done for the desktop and the mobile node; `unresolved` is empty; differences are
 either fixed or written down with a justification and the node; every section is compared pixel
 by pixel on every frame, `coverage` has no `notCompared`; every element's hover has been looked
-at in the live session; modals and menus passed `layout_audit` with `states`, forms passed
+at in the live session and checked against its variant with `figma_variants` — `missingOnPage` is
+empty; modals and menus passed `layout_audit` with `states`, forms passed
 `form_audit` with no findings, elements in several states — `anchors` with no `moved`. A block whose interaction
 has not been clicked through does not count as finished, however exactly it matches the design.
 

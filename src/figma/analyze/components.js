@@ -338,3 +338,75 @@ export function findComponents(frames, { project = null, minCluster = 2 } = {}) 
       : {}),
   };
 }
+
+/*
+ * Один и тот же блок в разных кадрах.
+ *
+ * «Процесс подготовки запуска» на внутренней странице — тот же таймлайн, что «Предстоящая
+ * миссия» на главной (Group 5, у вёрстки .tl), а его сверстали заново, .tline, — «сильно
+ * непохоже». Компонентом в макете он не был, рамки и заливки у него нет, и кластеры по
+ * инстансам и по краске его не видели. Здесь блоки сводятся по форме дерева: что из чего
+ * состоит, с повторами, свёрнутыми в один (четыре шага таймлайна и пять — одна форма).
+ */
+const BLOCK_TYPES = new Set(['FRAME', 'GROUP', 'INSTANCE', 'COMPONENT', 'SECTION']);
+const VECTOR_TYPES = new Set(['VECTOR', 'BOOLEAN_OPERATION', 'STAR', 'LINE', 'ELLIPSE', 'POLYGON', 'REGULAR_POLYGON']);
+
+export function blockPrint(snapshot, node, depth = 3) {
+  if (node.type === 'TEXT') return 'T';
+  if (VECTOR_TYPES.has(node.type) || isIconLike(snapshot, node)) return 'V';
+  if ((node.fills || []).some((paint) => paint.kind === 'image') && !node.children?.length) return 'I';
+  if (!node.children?.length) return 'R';
+  if (depth === 0) return 'C';
+  const kids = childNodes(snapshot, node)
+    .filter(isVisible)
+    .map((kid) => blockPrint(snapshot, kid, depth - 1));
+  const collapsed = [];
+  for (const kid of kids) {
+    const last = collapsed.at(-1);
+    if (last === kid || last === `${kid}*`) collapsed[collapsed.length - 1] = `${kid}*`;
+    else collapsed.push(kid);
+  }
+  return `[${collapsed.join(',')}]`;
+}
+
+const subtreeSize = (snapshot, node, cap = 400) => {
+  let n = 0;
+  const stack = [node.id];
+  while (stack.length && n < cap) {
+    const current = snapshot.nodes[stack.pop()];
+    if (!current) continue;
+    n += 1;
+    stack.push(...(current.children || []));
+  }
+  return n;
+};
+
+export function sameBlocks(frames, { maxDepth = 3, limit = 10 } = {}) {
+  const groups = new Map();
+  for (const { snapshot, rootId, ref } of frames) {
+    const visit = (id, depth) => {
+      const node = snapshot.nodes[id];
+      if (!node || !isVisible(node) || depth > maxDepth) return;
+      if (depth > 0 && BLOCK_TYPES.has(node.type) && subtreeSize(snapshot, node) >= 6) {
+        const print = blockPrint(snapshot, node);
+        /* Простая форма — «текст и иконка» — совпадает у половины макета и ничего не значит. */
+        if (print.includes('[[') && print.includes('T')) {
+          if (!groups.has(print)) groups.set(print, []);
+          groups.get(print).push({ frame: ref, node: node.id, name: clip(node.name || '', 40), text: clip(firstTextNode(snapshot, node)?.text?.chars ?? '', 40), depth });
+        }
+      }
+      for (const kid of node.children || []) visit(kid, depth + 1);
+    };
+    visit(rootId, 0);
+  }
+  const out = [];
+  for (const [print, members] of groups) {
+    const framesSeen = new Set(members.map((member) => member.frame));
+    if (framesSeen.size < 2) continue;
+    /* Из каждого кадра — самый верхний узел этой формы: вложенные повторяют его же. */
+    const top = [...framesSeen].map((frame) => members.filter((m) => m.frame === frame).sort((a, b) => a.depth - b.depth)[0]);
+    out.push({ print, members: top.map(({ depth, ...member }) => member) });
+  }
+  /* Сложная форма важнее: длинная сигнатура — это таймлайн, а не пара строк. */
+  return out.sort((a, b) => b.print.length - a.print.length).slice(0, limit);
+}

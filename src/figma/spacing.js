@@ -208,3 +208,65 @@ export function pageBoxes({ root, selectors }) {
     return { x: r.x - origin.x, y: r.y - origin.y, w: r.width, h: r.height };
   });
 }
+
+/*
+ * Почти совпадающие координаты как намерение выровнять.
+ *
+ * Кнопки «Подробнее» в соседних карточках стояли на y 642 и 645, верх карточек — 240 и 245;
+ * дизайнер ждал ровной линии, вёрстка перенесла три пикселя честно. Здесь соседние карточки
+ * одного ряда (одноимённые братья, перекрывающиеся по вертикали) сравниваются по одноимённым
+ * потомкам: расхождение в 1–5px — «вероятно, одна линия».
+ */
+function namedPaths(snapshot, rootId) {
+  const out = new Map();
+  const visit = (id, path) => {
+    const node = snapshot.nodes[id];
+    if (!node || node.visible === false || !node.box) return;
+    out.set(path, node);
+    const seen = new Map();
+    for (const kid of node.children || []) {
+      const child = snapshot.nodes[kid];
+      if (!child) continue;
+      const n = seen.get(child.name) || 0;
+      seen.set(child.name, n + 1);
+      visit(kid, `${path}/${child.name}${n ? `#${n + 1}` : ''}`);
+    }
+  };
+  visit(rootId, '');
+  return out;
+}
+
+export function alignHints(snapshot, rootId, { min = 1, max = 5, limit = 20 } = {}) {
+  const hints = [];
+  for (const { node: parent } of visibleNodes(snapshot, rootId)) {
+    const kids = (parent.children || []).map((id) => snapshot.nodes[id]).filter((kid) => kid?.box && kid.visible !== false);
+    const byName = new Map();
+    for (const kid of kids) byName.set(kid.name, [...(byName.get(kid.name) || []), kid]);
+    for (const [name, group] of byName) {
+      if (group.length < 2) continue;
+      /* Ряд: братья, перекрывающиеся по вертикали больше чем наполовину. */
+      const row = group.filter((kid) => group.some((other) => other !== kid && Math.min(kid.box.y + kid.box.h, other.box.y + other.box.h) - Math.max(kid.box.y, other.box.y) > Math.min(kid.box.h, other.box.h) / 2));
+      if (row.length < 2) continue;
+      const maps = row.map((card) => namedPaths(snapshot, card.id));
+      for (const [path, first] of maps[0]) {
+        const nodes = maps.map((map) => map.get(path)).filter(Boolean);
+        if (nodes.length < row.length) continue;
+        for (const [edgeName, value] of [['top', (n) => n.box.y], ['bottom', (n) => n.box.y + n.box.h]]) {
+          const values = nodes.map((n) => round(value(n)));
+          const spread = Math.max(...values) - Math.min(...values);
+          if (spread < min || spread > max) continue;
+          hints.push({
+            what: `${clip(name, 30)}${path ? ` → ${clip(first.name, 30)}` : ''}`,
+            edge: edgeName,
+            values: [...new Set(values)].sort((a, b) => a - b),
+            nodes: nodes.map((n) => n.id).slice(0, 6),
+            note: 'вероятно, одна линия: в вёрстке выровнять, а не переносить разницу в пиксели',
+          });
+          break;
+        }
+        if (hints.length >= limit) return hints;
+      }
+    }
+  }
+  return hints;
+}

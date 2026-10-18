@@ -14,7 +14,8 @@ import { runInteractions, INTERACTION_ACTIONS } from '../checks/interaction.js';
 import { matchedRules } from '../checks/cssom.js';
 import { elementLayers } from '../checks/layers.js';
 import { json, statesSchema, stepSchema, text } from './shared.js';
-import { inStates } from '../checks/states.js';
+import { inStates, inStatesAcrossWidths } from '../checks/states.js';
+import { interactionScope, layoutSignature, recordForms, recordInteraction, recordLayout } from '../checks/ready.js';
 import { auditForms } from '../checks/forms.js';
 import { t } from '../i18n.js';
 
@@ -58,8 +59,17 @@ export function register(server) {
       };
       const check = () =>
         widths?.length ? layoutAuditAcrossWidths(session.page, widths, options) : layoutAudit(session.page, options);
-      if (!states?.length) return json(await check());
-      return json(await inStates(session, states, check));
+      const url = session.page.url();
+      const result = !states?.length
+        ? await check()
+        : widths?.length
+          ? await inStatesAcrossWidths(session, states, widths, options)
+          : await inStates(session, states, check);
+      /* В журнал — только прогон без сужений: по include или одной категории готовность не судят. */
+      if (!include?.length && !categories?.length) {
+        recordLayout(url, result, layoutSignature(widths?.length ? widths : [session.page.viewportSize()?.width], states));
+      }
+      return json(result);
     },
   );
 
@@ -91,7 +101,10 @@ export function register(server) {
     },
     async ({ sessionId, selector, open, values, submit, maxForms }) => {
       const session = getSession(sessionId);
-      return json(await auditForms(session, { selector, open, values, submit, maxForms }));
+      const url = session.page.url();
+      const result = await auditForms(session, { selector, open, values, submit, maxForms });
+      if (!selector && !open?.length) recordForms(url, result);
+      return json(result);
     },
   );
 
@@ -249,20 +262,24 @@ export function register(server) {
             'Переоткройте переход через browser_goto с animations: "allow" (или сессию через browser_open с тем же условием) и повторите.',
         );
       }
+      const url = session.page.url();
+      const result = await runInteractions(session.page, {
+        ...(selectors ? { selectors } : {}),
+        ...(actions ? { actions } : {}),
+        ...(maxTargets ? { maxTargets } : {}),
+        ...(timeoutMs ? { timeoutMs } : {}),
+        ...(maxItems ? { maxItems } : {}),
+        ...(ignore?.length ? { ignore } : {}),
+      });
+      recordInteraction(url, result, interactionScope(selectors, actions));
       return json({
         session: { animations: 'allow', listenersVisible: false },
-        ...(await runInteractions(session.page, {
-          ...(selectors ? { selectors } : {}),
-          ...(actions ? { actions } : {}),
-          ...(maxTargets ? { maxTargets } : {}),
-          ...(timeoutMs ? { timeoutMs } : {}),
-          ...(maxItems ? { maxItems } : {}),
-          ...(ignore?.length ? { ignore } : {}),
-        })),
+        ...result,
         note:
           'Обработчики, повешенные через addEventListener, из страницы не видны — такие элементы попадают в обход только по ARIA, переходам или onclick. ' +
           'Время меряется по кадрам, а не по объявленной длительности: то, что не двигается и не гаснет (цвет, тень, фон), даст durationMs: 0 при работающем переходе. ' +
-          'kind: noMotion — DOM ответил, но геометрия не менялась; мутации внутри canvas, video и ignore не считаются.',
+          'kind: noMotion — DOM ответил, но геометрия не менялась; мутации внутри canvas, video и ignore не считаются, фоновых fixed- и sticky-слоёв — идут в ambient. ' +
+          'Ховер сверяется по computed styles цели и потомков (fill и stroke у SVG тоже) и по кадру цели: «ответил стилем» — со списком styles; hoverInvisible — правило :hover есть, а видимо ничего не меняется.',
       });
     },
   );

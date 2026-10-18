@@ -525,6 +525,62 @@ const PAGES = async () => {
   );
 };
 
+/*
+ * Поиск по всему файлу: имя слоя или текст. «В UI-ките есть развёрнутое состояние» галереи —
+ * кнопку «Загрузить больше» агент не нашёл: снимок знает только снятые кадры, а кит лежал на
+ * другой странице. Здесь обходятся все страницы файла; у найденного внутри варианта компонента —
+ * набор и его варианты, чтобы состояние было видно сразу.
+ */
+const FIND = async ({ query, limit }) => {
+  await figma.loadAllPagesAsync();
+  const q = String(query).toLowerCase();
+  const out = [];
+  const setOf = (node) => {
+    for (let up = node; up && up.type !== 'PAGE'; up = up.parent) {
+      if (up.type === 'COMPONENT' && up.parent && up.parent.type === 'COMPONENT_SET') return { variant: up, set: up.parent };
+      if (up.type === 'COMPONENT_SET') return { variant: null, set: up };
+    }
+    return null;
+  };
+  const frameOf = (node) => {
+    let up = node;
+    while (up.parent && up.parent.type !== 'PAGE') up = up.parent;
+    return up;
+  };
+  for (const page of figma.root.children) {
+    if (out.length >= limit) break;
+    const found = page.findAll((n) => {
+      if (out.length >= limit) return false;
+      const name = String(n.name || '').toLowerCase();
+      return name.includes(q) || (n.type === 'TEXT' && String(n.characters || '').toLowerCase().includes(q));
+    });
+    for (const n of found) {
+      if (out.length >= limit) break;
+      const frame = frameOf(n);
+      const owner = setOf(n);
+      out.push({
+        id: n.id,
+        name: n.name,
+        type: n.type,
+        page: page.name,
+        ...(frame !== n ? { frame: { id: frame.id, name: frame.name } } : {}),
+        ...(n.type === 'TEXT' ? { text: String(n.characters).slice(0, 80) } : {}),
+        ...(owner
+          ? {
+              set: {
+                id: owner.set.id,
+                name: owner.set.name,
+                ...(owner.variant ? { variant: owner.variant.name, variantId: owner.variant.id } : {}),
+                variants: owner.set.children.map((child) => child.name).slice(0, 12),
+              },
+            }
+          : {}),
+      });
+    }
+  }
+  return JSON.stringify(out);
+};
+
 /**
  * Обещание с дедлайном: по истечении — ошибка с кодом timeout, само обещание не отменяется.
  * Plugin API оборвать нельзя, поэтому вызывающий сам решает, что делать с зависшей вкладкой.
@@ -589,6 +645,7 @@ export const editorRender = (fileKey, items) => inFile(fileKey, RENDER, items);
 export const editorGeometry = (fileKey, ids) => inFile(fileKey, GEOMETRY, ids);
 export const editorImages = (fileKey, refs) => inFile(fileKey, IMAGES, refs);
 export const editorPages = (fileKey) => inFile(fileKey, PAGES, null);
+export const editorFind = (fileKey, { query, limit = 30 }) => inFile(fileKey, FIND, { query, limit });
 
 /**
  * Войти заново или дозавершить вход кодом.
@@ -777,4 +834,5 @@ export const editorChannel = {
   geometry: editorGeometry,
   images: editorImages,
   pages: editorPages,
+  find: editorFind,
 };

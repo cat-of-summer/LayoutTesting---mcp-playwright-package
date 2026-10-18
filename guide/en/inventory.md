@@ -9,7 +9,7 @@ STEPS:
   1. figma_structure(frame, depth: 2..4) — a markup-shaped tree, the overlay/decor/background/reparented notes.
   2. figma_spec(node) → text — full texts (the outline cuts them with an ellipsis).
   3. figma_comments(frames) — requirements from comments and annotations, including comments on elements inside the frame; no REST — figma_status action: token first, failing that — a blocker, a question to the human.
-  4. figma_behavior(frames) — links; every notSynced → figma_sync and take it apart.
+  4. figma_behavior(frames) — links; blocking at the top of the answer → figma_sync from its next and take it apart.
   5. A list of standard elements with their purpose; everything undescribed → unconfirmed and a question.
 
 ## 2.1 Structure
@@ -59,10 +59,15 @@ zero, read the threads with `figma_comments` on that node before building the bl
 > while a comment pointed at a reference on a finished site. On another, "fix the spacing" and "a
 > form goes here" also lived only in the comments.
 
+A color word in a thread — "green", "brand" — comes from `figma_comments` with `colorHint`: which
+colors the design actually uses in states. The designer's word is not a token name. A reference to a
+state "in the UI kit" that is not among the synced frames is found with `figma_find` by text or name
+— across every page of the file, with the variant set around the hit.
+
 `figma_behavior` groups links by target: six identical chevrons are one handler, not six. Targets
-missing from the snapshot sit in `notSynced` — pull each one with `figma_sync` and take it apart:
-the hover variant of a link component stayed in `notSynced`, and the hover was invented instead
-of taken.
+missing from the snapshot are a blocking finding, `blocking`, at the top of the answer, with a ready
+`figma_sync` call in `next`: pull and take them apart. The hover variant of a link component
+stayed unpulled, and the hover was invented instead of taken.
 
 ## 2.4 Identify the standard elements
 
@@ -76,5 +81,5 @@ Links of the kind "the success modal appears after the form is submitted" come f
 ## Gate
 
 The comments are read or their absence is agreed; for every interactive element it is known what
-it does; `notSynced` is empty; everything undescribed is marked `unconfirmed` and has gone out as
+it does; there is no `blocking`; everything undescribed is marked `unconfirmed` and has gone out as
 a question.

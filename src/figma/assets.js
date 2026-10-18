@@ -19,7 +19,7 @@
 import { childNodes } from './snapshot.js';
 import { isIconLike } from './analyze/structure.js';
 import { isVisible, visibleNodes } from './analyze/common.js';
-import { isCropped } from './export.js';
+import { isCropped, tracedReason } from './export.js';
 import { colorCss, round } from './css.js';
 
 const VECTORS = new Set(['VECTOR', 'BOOLEAN_OPERATION', 'STAR', 'POLYGON', 'LINE', 'REGULAR_POLYGON']);
@@ -90,6 +90,8 @@ function renderReason(snapshot, node, vectorish) {
   }
   if (vectorish && hasGradient(node)) return 'градиент в иконке: normalizeSvg его потеряет';
   if (vectorish && hasBlur(node)) return 'размытие в иконке: в svg его нет';
+  const traced = tracedReason(snapshot, node);
+  if (traced) return traced;
   return null;
 }
 
@@ -131,6 +133,33 @@ function dedupKey(node, entry) {
 }
 
 /**
+ * Фон-картинка у контейнера: секция, карточка, герой — узел с детьми и заливкой-картинкой.
+ *
+ * У кадров секций заливка — картинка с прозрачностью 0.4 поверх общего тёмного фона, и тянется
+ * она на всю высоту секции. В списке ассетов это была строка «image» наравне с фотографиями, и
+ * фон заменили своим canvas на секцию: на стыках он обрывался, затемнение героя кончалось за
+ * карточкой. Здесь такой фон — отдельной строкой: что под ним, с какой прозрачностью и сколько
+ * он занимает.
+ */
+function backgroundOf(snapshot, node, fill) {
+  if (!node.children?.length) return null;
+  const under = (node.fills || []).slice(0, (node.fills || []).indexOf(fill)).filter((paint) => paint.kind === 'solid');
+  let over = under.length ? colorCss(under.at(-1).color) : null;
+  for (let id = node.parent; !over && id && snapshot.nodes[id]; id = snapshot.nodes[id].parent) {
+    const solid = (snapshot.nodes[id].fills || []).filter((paint) => paint.kind === 'solid').at(-1);
+    if (solid) over = colorCss(solid.color);
+  }
+  const { w = 0, h = 0 } = node.box || {};
+  const opacity = fill.opacity ?? 1;
+  return {
+    opacity,
+    scaleMode: fill.scaleMode,
+    ...(over ? { over } : {}),
+    line: `фон «${node.name}»: картинка${opacity < 1 ? `, op ${round(opacity)}` : ''}${over ? ` поверх ${over}` : ''}, ${fill.scaleMode || 'FILL'}, на всю рамку ${round(w)}×${round(h)} — тянуть на всю высоту блока, не обрезать по своему canvas`,
+  };
+}
+
+/**
  * Скрытые узлы сюда не попадают намеренно: Figma не рендерит скрытое ни в PNG, ни в SVG, и
  * список «что скачать» с непригодным к скачиванию узлом — это не полнота, а ложный след.
  * Геометрию и краску такого узла отдаёт figma_inspect с hidden: true.
@@ -139,6 +168,7 @@ export function assetInventory(snapshot, rootId, { limit = 60 } = {}) {
   const counts = { svg: 0, image: 0, render: 0, css: 0 };
   const groups = new Map();
   const items = [];
+  const backgrounds = [];
 
   for (const { node } of visibleNodes(snapshot, rootId)) {
     const entry = classify(snapshot, node);
@@ -159,6 +189,11 @@ export function assetInventory(snapshot, rootId, { limit = 60 } = {}) {
       ...(entry.fill?.scaleMode ? { scaleMode: entry.fill.scaleMode } : {}),
       ...(by === 'byName' ? { dedup: 'byName' } : {}),
     };
+    const background = entry.kind === 'image' ? backgroundOf(snapshot, node, entry.fill) : null;
+    if (background) {
+      item.background = { opacity: background.opacity, ...(background.over ? { over: background.over } : {}) };
+      backgrounds.push({ id: node.id, line: background.line });
+    }
     items.push(item);
     if (!key) continue;
     const group = groups.get(key);
@@ -200,6 +235,7 @@ export function assetInventory(snapshot, rootId, { limit = 60 } = {}) {
   return {
     counts,
     ...(duplicates.length ? { duplicates } : {}),
+    ...(backgrounds.length ? { backgrounds: backgrounds.slice(0, 20) } : {}),
     items: items.slice(0, limit),
     ...(items.length > limit ? { itemsTruncated: `Показано ${limit} из ${items.length}` } : {}),
     ...(Object.keys(plan).length ? { plan } : {}),

@@ -124,7 +124,9 @@ Phrased as "do not do X, because Y" — the things that should stop the hand.
 - **Figma comments are read before building.** No REST is a blocker and a question, not a skip.
 - **Intermediate widths: at least five points** — the design ones + 768 + 1024 + 1280 + the
   minimum between them. Two points are not adaptivity.
-- **A "done" report is never written without a pixel check of every section and without a live
-  session.** `coverage` in the `figma_compare` answer shows what has not happened.
+- **A "done" report is written only after `page_ready` with `ready: true`.** It runs by itself
+  the per-section comparison of every frame, click and hover over the interactive elements,
+  overlaps at every width and in states, unsynced prototype targets; `blockers` names what stands
+  in the way, with a ready `next`.
 - **A "done" report is never written after comparing a single width.** Desktop compared means
   mobile not compared; `coverage.notCompared` names such frames.

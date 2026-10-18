@@ -11,7 +11,7 @@
   3. layout_audit(widths: из figma_sync.widths.suggested, states: модалки и меню) — скролл, наложения, обрезки, тач-таргеты на каждой ширине и в каждом состоянии.
   4. interaction_audit в живой сессии; browser_goto с frames — стартовая анимация.
   5. a11y_axe + a11y_pa11y; validate_html (ignore — только для соглашений библиотек).
-  6. Отчёт «готово» — только после 2 и 4.
+  6. page_ready(url, frames: все кадры страницы) — сам догоняет пропущенное из 2–4; отчёт «готово» — только при ready: true.
 
 ## Порядок
 
@@ -25,6 +25,7 @@ interaction_audit                              → в живой сессии
 browser_goto(url, frames: 8)                   → первые кадры после навигации: intro
 a11y_axe + a11y_pa11y                          → наборы правил разные, ловят разное
 validate_html
+page_ready(url, frames: [...])                 → итог: недостающее догоняет сам, ready: true | false и blockers с готовым next
 ```
 
 `figma_compare` открывает свою сессию шириной кадра — сравнивать десктопный макет с мобильной
@@ -89,7 +90,7 @@ CSS — в поле `css`, новые атрибуты платформы (`popo
 
 ## Гейт страницы
 
-Ноль находок по `documentOverflow`, `overlaps`, `clippedText`, `brokenImages`,
+`page_ready` по странице ответил `ready: true`. Ноль находок по `documentOverflow`, `overlaps`, `clippedText`, `brokenImages`,
 `imagesWithoutDimensions`, `tinyTargets` на каждой ширине и в каждом состоянии (`states`); пустой
 `silent` у `interaction_audit`; `form_audit` без находок; `coverage` у `figma_compare` каждого
 кадра без пробелов и без `notCompared`; intro просмотрен по кадрам. Остальное — с обоснованием.

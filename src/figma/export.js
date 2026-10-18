@@ -494,7 +494,7 @@ export function geometryFromRest(document) {
   return { w: root.width, h: root.height, shapes };
 }
 
-export async function exportSvg(refs, { client = getRestClient(), cacheDir = DIRS.figma, editor = null, geometry = 'render' } = {}) {
+export async function exportSvg(refs, { client = getRestClient(), cacheDir = DIRS.figma, editor = null, geometry = 'render', dropBackground = false } = {}) {
   const runId = newRunId('figma-svg');
   const dir = await runDir(runId);
   const requests = { tier1: 0 };
@@ -554,9 +554,11 @@ export async function exportSvg(refs, { client = getRestClient(), cacheDir = DIR
         failed.push(strip({ ref, error: sources[id]?.error || 'Figma не выгрузила SVG: узел пустой или скрыт.', hint: hiddenHint(snapshot, id) }));
         continue;
       }
-      const { node } = found.get(id);
+      const { node, snapshot } = found.get(id);
       const name = slug(node.name) || 'icon';
-      const clean = normalizeSvg(sources[id].svg, { prefix: name });
+      const traced = tracedReason(snapshot, node);
+      const stripped = traced && dropBackground ? dropBackgroundRect(sources[id].svg) : null;
+      const clean = normalizeSvg(stripped ? stripped.svg : sources[id].svg, { prefix: name });
       const hash = crypto.createHash('sha1').update(clean.svg).digest('hex');
       const known = byHash.get(hash);
       if (known) {
@@ -576,6 +578,13 @@ export async function exportSvg(refs, { client = getRestClient(), cacheDir = DIR
         color: clean.color || undefined,
         colors: clean.monochrome ? undefined : clean.colors,
         ...(geometry === 'fill' ? { geometry: 'fill' } : {}),
+        ...(traced
+          ? {
+              warning: stripped?.dropped
+                ? `${traced}: подложка убрана (dropBackground)`
+                : `${traced}. Выгрузите растром (kind: render) или повторите с dropBackground: true — подложка будет убрана`,
+            }
+          : {}),
         ...(sources[id].rotated
           ? { geometryNote: 'Часть узлов повёрнута, а REST не отдаёт их абсолютную матрицу: поворот потерян. Канал редактора такое рисует верно.' }
           : {}),
@@ -784,4 +793,48 @@ export async function exportImages(refs, { client = getRestClient(), cacheDir = 
     }
   }
   return strip({ runId, images, failed, withoutImages, channel: state.channel, editorFallback: state.fallback, requests });
+}
+
+/*
+ * Трейс растра: «Traced Image» или кадр со светлой сплошной заливкой и вектором поверх.
+ *
+ * Логотип «РКЦ «Прогресс»» был узлом Traced Image — белая заливка кадра плюс векторный трейс со
+ * смещением −0.96px. svg-экспорт отдал белый rect под путём: на тёмном фоне по краю тонкая белая
+ * линия, а вид инвертирован относительно макета. Такой узел по умолчанию выгружают растром, а
+ * если нужен svg — без подложки (dropBackground).
+ */
+const isLight = (paint) => paint?.kind === 'solid' && (paint.color.a ?? 1) > 0.9 && paint.color.r > 230 && paint.color.g > 230 && paint.color.b > 230;
+
+export function tracedReason(snapshot, node) {
+  if (/traced image|трассир/i.test(node.name || '')) return 'трейс растра (Traced Image): под вектором подложка кадра, svg отдаст её прямоугольником';
+  if (!['FRAME', 'GROUP', 'COMPONENT', 'INSTANCE'].includes(node.type) || !node.box) return null;
+  const fills = node.fills || [];
+  if (!fills.length || !isLight(fills[fills.length - 1])) return null;
+  const kids = (node.children || []).map((id) => snapshot.nodes[id]).filter(Boolean);
+  const vectors = kids.filter((kid) => ['VECTOR', 'BOOLEAN_OPERATION'].includes(kid.type) && kid.box);
+  if (!vectors.length || vectors.length !== kids.length) return null;
+  const area = node.box.w * node.box.h;
+  const covered = Math.max(...vectors.map((kid) => kid.box.w * kid.box.h));
+  return area && covered / area > 0.7 ? 'белая подложка кадра под вектором: на тёмном фоне svg даст белый прямоугольник и кромку' : null;
+}
+
+/** Убрать светлый прямоугольник-подложку во весь viewBox — первый такой элемент в файле. */
+export function dropBackgroundRect(svg) {
+  const view = /viewBox="\s*[-\d.]+\s+[-\d.]+\s+([\d.]+)\s+([\d.]+)"/.exec(svg);
+  const [w, h] = view ? [Number(view[1]), Number(view[2])] : [null, null];
+  let dropped = false;
+  const out = svg.replace(/<rect\b[^>]*\/>/g, (tag) => {
+    if (dropped) return tag;
+    const fill = /fill="([^"]+)"/.exec(tag)?.[1]?.toLowerCase();
+    const rw = Number(/width="([\d.]+)"/.exec(tag)?.[1]);
+    const rh = Number(/height="([\d.]+)"/.exec(tag)?.[1]);
+    const light = fill && /^(white|#fff|#ffffff|#fefefe|#fdfdfd)$/.test(fill);
+    const full = !w || (Math.abs(rw - w) < 2 && Math.abs(rh - h) < 2);
+    if (light && full) {
+      dropped = true;
+      return '';
+    }
+    return tag;
+  });
+  return { svg: out, dropped };
 }

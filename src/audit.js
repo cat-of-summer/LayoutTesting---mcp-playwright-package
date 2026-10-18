@@ -157,6 +157,8 @@ export function summarize(results, errors = {}) {
   const s = {
     layoutIssues: results.layout?.total ?? null,
     documentOverflow: results.layout?.issues?.documentOverflow ? true : false,
+    /* Разбивка по категориям: «эвристики вёрстки: 7» не говорило, что из семи две — подпись под картинкой. */
+    layoutByCategory: layoutBreakdown(results.layout),
     axeViolations: results.axe?.total ?? null,
     pa11yErrors: results.pa11y?.byType?.error ?? null,
     htmlErrors: results.html?.byType?.error ?? null,
@@ -184,10 +186,20 @@ export function summarize(results, errors = {}) {
   return s;
 }
 
+/** Ненулевые счётчики layout_audit, без служебных. */
+function layoutBreakdown(layout) {
+  if (!layout?.counts) return null;
+  const out = Object.fromEntries(Object.entries(layout.counts).filter(([k, v]) => v && k !== 'boxOverflowClipped'));
+  return Object.keys(out).length ? out : null;
+}
+
 function problemsOf(s) {
   const problems = [];
   if (s.documentOverflow) problems.push('горизонтальный скролл');
-  if (s.layoutIssues) problems.push(`эвристики вёрстки: ${s.layoutIssues}`);
+  if (s.layoutIssues) {
+    const parts = Object.entries(s.layoutByCategory || {}).map(([k, v]) => `${k} ${v}`).join(', ');
+    problems.push(`эвристики вёрстки: ${s.layoutIssues}${parts ? ` (${parts})` : ''}`);
+  }
   if (s.axeViolations) problems.push(`axe: ${s.axeViolations}`);
   // pa11y считался в сводку, но на вердикт не влиял: прогон с одним лишь pa11y всегда
   // рапортовал «проблем не найдено», сколько бы нарушений ни нашлось.

@@ -92,9 +92,12 @@ async function run(session, { action, selector, value, files, x, y, to, duration
         await target.waitFor({ state: 'visible', ...wait });
         return { action, selector };
       }
-      if (!duration) throw new Error('Для wait нужен selector — дождаться элемента — или duration — пауза в мс.');
-      await page.waitForTimeout(duration);
-      return { action, ms: duration };
+      /* В шагах states и form_audit поля duration нет, и пауза «подождать, пока доедет
+         анимация» пишется числом в value. */
+      const ms = duration || (/^\d+$/.test(String(value ?? '').trim()) ? Number(value) : 0);
+      if (!ms) throw new Error('Для wait нужен selector — дождаться элемента — или пауза в мс: duration или число в value.');
+      await page.waitForTimeout(ms);
+      return { action, ms };
     }
     case 'scroll':
       await page.evaluate(([sx, sy]) => window.scrollBy(sx, sy), [x ?? 0, y ?? 0]);

@@ -1,0 +1,45 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<title>Фильтры только на мобильном</title>
+<style>
+  body { margin: 0; font: 16px/1.4 sans-serif; }
+  main { padding: 20px; }
+  /* Кнопка фильтров есть только на узких экранах: на 1024+ фильтры стоят колонкой сразу. */
+  .filters-toggle { display: none; height: 44px; padding: 0 16px; }
+  @media (max-width: 1023px) { .filters-toggle { display: inline-block; } }
+  .filters { display: none; position: relative; padding: 12px; background: #f4f4f4; }
+  body.filters-open .filters { display: block; }
+  /* В открытой панели подпись наезжает на кнопку «Применить»: дефект виден только в состоянии. */
+  .filters__title { margin: 0; height: 40px; }
+  .filters__apply { display: block; margin-top: -30px; height: 44px; width: 200px; }
+  .pins { position: relative; height: 200px; margin-top: 20px; background: #dde; }
+  .pin { position: absolute; width: 32px; height: 32px; padding: 0; border: 0; background: #333; }
+  .card { display: none; position: absolute; width: 160px; height: 80px; background: #fff; border: 1px solid #999; }
+  .card.is-open { display: block; }
+  .dead { height: 44px; padding: 0 16px; margin-top: 20px; }
+</style>
+</head>
+<body>
+<main>
+  <button class="filters-toggle" type="button" onclick="document.body.classList.add('filters-open')">Фильтры</button>
+  <div class="filters">
+    <p class="filters__title">Подобрать по параметрам</p>
+    <button class="filters__apply" type="button">Применить</button>
+  </div>
+  <div class="pins">
+    <button class="pin" data-pin="a" style="left:20px;top:20px" aria-label="Байконур" onclick="openCard('a')"></button>
+    <button class="pin" data-pin="b" style="left:120px;top:40px" aria-label="Восточный" onclick="openCard('b')"></button>
+    <div class="card" id="card-a" style="left:60px;top:20px">Байконур</div>
+    <div class="card" id="card-b" style="left:40px;top:30px">Восточный</div>
+  </div>
+  <button class="dead" type="button">Ничего не делает</button>
+</main>
+<script>
+  function openCard(id) {
+    document.querySelectorAll('.card').forEach((card) => card.classList.toggle('is-open', card.id === 'card-' + id));
+  }
+</script>
+</body>
+</html>
