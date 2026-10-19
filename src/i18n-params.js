@@ -350,9 +350,9 @@ const EN = {
   'Ширины прогона. По умолчанию — ширины кадров и стандартные между ними': 'Widths to run at. By default the frame widths and the standard ones between them',
   'Прогоны из журнала моложе этого (мин) не повторяются. По умолчанию 30': 'Runs in the journal younger than this (min) are not repeated. Default 30',
   'missing (по умолчанию) — только недостающее и устаревшее; all — всё заново': 'missing (default) — only what is missing or stale; all — everything again',
-  'Набор вариантов, один из вариантов или экземпляр: ссылка figma.com или ключ:id': 'A variant set, one of its variants or an instance: a figma.com link or a key:id entry',
-  'Исходный вариант: имя, значение свойства (Default) или Свойство=значение': 'The source variant: a name, a property value (Default) or Property=value',
-  'Целевой вариант. По умолчанию — состояние рядом с исходным, Hover первым': 'The target variant. By default the state next to the source one, Hover first',
+  'Набор вариантов, вариант, компонент или экземпляр: ссылка figma.com или ключ:id': 'A variant set, a variant, a component or an instance: a figma.com link or a key:id entry',
+  'Исходный вариант: имя, значение свойства (Default), Свойство=значение или ссылка на любой узел': 'The source variant: a name, a property value (Default), Property=value or a link to any node',
+  'Целевой вариант или ссылка на любой узел. По умолчанию — состояние рядом с исходным, Hover первым': 'The target variant or a link to any node. By default the state next to the source one, Hover first',
   'Сессия с открытой страницей: сверить ховер элемента с разницей вариантов': 'A session with the page open: check the element hover against the variant difference',
   'Элемент страницы, на который наводить': 'The page element to hover',
   'Проверить CSS открытой страницы: переменные и цвета состояний': 'Check the CSS of the open page: custom properties and state colors',
@@ -360,6 +360,7 @@ const EN = {
   'Для svg трейса растра: убрать светлую подложку кадра': 'For svg of a traced raster: remove the light frame backdrop',
   'Файл: ссылка figma.com или ключ, узел не обязателен': 'The file: a figma.com link or a key, a node is optional',
   'Текст или часть имени слоя': 'A text or part of a layer name',
+  'Отступ строк от картинки для clearance, px (8)': 'Gap from text lines to the image for clearance, px (8)',
   'Без канала редактора: весь файл одним запросом REST, а не только снятое': 'Without the editor channel: the whole file in one REST request, not only what was synced',
 };
 

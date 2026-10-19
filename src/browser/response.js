@@ -6,6 +6,8 @@
  * Cache-Control и HSTS — то есть страница с noindex в заголовке выглядит индексируемой.
  */
 
+import net from 'node:net';
+
 const LOCAL_HOSTS = new Set(['localhost', '127.0.0.1', '0.0.0.0', '[::1]']);
 
 /**
@@ -42,6 +44,75 @@ export function navigationErrorHint(message, url) {
     );
   }
   return null;
+}
+
+/**
+ * Проба сервера, когда переход не дождался ни байта ответа.
+ *
+ * Отказ соединения ловится сразу (navigationErrorHint), но бывает хуже: dev-сервер остановлен,
+ * а порт держит прокси — Docker Desktop, WSL relay, traefik. Соединение принимается, ответа нет,
+ * и browser_goto молча ждал 30 с load, чтобы вернуть navigationTimedOut. Проба за секунды
+ * говорит, что именно с сервером: отказ, тишина на TCP, принятое соединение без ответа или
+ * ответ, пришедший просто поздно (первая сборка).
+ *
+ * hostMap — подмена адресов сессии: браузер ходит по ней, и проба идёт туда же.
+ */
+export async function probeServer(url, { hostMap = null, connectMs = 2000, httpMs = 3000 } = {}) {
+  let parsed;
+  try {
+    parsed = new URL(url);
+  } catch {
+    return null;
+  }
+  if (!/^https?:$/.test(parsed.protocol)) return null;
+  const mapped = hostMap?.[parsed.hostname];
+  const host = mapped || parsed.hostname.replace(/^\[|\]$/g, '');
+  const port = Number(parsed.port) || (parsed.protocol === 'https:' ? 443 : 80);
+  const tcp = await new Promise((resolve) => {
+    const socket = net.connect({ host, port });
+    const done = (state) => {
+      socket.destroy();
+      resolve(state);
+    };
+    socket.setTimeout(connectMs, () => done('timeout'));
+    socket.once('connect', () => done('accepted'));
+    socket.once('error', (err) => done(err.code === 'ECONNREFUSED' ? 'refused' : err.code || 'error'));
+  });
+  if (tcp !== 'accepted') return { state: tcp === 'refused' ? 'refused' : 'unreachable', tcp, host, port };
+  const started = Date.now();
+  try {
+    const target = new URL(url);
+    if (mapped) target.hostname = mapped;
+    const res = await fetch(target, { redirect: 'manual', signal: AbortSignal.timeout(httpMs), headers: mapped ? { host: parsed.host } : {} });
+    await res.body?.cancel().catch(() => {});
+    return { state: 'responds', status: res.status, ms: Date.now() - started, host, port };
+  } catch (err) {
+    const message = String(err.cause?.message || err.message);
+    const silent = err.name === 'TimeoutError' || err.name === 'AbortError' || /other side closed|socket hang up|ECONNRESET/i.test(message);
+    return { state: silent ? 'acceptedNoResponse' : 'error', error: message.slice(0, 160), host, port };
+  }
+}
+
+/** Подсказка по итогу пробы: что делать, а не только что случилось. */
+export function probeHint(probe, url) {
+  if (!probe) return null;
+  const where = `${probe.host}:${probe.port}`;
+  switch (probe.state) {
+    case 'refused':
+      return navigationErrorHint('ECONNREFUSED', url) || `На ${where} никто не слушает: сервер не запущен.`;
+    case 'unreachable':
+      return `${where} не отвечает даже на TCP (${probe.tcp}): адрес недоступен из контейнера стенда — неверный IP, фаервол или сеть Docker.`;
+    case 'acceptedNoResponse':
+      return (
+        `${where} принимает соединение, но не присылает ни байта ответа: процесс dev-сервера, скорее всего, остановлен или завис, ` +
+        'а порт держит прокси (Docker Desktop, WSL relay, traefik). Перезапустите dev-сервер — фоновая задача прошлой сессии агента ' +
+        'останавливается вместе с ней — и повторите browser_goto. Если сервер жив и просто собирает страницу дольше таймаута — поднимите timeout.'
+      );
+    case 'responds':
+      return `Сейчас сервер отвечает (${probe.status} за ${probe.ms} мс): первый ответ просто задержался — обычно это первая сборка dev-сервера. Повторите browser_goto.`;
+    default:
+      return `Проба ${where} не удалась: ${probe.error}.`;
+  }
 }
 
 /**

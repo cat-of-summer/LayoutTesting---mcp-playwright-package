@@ -535,29 +535,50 @@ const FIND = async ({ query, limit }) => {
   await figma.loadAllPagesAsync();
   const q = String(query).toLowerCase();
   const out = [];
-  const setOf = (node) => {
+  /* Лимит — на сырые совпадения с запасом: ранжирует и режет до limit уже стенд. Раньше limit
+     резал по порядку страниц, и экземпляры на макетах съедали все места раньше UI-кита. */
+  const cap = Math.max(limit, 2000);
+  const ownerOf = (node) => {
+    let instance = null;
     for (let up = node; up && up.type !== 'PAGE'; up = up.parent) {
       if (up.type === 'COMPONENT' && up.parent && up.parent.type === 'COMPONENT_SET') return { variant: up, set: up.parent };
       if (up.type === 'COMPONENT_SET') return { variant: null, set: up };
+      if (up.type === 'COMPONENT') return { component: up };
+      /* Самый внешний экземпляр: карточка на странице, а не кнопка внутри неё. */
+      if (up.type === 'INSTANCE') instance = up;
     }
-    return null;
+    return instance ? { instance } : null;
   };
   const frameOf = (node) => {
     let up = node;
     while (up.parent && up.parent.type !== 'PAGE') up = up.parent;
     return up;
   };
+  const mains = new Map();
+  const mainOf = async (instance) => {
+    if (!mains.has(instance.id)) {
+      let main = null;
+      try {
+        main = await instance.getMainComponentAsync();
+      } catch {
+        main = null;
+      }
+      const set = main && main.parent && main.parent.type === 'COMPONENT_SET' ? main.parent : null;
+      mains.set(instance.id, main ? { id: main.id, name: main.name, ...(set ? { set: set.name, setId: set.id } : {}), ...(main.remote ? { remote: true } : {}) } : null);
+    }
+    return mains.get(instance.id);
+  };
   for (const page of figma.root.children) {
-    if (out.length >= limit) break;
+    if (out.length >= cap) break;
     const found = page.findAll((n) => {
-      if (out.length >= limit) return false;
       const name = String(n.name || '').toLowerCase();
       return name.includes(q) || (n.type === 'TEXT' && String(n.characters || '').toLowerCase().includes(q));
     });
     for (const n of found) {
-      if (out.length >= limit) break;
+      if (out.length >= cap) break;
       const frame = frameOf(n);
-      const owner = setOf(n);
+      const owner = ownerOf(n);
+      const main = owner && owner.instance ? await mainOf(owner.instance) : null;
       out.push({
         id: n.id,
         name: n.name,
@@ -565,7 +586,7 @@ const FIND = async ({ query, limit }) => {
         page: page.name,
         ...(frame !== n ? { frame: { id: frame.id, name: frame.name } } : {}),
         ...(n.type === 'TEXT' ? { text: String(n.characters).slice(0, 80) } : {}),
-        ...(owner
+        ...(owner && owner.set
           ? {
               set: {
                 id: owner.set.id,
@@ -575,6 +596,8 @@ const FIND = async ({ query, limit }) => {
               },
             }
           : {}),
+        ...(owner && owner.component ? { component: { id: owner.component.id, name: owner.component.name } } : {}),
+        ...(owner && owner.instance ? { instance: { id: owner.instance.id, ...(main ? { main } : {}) } } : {}),
       });
     }
   }

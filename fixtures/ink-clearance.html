@@ -1,0 +1,21 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<title>Подпись на схеме</title>
+<style>
+  body { margin: 0; font: 16px/20px sans-serif; background: #fff; color: #222; }
+  .scheme { position: relative; width: 800px; height: 400px; }
+  /* Схема: непрозрачный круг радиусом 150 в центре прозрачного PNG 400×400. */
+  .scheme img { position: absolute; left: 0; top: 0; width: 400px; height: 400px; }
+  /* Подпись заходит на правый край круга: под строкой — нарисованная часть схемы. */
+  .scheme .label { position: absolute; left: 300px; top: 190px; white-space: nowrap; }
+</style>
+</head>
+<body>
+  <div class="scheme">
+    <img src="scheme.png" alt="">
+    <span class="label">Подпись схемы</span>
+  </div>
+</body>
+</html>

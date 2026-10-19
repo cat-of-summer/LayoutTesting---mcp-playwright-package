@@ -25,8 +25,8 @@ import { exportImages, exportRender, exportSvg } from '../figma/export.js';
 import { cssItems, outlineLines, textItems, unresolvedOf, usedVariables } from '../figma/inspect.js';
 import { assetInventory } from '../figma/assets.js';
 import { getRestClient } from '../figma/rest.js';
-import { addRequests, childNodes, ensureNode, ensureNodes, findNode, frameIndex, pathOf, searchCached, searchRestDocument, syncFigma } from '../figma/snapshot.js';
-import { compareHover, diffVariants, isStateVariant, pickPair } from '../figma/variants.js';
+import { addRequests, childNodes, ensureNode, ensureNodes, findNode, frameIndex, pathOf, rankHits, searchCached, searchRestDocument, strip, syncFigma } from '../figma/snapshot.js';
+import { compareHover, diffVariants, isStateVariant, pairSiblings, pickPair, stateBase } from '../figma/variants.js';
 import { hoverStyleDiff } from '../checks/interaction.js';
 import { groupRefs, parseFigmaRef, refOf } from '../figma/url.js';
 import { diffSnapshots, fetchVersions, parseMoment, pickVersions, snapshotAt } from '../figma/history.js';
@@ -404,7 +404,22 @@ export async function runFigmaCompare({ figma, sessionId, url, selector, mode = 
  */
 export async function runFigmaVariants({ figma, from, to, sessionId, selector, limit = 40 }) {
   const client = getRestClient();
-  const { snapshot, node, fileKey } = await ensureNode(figma, { client, editor: editorChannel });
+  const opts = { client, editor: editorChannel };
+  if (sessionId && !selector) throw new Error('Для сверки со страницей нужен selector элемента, на который наводить.');
+
+  /* from/to ссылками на узлы — любая пара, а не только варианты одного набора. */
+  const fromRef = nodeRefOf(from, figma);
+  const toRef = nodeRefOf(to, figma);
+  if (fromRef || toRef) {
+    if (!figma && !(fromRef && toRef)) throw new Error('Вторую сторону пары передайте в figma или в from/to ссылкой на узел.');
+    const a = await ensureNode(fromRef || figma, opts);
+    const b = await ensureNode(toRef || figma, opts);
+    if (a.fileKey === b.fileKey && a.node.id === b.node.id) throw new Error('from и to указывают на один и тот же узел: сравнивать нечего.');
+    return withPage({ mode: 'nodes', from: nodeSide(a), to: nodeSide(b), ...diffOut(diffVariants(a.snapshot, a.node.id, b.snapshot, b.node.id), limit) }, { sessionId, selector, from: a, to: b });
+  }
+
+  if (!figma) throw new Error('Нужен figma: набор вариантов, вариант или экземпляр. Либо from и to ссылками на два узла.');
+  const { snapshot, node, fileKey } = await ensureNode(figma, opts);
   let set = node;
   let setSnapshot = snapshot;
   let current = null;
@@ -421,45 +436,97 @@ export async function runFigmaVariants({ figma, from, to, sessionId, selector, l
       node.component?.setId ||
       (parent?.type === 'COMPONENT_SET' ? parent.id : null) ||
       snapshot.ancestors?.findLast?.((item) => item.type === 'COMPONENT_SET')?.id;
-    if (!setId) {
-      throw new Error(
-        `Узел ${refOf(fileKey, node.id)} (${node.type}) не принадлежит набору вариантов, либо снимок снят старой версией стенда без ссылки на набор: ` +
-          'повторите figma_sync с refresh: true или передайте ссылку на сам набор (COMPONENT_SET).',
-      );
-    }
-    ({ node: set, snapshot: setSnapshot } = await ensureNode(refOf(fileKey, setId), { client, editor: editorChannel }));
+    if (!setId) return standaloneVariants({ snapshot, node, fileKey, from, to, sessionId, selector, limit, opts });
+    ({ node: set, snapshot: setSnapshot } = await ensureNode(refOf(fileKey, setId), opts));
   }
   const variants = childNodes(setSnapshot, set).filter((child) => child.type === 'COMPONENT');
   if (variants.length < 2) throw new Error(`В наборе «${set.name}» меньше двух вариантов — сравнивать нечего.`);
   const pair = pickPair(variants, { from, to: wanted, current });
   if (pair.error) throw new Error(`${pair.error}. Варианты набора: ${variants.map((variant) => variant.name).slice(0, 20).join('; ')}`);
+  const setInfo = { ref: refOf(fileKey, set.id), name: set.name, variants: variants.map((variant) => variant.name).slice(0, 30) };
+
+  if (pair.all) {
+    /* Состояния рядом с базовым нет: базовый против каждого, по нескольку строк. */
+    const others = pair.all.slice(0, 8);
+    const each = Math.max(3, Math.floor(limit / others.length));
+    return {
+      set: setInfo,
+      from: { ref: refOf(fileKey, pair.from.id), name: pair.from.name },
+      against: others.map((variant) => {
+        const diff = diffVariants(setSnapshot, pair.from.id, setSnapshot, variant.id);
+        const { changed, changes } = diffOut(diff, each);
+        return { variant: variant.name, ref: refOf(fileKey, variant.id), changed, changes };
+      }),
+      ...(pair.all.length > others.length ? { note: `Показано ${others.length} вариантов из ${pair.all.length}` } : {}),
+      hint: 'Рядом с базовым нет варианта, который отличался бы одним свойством-состоянием. Полная разница с нужным вариантом — тот же вызов с to: имя варианта.',
+    };
+  }
 
   const diff = diffVariants(setSnapshot, pair.from.id, setSnapshot, pair.to.id);
-  /* Геометрия последней: смена радиуса или обводки двигает рамки всех потомков, и сдвиги
-     заслоняют то, ради чего вариант нарисован, — краску. */
+  return withPage(
+    { set: setInfo, from: { ref: refOf(fileKey, pair.from.id), name: pair.from.name }, to: { ref: refOf(fileKey, pair.to.id), name: pair.to.name }, ...diffOut(diff, limit) },
+    { sessionId, selector, diff },
+  );
+}
+
+/**
+ * from/to как ссылка на узел: URL figma.com, ключ:id или голый id («176:6346») — тогда файл
+ * берётся из figma. Имя варианта («Hover», «State=Hover») ссылкой не считается.
+ */
+function nodeRefOf(value, figma) {
+  if (!value) return null;
+  const text = String(value).trim();
+  if (/^I?\d+[:-]\d+([;:-]\d+)*$/.test(text)) {
+    if (!figma) throw new Error(`Узел ${text} без файла: передайте figma или ссылку целиком (ключ:id).`);
+    return refOf(parseFigmaRef(figma).fileKey, text.replace(/-/g, ':'));
+  }
+  try {
+    return parseFigmaRef(text).nodeId ? text : null;
+  } catch {
+    return null;
+  }
+}
+
+/* Сторона пары в ответе: экземпляр называет свой главный компонент. */
+const nodeSide = ({ node, fileKey }) =>
+  strip({
+    ref: refOf(fileKey, node.id),
+    name: node.name,
+    type: node.type,
+    mainComponent:
+      node.type === 'INSTANCE' && node.component?.id
+        ? strip({ ref: refOf(fileKey, node.component.id), name: node.component.name, set: node.component.set })
+        : undefined,
+  });
+
+/* Разница в ответе. Геометрия последней: смена радиуса или обводки двигает рамки всех
+   потомков, и сдвиги заслоняют то, ради чего вариант нарисован, — краску. */
+function diffOut(diff, limit) {
   const ordered = [...diff.changes.filter((c) => c.category !== 'geometry'), ...diff.changes.filter((c) => c.category === 'geometry')];
-  const out = {
-    set: { ref: refOf(fileKey, set.id), name: set.name, variants: variants.map((variant) => variant.name).slice(0, 30) },
-    from: { ref: refOf(fileKey, pair.from.id), name: pair.from.name },
-    to: { ref: refOf(fileKey, pair.to.id), name: pair.to.name },
+  return {
     changed: diff.changes.length,
     changes: ordered.slice(0, limit).map(({ text, ...change }) => change),
     ...(diff.changes.length > limit ? { note: `Показано ${limit} из ${diff.changes.length}: поднимите limit` } : {}),
     ...(diff.onlyFrom.length ? { onlyFrom: diff.onlyFrom } : {}),
     ...(diff.onlyTo.length ? { onlyTo: diff.onlyTo } : {}),
+    _diff: diff,
   };
+}
+
+/** Ответ и, с sessionId, сверка ховера страницы с разницей. */
+async function withPage(out, { sessionId, selector }) {
+  const { _diff: diff, ...result } = out;
   if (!sessionId) {
     return {
-      ...out,
+      ...result,
       hint: 'Каждое изменение — и у корня, и у потомков — переносится в правило состояния. Сверить ховер на странице: тот же вызов с sessionId и selector.',
     };
   }
-  if (!selector) throw new Error('Для сверки со страницей нужен selector элемента, на который наводить.');
   const { session } = await sessionAt(sessionId);
   const hover = await hoverStyleDiff(session.page, selector);
   const page = compareHover(diff, hover.changes);
   return {
-    ...out,
+    ...result,
     page: {
       selector,
       verdict: page.missingOnPage.length ? 'ховер на странице не совпадает с вариантом' : 'ховер совпадает с вариантом',
@@ -467,6 +534,58 @@ export async function runFigmaVariants({ figma, from, to, sessionId, selector, l
       ...(hover.changes.length ? {} : { note: 'Наведение на странице не поменяло ничего из сверяемых свойств' }),
     },
   };
+}
+
+/**
+ * Компонент без набора вариантов: ховер нарисован соседним компонентом («Card» и «Card Hover»).
+ * Соседи — дети родителя, если он не страница целиком; иначе — поиск по имени без состояния.
+ */
+async function standaloneVariants({ snapshot, node, fileKey, from, to, sessionId, selector, limit, opts }) {
+  const base = node.type === 'INSTANCE' && node.component?.id ? (await ensureNode(refOf(fileKey, node.component.id), opts).catch(() => null)) : { snapshot, node };
+  if (!base || base.node.type !== 'COMPONENT') {
+    throw new Error(
+      `Узел ${refOf(fileKey, node.id)} (${node.type}) не принадлежит набору вариантов. Ховер, нарисованный отдельным узлом, ` +
+        'сравнивается парой: from и to — ссылки на два узла (ключ:id или голый id с figma).',
+    );
+  }
+  if (from || to) throw new Error(`«${base.node.name}» не в наборе вариантов: from и to здесь — только ссылки на узлы.`);
+  let siblings = [];
+  const inside = base.snapshot.nodes[base.node.parent];
+  const outside = inside ? null : base.snapshot.ancestors?.at(-1);
+  if (inside) siblings = childNodes(base.snapshot, inside);
+  else if (outside && !/^(PAGE|CANVAS)$/.test(outside.type || '')) {
+    /* Родитель снятого корня — фрейм или секция UI-кита: снимается одним запросом. Страницу
+       целиком не снимаем — там поиск по имени дешевле. */
+    const hit = await ensureNode(refOf(fileKey, outside.id), opts).catch(() => null);
+    if (hit) siblings = childNodes(hit.snapshot, hit.node);
+  }
+  let pair = pairSiblings(base.node, siblings);
+  if (!pair.from && !pair.candidates.length && stateBase(base.node.name)) {
+    const found = await runFigmaFind({ figma: refOf(fileKey, base.node.id), query: stateBase(base.node.name), limit: 60 }).catch(() => null);
+    const components = (found?.results || []).filter((item) => item.type === 'COMPONENT').map((item) => ({ id: item.id, name: item.name, type: item.type }));
+    pair = pairSiblings(base.node, components);
+  }
+  if (!pair.from) {
+    const list = pair.candidates.map((item) => ({ ref: refOf(fileKey, item.id), name: item.name }));
+    throw new Error(
+      `Компонент «${base.node.name}» (${refOf(fileKey, base.node.id)}) не входит в набор вариантов` +
+        (list.length
+          ? `, похожих соседей несколько: ${list.map((item) => `${item.name} — ${item.ref}`).join('; ')}. Выберите пару: from и to ссылками на узлы.`
+          : ', соседа-состояния с тем же именем не нашлось. Передайте пару ссылками: from и to — ключ:id двух узлов (figma_find по тексту найдёт компонент).'),
+    );
+  }
+  const a = pair.from.id === base.node.id ? base : await ensureNode(refOf(fileKey, pair.from.id), opts);
+  const b = pair.to.id === base.node.id ? base : await ensureNode(refOf(fileKey, pair.to.id), opts);
+  return withPage(
+    {
+      mode: 'nodes',
+      pairedBy: `соседние компоненты с одним именем без состояния: «${a.node.name}» → «${b.node.name}»`,
+      from: nodeSide({ node: a.node, fileKey }),
+      to: nodeSide({ node: b.node, fileKey }),
+      ...diffOut(diffVariants(a.snapshot, a.node.id, b.snapshot, b.node.id), limit),
+    },
+    { sessionId, selector },
+  );
 }
 
 /** Поиск по всему файлу Figma по тексту или имени слоя — тело figma_find. */
@@ -487,26 +606,44 @@ export async function runFigmaFind({ figma, query, deep = false, limit = 30 }) {
   }
   if (!results && deep) {
     const res = await client.file(fileKey);
-    results = searchRestDocument(res.document, query, { limit });
+    results = searchRestDocument(res.document, query, { components: res.components, componentSets: res.componentSets });
     source = 'rest: файл целиком';
   }
   let roots = null;
   if (!results) {
-    const cached = await searchCached(fileKey, query, { limit });
+    const cached = await searchCached(fileKey, query);
     results = cached.results;
     roots = cached.roots;
     source = `снимки: ${cached.roots} снятых узлов`;
   }
-  const withRef = (item) => ({
-    ref: refOf(fileKey, item.id),
-    ...item,
-    ...(item.set ? { set: { ...item.set, ref: refOf(fileKey, item.set.id), ...(item.set.variantId ? { variantRef: refOf(fileKey, item.set.variantId) } : {}) } } : {}),
-  });
+  const ranked = rankHits(results, limit);
+  const withRef = (item) => {
+    if (item.mainComponent) {
+      /* Экземпляры одного компонента — одна строка: сам компонент и несколько примеров. */
+      const { id, setId, ...main } = item.mainComponent;
+      return {
+        ...item,
+        mainComponent: { ref: refOf(fileKey, id), ...main, ...(setId ? { setRef: refOf(fileKey, setId) } : {}) },
+        sample: item.sample.map((sampleId) => refOf(fileKey, sampleId)),
+      };
+    }
+    const { instance, ...rest } = item;
+    return {
+      ref: refOf(fileKey, item.id),
+      ...rest,
+      ...(item.set ? { set: { ...item.set, ref: refOf(fileKey, item.set.id), ...(item.set.variantId ? { variantRef: refOf(fileKey, item.set.variantId) } : {}) } } : {}),
+      ...(item.component ? { component: { ...item.component, ref: refOf(fileKey, item.component.id) } } : {}),
+    };
+  };
   return {
     query,
     source,
-    found: results.length,
-    results: results.map(withRef),
+    found: ranked.total,
+    ...(ranked.total > ranked.results.length ? { shown: ranked.results.length } : {}),
+    results: ranked.results.map(withRef),
+    ...(ranked.instanceGroups
+      ? { order: 'сначала определения (набор, вариант, компонент), затем экземпляры, свёрнутые по главному компоненту, затем остальное' }
+      : {}),
     ...(fallback ? { editorFallback: fallback } : {}),
     ...(roots !== null
       ? {
@@ -1320,8 +1457,8 @@ export function register(server) {
     {
       title: t({ ru: 'Поиск по файлу макета', en: 'Search the design file' }),
       description: t({
-        ru: 'Ищет по всему файлу Figma текст или имя слоя — «Загрузить больше», «Hover», «Фильтры» — по всем страницам, а не только по снятым кадрам. У найденного внутри варианта компонента — набор и его варианты: состояние из UI-кита по ссылке из комментария находится одним вызовом.',
-        en: 'Searches the whole Figma file for a text or a layer name — "Load more", "Hover", "Filters" — across every page, not only the synced frames. A hit inside a component variant comes with its set and the variants: a UI kit state mentioned in a comment is found in one call.',
+        ru: 'Ищет по всему файлу Figma текст или имя слоя — «Загрузить больше», «Hover», «Фильтры» — по всем страницам, а не только по снятым кадрам. У найденного внутри варианта компонента — набор и его варианты: состояние из UI-кита по ссылке из комментария находится одним вызовом. Определения идут первыми, экземпляры свёрнуты по главному компоненту.',
+        en: 'Searches the whole Figma file for a text or a layer name — "Load more", "Hover", "Filters" — across every page, not only the synced frames. A hit inside a component variant comes with its set and the variants: a UI kit state mentioned in a comment is found in one call. Definitions come first, instances fold by main component.',
       }),
       inputSchema: {
         figma: z.string().describe(d('Файл: ссылка figma.com или ключ, узел не обязателен')),
@@ -1338,13 +1475,13 @@ export function register(server) {
     {
       title: t({ ru: 'Разница вариантов', en: 'Variant difference' }),
       description: t({
-        ru: 'Что меняется между двумя вариантами компонента — Default и Hover, обычный и выбранный — по всем потомкам: заливка, обводка, радиус, эффекты, цвет текста, видимость слоёв. С sessionId и selector наводит на элемент страницы и сверяет его ховер с этой разницей: что из варианта не перенесено.',
-        en: 'What changes between two component variants — Default and Hover, normal and selected — across every descendant: fill, stroke, radius, effects, text color, layer visibility. With sessionId and selector it hovers the page element and checks its hover against that difference: what of the variant was not carried over.',
+        ru: 'Что меняется между двумя вариантами компонента — Default и Hover, обычный и выбранный — по всем потомкам: заливка, обводка, радиус, эффекты, цвет текста, видимость слоёв. Ховер отдельным компонентом — тоже: сосед с тем же именем находится сам, любую пару узлов задают from и to ссылками. С sessionId и selector наводит на элемент страницы и сверяет его ховер с этой разницей: что из варианта не перенесено.',
+        en: 'What changes between two component variants — Default and Hover, normal and selected — across every descendant: fill, stroke, radius, effects, text color, layer visibility. A hover drawn as a separate component works too: a neighbour with the same name is found automatically, and from and to as node links compare any pair. With sessionId and selector it hovers the page element and checks its hover against that difference: what of the variant was not carried over.',
       }),
       inputSchema: {
-        figma: z.string().describe(d('Набор вариантов, один из вариантов или экземпляр: ссылка figma.com или ключ:id')),
-        from: z.string().optional().describe(d('Исходный вариант: имя, значение свойства (Default) или Свойство=значение')),
-        to: z.string().optional().describe(d('Целевой вариант. По умолчанию — состояние рядом с исходным, Hover первым')),
+        figma: z.string().optional().describe(d('Набор вариантов, вариант, компонент или экземпляр: ссылка figma.com или ключ:id')),
+        from: z.string().optional().describe(d('Исходный вариант: имя, значение свойства (Default), Свойство=значение или ссылка на любой узел')),
+        to: z.string().optional().describe(d('Целевой вариант или ссылка на любой узел. По умолчанию — состояние рядом с исходным, Hover первым')),
         sessionId: z.string().optional().describe(d('Сессия с открытой страницей: сверить ховер элемента с разницей вариантов')),
         selector: z.string().optional().describe(d('Элемент страницы, на который наводить')),
         limit: z.number().optional().describe(d('Сколько строк или записей показать')),

@@ -4,7 +4,7 @@ import { CONFIG } from '../config.js';
 import { contextOptions, hostResolverRules, normalizeProfile, profileKey } from './profile.js';
 import { applyProfileToPage, applyThrottle, stabilize } from './stabilize.js';
 import { reapplyInjections } from './inject.js';
-import { blockedHostHint, isErrorPage, navigationErrorHint, responseFacts, sameDocument } from './response.js';
+import { blockedHostHint, isErrorPage, navigationErrorHint, probeHint, probeServer, responseFacts, sameDocument } from './response.js';
 import { t } from '../i18n.js';
 
 const ENGINES = { chromium, firefox, webkit };
@@ -631,6 +631,22 @@ export async function gotoAndSettle(
       cdp = null;
     }
   }
+  /*
+   * Что происходит в сети, пока идёт переход: пришёл ли ответ на сам документ и какие запросы
+   * так и висят. По этому таймаут объясняет себя — «сервер молчит» или «висит аналитика».
+   */
+  let docAnswered = false;
+  const pending = new Set();
+  const page = session.page;
+  const onRequest = (request) => pending.add(request);
+  const onDone = (request) => pending.delete(request);
+  const onResponse = (res) => {
+    if (res.request().isNavigationRequest() && res.frame() === page.mainFrame()) docAnswered = true;
+  };
+  page.on('request', onRequest);
+  page.on('requestfinished', onDone);
+  page.on('requestfailed', onDone);
+  page.on('response', onResponse);
   try {
     response = await session.page.goto(url, { waitUntil, timeout });
   } catch (err) {
@@ -667,10 +683,35 @@ export async function gotoAndSettle(
       await session.page.waitForLoadState('domcontentloaded', { timeout: 5000 }).catch(() => {});
     }
   } finally {
+    page.off('request', onRequest);
+    page.off('requestfinished', onDone);
+    page.off('requestfailed', onDone);
+    page.off('response', onResponse);
     if (cdp) {
       await cdp.send('Network.setCacheDisabled', { cacheDisabled: false }).catch(() => {});
       await cdp.detach().catch(() => {});
     }
+  }
+  /* Ни байта ответа на документ — вопрос к серверу, а не к странице: проба скажет, что с ним. */
+  const hanging = timedOut && docAnswered ? [...pending].map((request) => sanitizeUrl(request.url())).slice(0, 5) : [];
+  if (timedOut && !docAnswered) {
+    /*
+     * Ни байта ответа на документ — вопрос к серверу, а не к странице. Переход при этом всё ещё
+     * висит, и любой evaluate (стабилизация, проверки) ждал бы его минутами: документа нет, и
+     * контекста для скрипта тоже. Поэтому переход отменяется, а проба говорит, что с сервером.
+     */
+    const probe = await probeServer(url, { hostMap: session.profile.hostMap }).catch(() => null);
+    await page.goto('about:blank', { timeout: 5000 }).catch(() => {});
+    session.navByTool = false;
+    session.lastResponse = await responseFacts(null);
+    session.navSeen = session.navSeq;
+    return {
+      status: null,
+      url: sanitizeUrl(url),
+      navigationTimedOut: true,
+      note: `Сервер не прислал ответ на сам документ за ${timeout} мс — страницы нет, переход отменён, вкладка на about:blank.`,
+      ...(probe ? { server: probe, hint: probeHint(probe, url) } : {}),
+    };
   }
 
   let images = null;
@@ -753,6 +794,10 @@ export async function gotoAndSettle(
   if (timedOut) {
     result.navigationTimedOut = true;
     result.note = `Событие "${waitUntil}" не наступило за ${timeout} мс — проверки идут по тому, что отрисовано.`;
+    if (hanging.length) {
+      result.pendingRequests = hanging;
+      result.note += ' Документ пришёл, а load держат запросы из pendingRequests — обычно аналитика, чат или long-poll; для проверок вёрстки это не помеха.';
+    }
   }
 
   const warnings = summarizeFailures(session.logs.network.slice(logMark));

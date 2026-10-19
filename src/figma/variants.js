@@ -11,8 +11,12 @@
  */
 import { colorCss, round } from './css.js';
 
-/* Значения свойства варианта, которые означают состояния элемента. */
-const STATE_WORDS = /hover|hovered|active|pressed|focus|focused|selected|current|checked|open|on|наведен|актив|выбран/i;
+/* Значения свойства варианта, которые означают состояния элемента, — целыми словами: подстрокой
+   «on» находилось в «Secondary», и Type=Secondary сходил за состояние рядом с Primary. */
+const STATE_TOKEN = /^(hover|hovered|active|pressed|focus|focused|selected|current|checked|open|on|наведен\S*|актив\S*|выбран\S*)$/i;
+const DEFAULT_TOKEN = /^(default|normal|rest|enabled|idle|off|base|обычн\S*)$/i;
+const words = (value) => String(value).split(/[\s/,_=()[\]\-–—:]+/).filter(Boolean);
+const isStateValue = (value) => words(value).some((token) => STATE_TOKEN.test(token));
 const DEFAULT_WORDS = /^(default|normal|rest|enabled|idle|off|base|по умолчанию|обычн)/i;
 
 /** "State=Hover, Size=L" → { State: 'Hover', Size: 'L' }. */
@@ -27,7 +31,7 @@ export function variantProps(name = '') {
 
 /** Вариант-состояние: Hover, Active, Selected — а не Default и не размер. */
 export const isStateVariant = (name) =>
-  Object.values(variantProps(name)).some((value) => STATE_WORDS.test(value) && !DEFAULT_WORDS.test(value));
+  Object.values(variantProps(name)).some((value) => isStateValue(value) && !DEFAULT_WORDS.test(value));
 
 const matches = (variant, query) => {
   if (!query) return false;
@@ -42,9 +46,46 @@ const matches = (variant, query) => {
 };
 
 /**
+ * Имя компонента без слова-состояния: «Card Hover», «Card / hover», «Card (hover)» → «card».
+ * По нему одиночный компонент находит свой ховер, нарисованный отдельным компонентом рядом.
+ */
+export function stateBase(name = '') {
+  const kept = words(name).filter((token) => !STATE_TOKEN.test(token) && !DEFAULT_TOKEN.test(token) && !/^state$/i.test(token));
+  return kept.join(' ').toLowerCase();
+}
+
+/** Есть ли в имени слово-состояние (не «Default»). */
+export const namesState = (name = '') => isStateValue(name);
+
+/**
+ * Пара для одиночного компонента — без набора вариантов: компоненты с тем же именем без
+ * слова-состояния. Карточку миссии и её ховер нарисовали двумя самостоятельными компонентами
+ * («Card», «Card Hover»), и figma_variants отвечал только «не принадлежит набору».
+ *
+ * Возвращает { from, to } при однозначной паре либо { candidates } — все похожие соседи.
+ */
+export function pairSiblings(node, siblings) {
+  const base = stateBase(node.name);
+  const same = siblings.filter((other) => other.id !== node.id && other.type === 'COMPONENT' && base && stateBase(other.name) === base);
+  if (!same.length) return { candidates: [] };
+  if (namesState(node.name)) {
+    /* Ссылка ведёт на сам ховер: «откуда» — сосед без слова-состояния. */
+    const plain = same.filter((other) => !namesState(other.name));
+    return plain.length === 1 ? { from: plain[0], to: node } : { candidates: same };
+  }
+  const states = same.filter((other) => namesState(other.name));
+  const hover = states.find((other) => /hover|наведен/i.test(other.name));
+  if (states.length === 1 || hover) return { from: node, to: hover || states[0] };
+  return { candidates: same };
+}
+
+/**
  * Выбрать пару вариантов. from/to — имя варианта, значение свойства («Hover») или «State=Hover».
  * По умолчанию: from — вариант экземпляра или «Default», to — вариант, отличающийся от from
  * одним свойством со значением-состоянием (Hover прежде прочих).
+ *
+ * Нет такого соседа — не ошибка, а { from, all }: базовый вариант против каждого из остальных.
+ * Набор из четырёх вариантов без явного Hover отвечал «передайте to», и агент перебирал их сам.
  */
 export function pickPair(variants, { from, to, current } = {}) {
   const byQuery = (query) => variants.find((variant) => matches(variant, query));
@@ -63,10 +104,10 @@ export function pickPair(variants, { from, to, current } = {}) {
     if (variant === base) return false;
     const other = variantProps(variant.name);
     const differ = Object.keys({ ...props, ...other }).filter((key) => props[key] !== other[key]);
-    return differ.length === 1 && STATE_WORDS.test(other[differ[0]] || '');
+    return differ.length === 1 && isStateValue(other[differ[0]] || '');
   });
   const hover = siblings.find((variant) => /hover|наведен/i.test(variant.name)) || siblings[0];
-  return hover ? { from: base, to: hover } : { error: 'Не найден вариант-состояние рядом с базовым: передайте to' };
+  return hover ? { from: base, to: hover } : { from: base, all: variants.filter((variant) => variant !== base) };
 }
 
 /* Подпись узла: имя, у текста — сам текст; у контейнера — первый текст внутри. */

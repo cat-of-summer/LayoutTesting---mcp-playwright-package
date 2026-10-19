@@ -130,14 +130,36 @@ function atNode(node, fn) {
   }
 }
 
+/**
+ * Положение корня в родителе. Координаты дерева идут от самого корня, и outline по одной точке
+ * таймлайна отвечал «0,0» — где она стоит, приходилось узнавать css-режимом родителя.
+ */
+function parentPlace(snapshot, root) {
+  const parent = snapshot.nodes[root.parent] || (snapshot.ancestors?.length ? snapshot.ancestors.at(-1) : null);
+  if (!parent?.box || !root.box) return '';
+  return ` @parent ${round(root.box.x - parent.box.x)},${round(root.box.y - parent.box.y)} в ${parent.id}`;
+}
+
+/** Постоянный шаг по оси у ряда соседей: «шаг x 120». Нет постоянного — пусто. */
+function stepOf(kids, axis) {
+  const values = kids.map((kid) => kid.box?.[axis]).filter((value) => Number.isFinite(value));
+  if (values.length < 2 || values.length !== kids.length) return '';
+  const first = values[1] - values[0];
+  if (Math.abs(first) < 1) return '';
+  const constant = values.every((value, i) => !i || Math.abs(value - values[i - 1] - first) <= 1);
+  return constant ? `шаг ${axis} ${round(first)}` : '';
+}
+
 export function outlineLines(snapshot, rootId, { depth = 6, hidden = false, stats = null } = {}) {
   const root = snapshot.nodes[rootId];
   const origin = root.box || { x: 0, y: 0 };
   const lines = [];
   const pad = (level) => '  '.repeat(level);
+  const at = (kid) => (kid.box ? `@${round(kid.box.x - origin.x)},${round(kid.box.y - origin.y)}` : '');
 
   const visit = (node, level) => {
-    lines.push(`${pad(level)}${atNode(node, () => describe(node, origin, stats))}`);
+    const own = atNode(node, () => describe(node, origin, stats));
+    lines.push(`${pad(level)}${own}${node === root ? parentPlace(snapshot, root) : ''}`);
     const kids = orderedChildren(snapshot, node, { hidden });
     if (!kids.length) return;
     if (level >= depth) {
@@ -161,14 +183,17 @@ export function outlineLines(snapshot, rootId, { depth = 6, hidden = false, stat
       visit(kids[i], level + 1);
       const same = kids.slice(i + 1, j);
       if (same.length) {
+        /* Положение — у каждого соседа: таймлайну и сетке нужны все точки, а не одна. Текст —
+           у первых восьми, дальше строка была бы длиннее самого дерева. */
         const listed = same
-          .slice(0, 8)
-          .map((kid) => {
-            const text = clip(firstText(snapshot, kid), 30);
-            return text ? `${kid.id} «${text}»` : kid.id;
+          .slice(0, 40)
+          .map((kid, k) => {
+            const text = k < 8 ? clip(firstText(snapshot, kid), 30) : '';
+            return `${kid.id}${at(kid)}${text ? ` «${text}»` : ''}`;
           })
           .join(', ');
-        lines.push(`${pad(level + 1)}×${same.length} как ${kids[i].id}: ${listed}${same.length > 8 ? ', …' : ''}`);
+        const steps = [stepOf(kids.slice(i, j), 'x'), stepOf(kids.slice(i, j), 'y')].filter(Boolean).join(', ');
+        lines.push(`${pad(level + 1)}×${same.length} как ${kids[i].id}: ${listed}${same.length > 40 ? ', …' : ''}${steps ? ` (${steps})` : ''}`);
       }
       i = j;
     }

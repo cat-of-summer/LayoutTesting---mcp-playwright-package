@@ -1,0 +1,23 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<title>Кнопка наверх</title>
+<style>
+  body { margin: 0; min-height: 1200px; background: #fff; }
+  /* Как на странице из отзыва: кнопку показывает класс .is-visible, переход идёт и по visibility,
+     а у иконки свой visibility: visible. */
+  .to-top {
+    position: fixed; right: 20px; bottom: 20px; width: 48px; height: 48px;
+    background: #e53935; visibility: hidden; opacity: 0;
+    transition: visibility .3s, opacity .3s;
+  }
+  .to-top.is-visible { visibility: visible; opacity: 1; }
+  .to-top .icon { display: block; width: 24px; height: 24px; margin: 12px; background: #1e88e5; visibility: visible; }
+</style>
+</head>
+<body>
+  <button class="to-top" type="button" aria-label="Наверх"><span class="icon"></span></button>
+  <script>document.querySelector('.to-top').classList.add('is-visible');</script>
+</body>
+</html>

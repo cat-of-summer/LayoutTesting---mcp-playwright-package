@@ -657,6 +657,79 @@ export function findStepDrift(pairs, { tolerance = 2, minRun = 3 } = {}) {
 }
 
 /**
+ * Выравнивание ряда: одинаковые элементы соседних карточек — «Подробнее» под каждой из трёх.
+ *
+ * В макете кнопки стояли на 642 и 645: дизайнер выравнивал их глазом. Сверка по элементам давала
+ * сдвиг одной из них на 3px, хотя на странице ряд ровный, и это верно. Обратный случай важнее:
+ * в макете кнопки на одной линии, а на странице разъехались вслед за разной длиной текста —
+ * карточки не прижимают кнопку к низу.
+ *
+ * Группа — пары с одним текстом, у которых в макете y различается не больше чем на 6px, а x —
+ * на ширину элемента и больше. Сравнивается разброс по y в макете и на странице.
+ */
+export function findRowAlign(pairs, { tolerance = 2, band = 6 } = {}) {
+  const byText = new Map();
+  for (const pair of pairs) {
+    const key = String(pair.design.text || '').toLowerCase().replace(/\s+/g, ' ').trim();
+    if (!key) continue;
+    byText.set(key, [...(byText.get(key) || []), pair]);
+  }
+  const out = [];
+  for (const list of byText.values()) {
+    if (list.length < 2) continue;
+    const boxes = list.map((pair) => ({ pair, ...pairBoxes(pair) }));
+    boxes.sort((a, b) => a.design.y - b.design.y);
+    /* Ряды: соседи по y в пределах band от первого в ряду. */
+    const rows = [];
+    for (const item of boxes) {
+      const row = rows.find((candidate) => Math.abs(candidate[0].design.y - item.design.y) <= band);
+      if (row) row.push(item);
+      else rows.push([item]);
+    }
+    for (const row of rows) {
+      row.sort((a, b) => a.design.x - b.design.x);
+      const apart = row.every((item, i) => !i || item.design.x - row[i - 1].design.x >= Math.min(item.design.w, row[i - 1].design.w));
+      if (row.length < 2 || !apart) continue;
+      const ys = row.map((item) => item.design.y);
+      const pys = row.map((item) => item.page.y);
+      const designSpread = round(Math.max(...ys) - Math.min(...ys));
+      const pageSpread = round(Math.max(...pys) - Math.min(...pys));
+      const list = (values) => values.map((value) => round(value)).join(' / ');
+      const sample = row.slice(0, 4).map((item) => ({ text: clip(item.pair.design.text, 40), node: item.pair.design.id, selector: item.pair.page.selector }));
+      if (designSpread > 0.5 && pageSpread <= 1) {
+        const median = [...ys].sort((a, b) => a - b)[Math.floor(ys.length / 2)];
+        const line = pys.reduce((sum, value) => sum + value, 0) / pys.length;
+        out.push({
+          rowAlign: `«${clip(row[0].pair.design.text, 30)}» в ${row.length} карточках: в макете ${list(ys)} (разброс ${designSpread}px), на странице ${list(pys)} — выровнено`,
+          hint: 'Неточность макета: ряд на странице ровный, так и надо. Поэлементный сдвиг по y у этих элементов не показан.',
+          verdict: 'design-noise',
+          designSpread,
+          pageSpread,
+          sample,
+          members: row.map((item) => [item.pair.design.id, round(line - median)]),
+          severity: 0,
+        });
+      } else if (pageSpread > tolerance && Math.abs(pageSpread - designSpread) > tolerance) {
+        out.push({
+          rowAlign:
+            designSpread <= 1
+              ? `«${clip(row[0].pair.design.text, 30)}» в ${row.length} карточках: в макете на одной линии (${list(ys)}), на странице ${list(pys)} — ряд разъехался на ${pageSpread}px`
+              : `«${clip(row[0].pair.design.text, 30)}» в ${row.length} карточках: разброс в макете ${designSpread}px (${list(ys)}), на странице ${pageSpread}px (${list(pys)})`,
+          hint: 'Элемент идёт за высотой контента над ним. Если в макете ряд ровный — карточке нужна колонка flex с margin-top: auto у этого элемента (или grid с subgrid), а не отступ.',
+          verdict: 'misaligned',
+          designSpread,
+          pageSpread,
+          sample,
+          members: row.map((item) => [item.pair.design.id, 0]),
+          severity: pageSpread * row.length,
+        });
+      }
+    }
+  }
+  return out;
+}
+
+/**
  * Боксы, которые сравниваются у пары текстов.
  *
  * Текст внутри кнопки сравнивается рамкой кнопки с кнопкой страницы. Текст фиксированной ширины
@@ -800,6 +873,22 @@ export function compareGeometry(design, page, { tolerance = 2 } = {}) {
   }
   const stepFindings = drifts.map(({ nodes, ...drift }) => drift);
 
+  /* Ряд одинаковых элементов: разброс макета, который вёрстка выровняла, — не находка; ряд,
+     который на странице разъехался, — одна находка вместо нескольких сдвигов. */
+  const rows = findRowAlign(pairs, { tolerance });
+  for (const row of rows.filter((item) => item.verdict === 'design-noise')) {
+    for (const [node, common] of row.members) {
+      const finding = byNode.get(node);
+      if (!finding?.shift?.y) continue;
+      if (Math.abs(common) <= tolerance) delete finding.shift.y;
+      else finding.shift.y = common;
+      finding.rowAlign = 'разброс ряда в макете';
+      if (!residual(finding)) swallowed.add(finding);
+    }
+  }
+  const rowFindings = rows.filter((item) => item.verdict !== 'design-noise').map(({ members, verdict, ...row }) => row);
+  const rowNoise = rows.filter((item) => item.verdict === 'design-noise').map(({ members, verdict, severity, ...row }) => row);
+
   /*
    * Общий сдвиг блока — одна находка, а не двадцать.
    *
@@ -837,7 +926,7 @@ export function compareGeometry(design, page, { tolerance = 2 } = {}) {
   for (const finding of findings) if (finding.shift && !Object.keys(finding.shift).length) delete finding.shift;
 
   const rest = findings.filter((finding) => !swallowed.has(finding));
-  const all = [...stepFindings, ...grouped, ...rest].sort((a, b) => b.severity - a.severity);
+  const all = [...stepFindings, ...rowFindings, ...grouped, ...rest].sort((a, b) => b.severity - a.severity);
   const absent = absentBlocks(design, onlyDesign, pairs);
   return {
     matched: pairs.length,
@@ -846,6 +935,7 @@ export function compareGeometry(design, page, { tolerance = 2 } = {}) {
     onlyDesign: onlyDesign.slice(0, 15).map((item) => ({ node: item.id, text: clip(item.text, 40) })),
     onlyPage: onlyPage.slice(0, 15).map((item) => ({ selector: item.selector, text: clip(item.text, 40) })),
     ...(absent.length ? { onlyDesignBlocks: absent.slice(0, 5) } : {}),
+    ...(rowNoise.length ? { rowNoise: rowNoise.slice(0, 10) } : {}),
   };
 }
 
@@ -942,6 +1032,7 @@ export async function compareWithDesign({
       ...(semantic.findings.length > limit ? { note: truncatedNote(semantic.findings.length, limit) } : {}),
       onlyDesign: semantic.onlyDesign,
       onlyPage: semantic.onlyPage,
+      ...(semantic.rowNoise ? { rowNoise: semantic.rowNoise } : {}),
       ...(semantic.onlyDesignBlocks
         ? {
             onlyDesignBlocks: semantic.onlyDesignBlocks,

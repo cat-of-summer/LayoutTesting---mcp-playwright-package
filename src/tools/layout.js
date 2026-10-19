@@ -25,8 +25,8 @@ export function register(server) {
     {
       title: t({ ru: 'Эвристики вёрстки', en: "Layout heuristics" }),
       description: t({
-        ru: 'Ищет горизонтальный скролл, вылеты за viewport, наложения элементов, обрезанный текст, текст под непрозрачным слоем, мёртвый z-index (задан на position: static), битые картинки, картинки без размеров, мелкие тач-таргеты и низкий контраст. Со states — и в открытых модалках и меню, чьё содержимое в закрытом виде не видно.',
-        en: "Finds horizontal scroll, elements past the viewport, overlapping content, clipped text, text under an opaque layer, dead z-index (set on position: static), broken images, images without dimensions, small tap targets and low contrast. With states — in open modals and menus too, whose content is invisible while closed. The first thing to run when the complaint sounds like \"the layout is broken\".",
+        ru: 'Ищет горизонтальный скролл, вылеты за viewport, наложения элементов, обрезанный текст, текст под непрозрачным слоем, мёртвый z-index (задан на position: static), битые картинки, картинки без размеров, мелкие тач-таргеты, низкий контраст и текст на картинке — с масштабом и сдвигом, при которых они разойдутся (clearance). Со states — и в открытых модалках и меню, чьё содержимое в закрытом виде не видно.',
+        en: "Finds horizontal scroll, elements past the viewport, overlapping content, clipped text, text under an opaque layer, dead z-index (set on position: static), broken images, images without dimensions, small tap targets, low contrast and text over an image — with the scale and shift that separate them (clearance). With states — in open modals and menus too, whose content is invisible while closed. The first thing to run when the complaint sounds like \"the layout is broken\".",
       }),
       inputSchema: {
         sessionId: z.string(),
@@ -44,9 +44,10 @@ export function register(server) {
         exclude: z.array(z.string()).optional().describe(d('Не разбирать эти блоки')),
         widths: z.array(z.number()).optional().describe(d('Прогнать по этим ширинам окна сводкой; окно вернётся к исходному')),
         states: statesSchema,
+        inkMargin: z.number().optional().describe(d('Отступ строк от картинки для clearance, px (8)')),
       },
     },
-    async ({ sessionId, minTarget, contrastRatio, maxItems, categories, include, exclude, widths, states }) => {
+    async ({ sessionId, minTarget, contrastRatio, maxItems, categories, include, exclude, widths, states, inkMargin }) => {
       const session = getSession(sessionId);
       const options = {
         minTarget,
@@ -55,6 +56,7 @@ export function register(server) {
         categories,
         include,
         exclude,
+        inkMargin,
         frozen: Boolean(session.motionFrozen),
       };
       const check = () =>

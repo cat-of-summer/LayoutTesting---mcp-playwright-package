@@ -206,7 +206,7 @@ test('outline: порядок потока, одинаковые карточк�
   assert.match(lines[1], /^ {2}1:2 TEXT "Title" 32,20 316x28 «Вакансии» Manrope 20\/700 \{color #082344\}$/);
   assert.match(lines[2], /^ {2}1:3 FRAME "Card" 16,68 348x116 \[column gap8 pad20\/16\/16\/16, w:fill, h:hug\] \{#ffffff, r20\}$/);
   const collapsed = lines.find((line) => line.includes('×2'));
-  assert.match(collapsed, /×2 как 1:3: 1:4 «Терапевт», 1:5 «Педиатр»/);
+  assert.match(collapsed, /×2 как 1:3: 1:4@16,200 «Терапевт», 1:5@16,332 «Педиатр» \(шаг y 132\)/, 'у каждого свёрнутого соседа — положение, у ряда — шаг');
   assert.ok(!lines.some((line) => line.includes('1:4 FRAME')));
   assert.ok(!lines.some((line) => line.includes('Hidden')));
   assert.ok(lines.some((line) => line.includes('<Button / State=Default {State=Default}>') && line.includes('→1')));

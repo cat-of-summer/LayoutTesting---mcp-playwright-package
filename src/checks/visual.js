@@ -108,18 +108,58 @@ async function withIsolated(page, rootSelector, keep, fn) {
  * Убирает мешающие слои перед снимком: cookie-баннеры, чаты, всплывашки.
  * visibility, а не display — чтобы не поехал layout и снимок остался сравнимым
  * с эталоном, снятым без скрытия.
+ *
+ * Одного visibility:hidden !important мало. Кнопка «наверх» с transition по visibility в сессии
+ * с живой анимацией остаётся видимой всё время перехода, потомок со своим visibility: visible
+ * виден сквозь скрытого родителя, а один невалидный селектор в общем списке роняет всё правило.
+ * Поэтому правило — на каждый селектор отдельно, на сам элемент и его потомков, без переходов; и
+ * перед кадром проверяется, что совпало и что осталось видимым: о промахе ответ говорит сам.
  */
-async function withHidden(page, selectors, fn) {
+async function withHidden(page, selectors, report, fn) {
   if (!selectors || !selectors.length) return fn();
-  await page.evaluate(
-    ([mark, list]) => {
-      const el = document.createElement('style');
-      el.setAttribute(mark, '');
-      el.textContent = `${list.join(',')}{visibility:hidden !important}`;
-      document.head.appendChild(el);
+  const list = await page.evaluate(
+    ([mark, sels]) => {
+      const style = document.createElement('style');
+      style.setAttribute(mark, '');
+      document.head.appendChild(style);
+      const out = [];
+      for (const sel of sels) {
+        let matched = [];
+        try {
+          matched = Array.from(document.querySelectorAll(sel));
+        } catch {
+          out.push({ selector: sel, invalid: true });
+          continue;
+        }
+        const body = '{visibility:hidden !important; opacity:0 !important; transition:none !important; animation:none !important}';
+        try {
+          style.sheet.insertRule(`:is(${sel}), :is(${sel}) * ${body}`, style.sheet.cssRules.length);
+        } catch {
+          style.sheet.insertRule(`${sel} ${body}`, style.sheet.cssRules.length);
+        }
+        out.push({ selector: sel, matched });
+      }
+      /* Перерасчёт стилей до проверки: computed-значения читаются уже с правилом. */
+      void document.body?.offsetHeight;
+      return out.map(({ selector, invalid, matched }) => {
+        if (invalid) return { selector, invalid: true };
+        const shown = (matched || []).filter((el) =>
+          typeof el.checkVisibility === 'function'
+            ? el.checkVisibility({ visibilityProperty: true, opacityProperty: true })
+            : getComputedStyle(el).visibility !== 'hidden',
+        );
+        return { selector, matched: matched.length, ...(shown.length ? { stillVisible: shown.length } : {}) };
+      });
     },
     [HIDE_MARK, selectors],
   );
+  report.list = list;
+  const problems = [
+    ...list.filter((item) => item.invalid).map((item) => `${item.selector} — невалидный селектор`),
+    ...list.filter((item) => item.matched === 0).map((item) => `${item.selector} — ничего не нашёл (элемент в iframe или shadow DOM здесь не виден)`),
+    ...list.filter((item) => item.stillVisible).map((item) => `${item.selector} — видимыми остались ${item.stillVisible}`),
+  ];
+  if (problems.length) report.warning = `hide спрятал не всё: ${problems.join('; ')}.`;
   try {
     return await fn();
   } finally {
@@ -195,8 +235,9 @@ export async function takeScreenshot(page, {
 
   // Снимаем в буфер, а не сразу в файл: перекодировать и уменьшить всё равно нужно
   // здесь же, и лишний проход через диск ничего не даёт.
+  const hiddenReport = {};
   const raw = await withIsolated(page, selector, isolate, () =>
-    withHidden(page, hide, async () => {
+    withHidden(page, hide, hiddenReport, async () => {
       if (selector) return (await resolveShotTarget(page, selector, timeout)).screenshot(common);
       if (clip) return page.screenshot({ ...common, fullPage: true, clip });
       return page.screenshot({ ...common, fullPage });
@@ -222,6 +263,8 @@ export async function takeScreenshot(page, {
     mimeType: spec.mime,
     bytes: out.length,
     ...(clipNote ? { clipNote } : {}),
+    ...(hiddenReport.list ? { hidden: hiddenReport.list } : {}),
+    ...(hiddenReport.warning ? { hideWarning: hiddenReport.warning } : {}),
   };
 }
 

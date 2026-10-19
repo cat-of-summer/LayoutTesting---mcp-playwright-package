@@ -825,11 +825,46 @@ export async function ensureNode(input, options = {}) {
   return { ...found.get(nodeId), fileKey, nodeId, requests };
 }
 
+/* Сколько сырых совпадений собирает поиск: ранжирование и limit — уже после, в rankHits. */
+const HIT_CAP = 2000;
+
+const mainOfInstance = (component) =>
+  component?.id ? strip({ id: component.id, name: component.name, set: component.set, setId: component.setId }) : undefined;
+
+/**
+ * Совпадения поиска в порядке пользы.
+ *
+ * Текст «Детали миссии» встречается в UI-ките один раз — в определении карточки, — и десятки раз
+ * в её экземплярах на макетах. Страницы макетов в файле идут раньше UI-кита, и поиск по порядку
+ * отдавал одни экземпляры, а компонент так и не показывал. Поэтому: сначала определения (набор,
+ * вариант, компонент и всё внутри них), потом экземпляры, свёрнутые по главному компоненту,
+ * потом остальное.
+ */
+export function rankHits(hits, limit = 30) {
+  const definitions = [];
+  const groups = new Map();
+  const other = [];
+  for (const hit of hits) {
+    if (hit.set || hit.component || hit.type === 'COMPONENT' || hit.type === 'COMPONENT_SET') definitions.push(hit);
+    else if (hit.instance?.main?.id) {
+      const key = hit.instance.main.id;
+      const group = groups.get(key) || { mainComponent: hit.instance.main, instances: new Set(), hits: 0, sample: [], text: hit.text, page: hit.page };
+      group.instances.add(hit.instance.id);
+      group.hits += 1;
+      if (group.sample.length < 3) group.sample.push(hit.id);
+      groups.set(key, group);
+    } else other.push(hit);
+  }
+  const grouped = [...groups.values()].map(({ instances, ...group }) => strip({ ...group, instances: instances.size }));
+  const rows = [...definitions, ...grouped, ...other];
+  return { results: rows.slice(0, limit), total: rows.length, definitions: definitions.length, instanceGroups: grouped.length };
+}
+
 /**
  * Поиск по снятому: имя слоя или текст во всех снимках файла текущей версии. Без редактора и без
  * запросов — но только по тому, что уже снималось.
  */
-export async function searchCached(fileKey, query, { limit = 30, cacheDir = DIRS.figma } = {}) {
+export async function searchCached(fileKey, query, { limit = HIT_CAP, cacheDir = DIRS.figma } = {}) {
   const meta = await readMeta(fileKey, { cacheDir });
   if (!meta?.roots || !meta.version) return { results: [], roots: 0 };
   const q = String(query).toLowerCase();
@@ -850,6 +885,8 @@ export async function searchCached(fileKey, query, { limit = 30, cacheDir = DIRS
       seen.add(node.id);
       let variant = null;
       let set = null;
+      let component = null;
+      let instance = null;
       for (let up = node; up; up = snapshot.nodes[up.parent]) {
         const parent = snapshot.nodes[up.parent];
         if (up.type === 'COMPONENT' && parent?.type === 'COMPONENT_SET') {
@@ -861,7 +898,13 @@ export async function searchCached(fileKey, query, { limit = 30, cacheDir = DIRS
           set = up;
           break;
         }
+        if (up.type === 'COMPONENT') {
+          component = up;
+          break;
+        }
+        if (up.type === 'INSTANCE') instance = up;
       }
+      if (component || set) instance = null;
       const root = snapshot.nodes[snapshot.root];
       results.push(
         strip({
@@ -880,6 +923,8 @@ export async function searchCached(fileKey, query, { limit = 30, cacheDir = DIRS
                 variants: (set.children || []).map((id) => snapshot.nodes[id]?.name).filter(Boolean).slice(0, 12),
               })
             : undefined,
+          component: component ? { id: component.id, name: component.name } : undefined,
+          instance: instance ? strip({ id: instance.id, main: mainOfInstance(instance.component) }) : undefined,
         }),
       );
     }
@@ -888,7 +933,7 @@ export async function searchCached(fileKey, query, { limit = 30, cacheDir = DIRS
 }
 
 /** Тот же поиск по сырому документу REST (file целиком). */
-export function searchRestDocument(document, query, { limit = 30 } = {}) {
+export function searchRestDocument(document, query, { limit = HIT_CAP, components = {}, componentSets = {} } = {}) {
   const q = String(query).toLowerCase();
   const results = [];
   const visit = (node, trail) => {
@@ -900,6 +945,11 @@ export function searchRestDocument(document, query, { limit = 30 } = {}) {
       const variantIndex = trail.findLastIndex((item, i) => item.type === 'COMPONENT' && trail[i - 1]?.type === 'COMPONENT_SET');
       const set = variantIndex > 0 ? trail[variantIndex - 1] : trail.findLast((item) => item.type === 'COMPONENT_SET');
       const variant = variantIndex > 0 ? trail[variantIndex] : node.type === 'COMPONENT' && trail.at(-1)?.type === 'COMPONENT_SET' ? node : null;
+      const chain = [...trail, node];
+      const component = set ? null : chain.findLast((item) => item.type === 'COMPONENT');
+      /* Самый внешний экземпляр: карточка на странице, а не кнопка внутри неё. */
+      const instance = set || component ? null : chain.find((item) => item.type === 'INSTANCE');
+      const meta = instance ? components[instance.componentId] : null;
       results.push(
         strip({
           id: node.id,
@@ -910,6 +960,21 @@ export function searchRestDocument(document, query, { limit = 30 } = {}) {
           text: node.type === 'TEXT' ? String(node.characters).slice(0, 80) : undefined,
           set: set
             ? strip({ id: set.id, name: set.name, variant: variant?.name, variantId: variant?.id, variants: (set.children || []).map((c) => c.name).slice(0, 12) })
+            : undefined,
+          component: component ? { id: component.id, name: component.name } : undefined,
+          instance: instance
+            ? strip({
+                id: instance.id,
+                main: instance.componentId
+                  ? strip({
+                      id: instance.componentId,
+                      name: meta?.name,
+                      set: meta?.componentSetId ? componentSets[meta.componentSetId]?.name : undefined,
+                      setId: meta?.componentSetId,
+                      remote: meta?.remote || undefined,
+                    })
+                  : undefined,
+              })
             : undefined,
         }),
       );

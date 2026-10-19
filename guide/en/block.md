@@ -67,7 +67,10 @@ Separately, the things that do not fit into a single declaration and are therefo
 
 The `×N как id` line in the outline and `parallels` in `figma_components` are three instances to
 look at **side by side**, not one at a time. A child's `y` matches while a sibling's height
-differs — the sibling has a fixed height, whatever it is marked as (`h:hug` at `270x66` is 66px).
+differs - the sibling has a fixed height, whatever it is marked as (`h:hug` at `270x66` is 66px).
+Every sibling in that line carries its position (`337:14866@120,0`), and a row with an even step
+gets `(шаг x 120)`: timeline points and grid columns are read from here. An outline of a single
+node writes `@parent x,y в id`, which is its place in the parent.
 
 ### The mobile node — the same procedure
 
@@ -177,7 +180,7 @@ Read **both** sections of the `semantic` report:
 - **`paint`** — background, borders and their color, **line weight and length**, radii,
   decoration size. A class of differences the texts do not show.
 
-Five reading rules:
+Six reading rules:
 
 1. `shiftedBlock` over N elements is **one** finding. Fix the height of the block above, not
    twenty elements. But "the block is −50px" does not cancel the small offsets inside it — those
@@ -194,6 +197,10 @@ Five reading rules:
    on the page, and `off` shows the offset remaining beyond the correction already applied: that is
    work. `notFound` — the node is nowhere; the check cannot tell the reason apart because it walks
    elements: a pseudo-element, the inside of an SVG, or genuinely not built.
+6. `rowAlign` - identical elements of neighbouring cards ("Подробнее" under each). A row that is
+   even in the design and uneven on the page is one finding: the card needs a flex column with
+   `margin-top: auto` on the element, not a margin. A spread in the design while the page row is
+   even (642 / 645 → 640 / 640) is design imprecision: it goes to `rowNoise`, not to findings.
 
 > **How a truncated report misleads.** A link that should have been blue landed in a collapsed
 > `shiftedBlock` group and never reached the samples. The report was read as "no differences left"
@@ -264,7 +271,11 @@ the live session, by eye on a screenshot.
 component variant, `figma_variants(variant, sessionId, selector)` shows the difference between the
 variants across every descendant and hovers the page element: `missingOnPage` is what of the variant
 was not carried over. The mission card hover was carried over by the root fill and lost the yellow
-button inside and the 4 → 12 radius. A hover declared in CSS that changes nothing visible comes back
+button inside and the 4 → 12 radius. A hover drawn as a separate component rather than a set
+variant takes the same call on the component link: a neighbour with the same name plus a state word
+("Card" and "Card Hover") is found automatically, and any pair is compared via `from` and `to` as
+node links. `figma_find` finds the component itself by text: definitions come before the instances
+on the mockups. A hover declared in CSS that changes nothing visible comes back
 from `interaction_audit` in `hoverInvisible`.
 
 **States that are not on the page at check time.** An audit sees what is open right now: a modal

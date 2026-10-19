@@ -4,7 +4,7 @@
  */
 
 function collectLayoutIssues(options) {
-  const { minTarget, contrastRatio, maxItems: shownMax, categories, include, exclude, frozen } = options;
+  const { minTarget, contrastRatio, maxItems: shownMax, categories, include, exclude, frozen, inkMargin = 8 } = options;
   /*
    * Потолок сбора и потолок показа — разные числа.
    *
@@ -217,40 +217,163 @@ function collectLayoutIssues(options) {
   };
 
   /**
-   * Чернила картинки под текстом: доля непрозрачных пикселей <img> в пересечении с текстом.
+   * Чернила картинки под текстом: доля непрозрачных пикселей <img> под строками текста.
    *
    * Подписи «Преимуществ» пересекали прозрачную PNG-схему на 285×65 px, и textOverImage говорил
    * то же, что про текст над пустым углом той же картинки: рамка на рамке. Прозрачное поле PNG —
-   * не фон под текстом, а сама схема — да. Картинка с чужого домена без CORS пиксели не отдаёт:
-   * тогда ink: null и вердикт глазами.
+   * не фон под текстом, а сама схема — да. Считается по строкам (getClientRects текстовых узлов),
+   * а не по рамке блока: пустое поле блока разбавляло долю. Картинка с чужого домена без CORS
+   * пиксели не отдаёт: тогда ink: null и вердикт глазами.
+   *
+   * Маска картинки строится один раз — альфа-канал уменьшенной копии и интегральная таблица по
+   * нему, — и любой прямоугольник проверяется за O(1). На этом держится подбор clearance: сотни
+   * проб масштаба и сдвига на находку.
    */
-  const inkUnder = (img, rect) => {
-    if (!img || img.tagName !== 'IMG' || !img.complete || !img.naturalWidth) return null;
-    const frame = img.getBoundingClientRect();
-    const left = Math.max(rect.left, frame.left);
-    const top = Math.max(rect.top, frame.top);
-    const right = Math.min(rect.right, frame.right);
-    const bottom = Math.min(rect.bottom, frame.bottom);
-    if (right - left < 1 || bottom - top < 1) return 0;
-    const sx = ((left - frame.left) / frame.width) * img.naturalWidth;
-    const sy = ((top - frame.top) / frame.height) * img.naturalHeight;
-    const sw = ((right - left) / frame.width) * img.naturalWidth;
-    const sh = ((bottom - top) / frame.height) * img.naturalHeight;
-    const cw = Math.max(1, Math.min(200, Math.round(right - left)));
-    const ch = Math.max(1, Math.min(200, Math.round(bottom - top)));
-    try {
-      const canvas = document.createElement('canvas');
-      canvas.width = cw;
-      canvas.height = ch;
-      const ctx = canvas.getContext('2d', { willReadFrequently: true });
-      ctx.drawImage(img, sx, sy, sw, sh, 0, 0, cw, ch);
-      const data = ctx.getImageData(0, 0, cw, ch).data;
-      let ink = 0;
-      for (let i = 3; i < data.length; i += 4) if (data[i] > 25) ink += 1;
-      return Math.round((ink / (cw * ch)) * 100) / 100;
-    } catch {
-      return null;
+  const masks = new Map();
+  const inkMask = (img) => {
+    if (masks.has(img)) return masks.get(img);
+    let mask = null;
+    if (img && img.tagName === 'IMG' && img.complete && img.naturalWidth) {
+      const frame = img.getBoundingClientRect();
+      const k = Math.min(1, 400 / Math.max(frame.width, frame.height, 1));
+      const w = Math.max(1, Math.round(frame.width * k));
+      const h = Math.max(1, Math.round(frame.height * k));
+      /* object-fit: картинка не обязательно растянута на всю рамку. */
+      const fit = getComputedStyle(img).objectFit;
+      const nw = img.naturalWidth;
+      const nh = img.naturalHeight;
+      let scale = null;
+      if (fit === 'contain') scale = Math.min(frame.width / nw, frame.height / nh);
+      else if (fit === 'cover') scale = Math.max(frame.width / nw, frame.height / nh);
+      else if (fit === 'none') scale = 1;
+      else if (fit === 'scale-down') scale = Math.min(1, frame.width / nw, frame.height / nh);
+      const cw = scale ? nw * scale : frame.width;
+      const ch = scale ? nh * scale : frame.height;
+      try {
+        const canvas = document.createElement('canvas');
+        canvas.width = w;
+        canvas.height = h;
+        const ctx = canvas.getContext('2d', { willReadFrequently: true });
+        ctx.drawImage(img, ((frame.width - cw) / 2) * k, ((frame.height - ch) / 2) * k, cw * k, ch * k);
+        const data = ctx.getImageData(0, 0, w, h).data;
+        const sat = new Int32Array((w + 1) * (h + 1));
+        for (let y = 0; y < h; y += 1) {
+          let row = 0;
+          for (let x = 0; x < w; x += 1) {
+            if (data[(y * w + x) * 4 + 3] > 25) row += 1;
+            sat[(y + 1) * (w + 1) + x + 1] = sat[y * (w + 1) + x + 1] + row;
+          }
+        }
+        mask = { frame, k, w, h, sat };
+      } catch {
+        mask = null;
+      }
     }
+    masks.set(img, mask);
+    return mask;
+  };
+
+  /* Чернила в прямоугольнике экрана: ink — пикселей маски, area — площадь пересечения с картинкой. */
+  const inkIn = (mask, r) => {
+    const { frame, k, w, h, sat } = mask;
+    const x0 = Math.max(0, Math.floor((r.left - frame.left) * k));
+    const y0 = Math.max(0, Math.floor((r.top - frame.top) * k));
+    const x1 = Math.min(w, Math.ceil((r.right - frame.left) * k));
+    const y1 = Math.min(h, Math.ceil((r.bottom - frame.top) * k));
+    if (x1 <= x0 || y1 <= y0) return { ink: 0, area: 0 };
+    const at = (x, y) => sat[y * (w + 1) + x];
+    return { ink: at(x1, y1) - at(x0, y1) - at(x1, y0) + at(x0, y0), area: (x1 - x0) * (y1 - y0) };
+  };
+
+  /* Строки собственного текста элемента; без них — его рамка. */
+  const textLines = (el, rect) => {
+    const out = [];
+    for (const node of el.childNodes) {
+      if (node.nodeType !== 3 || !node.nodeValue.trim()) continue;
+      const range = document.createRange();
+      range.selectNodeContents(node);
+      for (const line of range.getClientRects()) {
+        if (line.width > 1 && line.height > 1) out.push({ left: line.left, top: line.top, right: line.right, bottom: line.bottom });
+      }
+    }
+    return out.length ? out : [{ left: rect.left, top: rect.top, right: rect.right, bottom: rect.bottom }];
+  };
+
+  const inkUnder = (img, lines) => {
+    const mask = inkMask(img);
+    if (!mask) return null;
+    let ink = 0;
+    let area = 0;
+    for (const line of lines) {
+      const part = inkIn(mask, line);
+      ink += part.ink;
+      area += part.area;
+    }
+    return area ? Math.round((ink / area) * 100) / 100 : 0;
+  };
+
+  /**
+   * Насколько развести текст и картинку: минимальное уменьшение картинки к её центру и минимальный
+   * сдвиг в каждую сторону, при которых под строками с отступом margin чернил не больше 1%.
+   *
+   * Без этого находка говорила только «пересекается», а масштаб схемы «Преимуществ» (чисто с 0.92)
+   * считали руками: рисовали картинку в canvas и проверяли пиксели под строками.
+   */
+  const clearanceOf = (img, lines, margin) => {
+    const mask = inkMask(img);
+    if (!mask) return null;
+    const { frame } = mask;
+    const padded = lines.map((line) => ({ left: line.left - margin, top: line.top - margin, right: line.right + margin, bottom: line.bottom + margin }));
+    const clean = (map) =>
+      padded.every((line) => {
+        const r = map(line);
+        /* Доля — от площади строки, а не пересечения: строка, задевшая картинку краем, чиста. */
+        const full = (r.right - r.left) * (r.bottom - r.top) * mask.k * mask.k;
+        return inkIn(mask, r).ink <= Math.max(0.5, full * 0.01);
+      });
+    const cx = frame.left + frame.width / 2;
+    const cy = frame.top + frame.height / 2;
+    let scale = null;
+    for (let step = 99; step >= 50; step -= 1) {
+      const s = step / 100;
+      /* Уменьшенная картинка под строкой — то же, что строка, растянутая от центра исходной. */
+      const map = (r) => ({ left: cx + (r.left - cx) / s, right: cx + (r.right - cx) / s, top: cy + (r.top - cy) / s, bottom: cy + (r.bottom - cy) / s });
+      if (clean(map)) {
+        scale = s;
+        break;
+      }
+    }
+    const shiftBy = (dx, dy, limit) => {
+      for (let d = 2; d <= limit; d += 2) {
+        if (clean((r) => ({ left: r.left - dx * d, right: r.right - dx * d, top: r.top - dy * d, bottom: r.bottom - dy * d }))) return d;
+      }
+      return null;
+    };
+    return {
+      margin,
+      scale,
+      shift: {
+        left: shiftBy(-1, 0, frame.width / 2),
+        right: shiftBy(1, 0, frame.width / 2),
+        up: shiftBy(0, -1, frame.height / 2),
+        down: shiftBy(0, 1, frame.height / 2),
+      },
+    };
+  };
+
+  const clearanceText = (clearance) => {
+    if (!clearance) return '';
+    const words = { left: 'влево', right: 'вправо', up: 'вверх', down: 'вниз' };
+    const shifts = Object.entries(clearance.shift)
+      .filter(([, value]) => value !== null)
+      .sort((a, b) => a[1] - b[1]);
+    const parts = [
+      ...(clearance.scale !== null ? [`scale ${clearance.scale} к центру`] : []),
+      ...(shifts.length ? [`сдвиге картинки ${words[shifts[0][0]]} на ${shifts[0][1]}px`] : []),
+    ];
+    return parts.length
+      ? `; с отступом ${clearance.margin}px от строк чисто при ${parts.join(' или ')}`
+      : `; в пределах scale 0.5 и сдвига на полкартинки чисто с отступом ${clearance.margin}px не становится — разводите вёрсткой`;
   };
 
   const parseColor = (value) => {
@@ -519,9 +642,11 @@ function collectLayoutIssues(options) {
         .trim();
       if (ownText.length > 1) {
         const overImage = backgroundIsImage(el, rect);
-        const ink = overImage && overImage !== true ? inkUnder(overImage, rect) : null;
+        const lines = overImage && overImage !== true ? textLines(el, rect) : null;
+        const ink = lines ? inkUnder(overImage, lines) : null;
         /* Текст над прозрачным полем PNG — не над картинкой: чернил под ним нет. */
         if (overImage && ink !== 0 && issues.textOverImage.length < maxItems) {
+          const clearance = ink > 0.05 ? clearanceOf(overImage, lines, inkMargin) : null;
           issues.textOverImage.push({
             selector: cssPath(el),
             text: ownText.slice(0, 60),
@@ -529,11 +654,12 @@ function collectLayoutIssues(options) {
             fontSize: style.fontSize,
             ink,
             ...(overImage !== true ? { image: cssPath(overImage) } : {}),
+            ...(clearance ? { clearance } : {}),
             why:
               ink === null
                 ? 'текст поверх изображения — контраст числом не измерить, проверьте глазами на скриншоте'
                 : ink > 0.05
-                  ? `текст лежит на нарисованной части картинки (${Math.round(ink * 100)}% пикселей под ним непрозрачны) — разведите текст и картинку или проверьте, что так в макете`
+                  ? `текст лежит на нарисованной части картинки (${Math.round(ink * 100)}% пикселей под строками непрозрачны) — разведите текст и картинку или проверьте, что так в макете${clearanceText(clearance)}`
                   : 'под текстом почти прозрачная часть картинки — скорее всего, читается',
           });
         }
@@ -901,9 +1027,9 @@ export const AUDIT_CATEGORIES = [
 
 export async function layoutAudit(
   page,
-  { minTarget = 24, contrastRatio = 4.5, maxItems = 50, categories = null, include = null, exclude = null, frozen = false } = {},
+  { minTarget = 24, contrastRatio = 4.5, maxItems = 50, categories = null, include = null, exclude = null, frozen = false, inkMargin = 8 } = {},
 ) {
-  return page.evaluate(collectLayoutIssues, { minTarget, contrastRatio, maxItems, categories, include, exclude, frozen });
+  return page.evaluate(collectLayoutIssues, { minTarget, contrastRatio, maxItems, categories, include, exclude, frozen, inkMargin });
 }
 
 /** Дамп вычисленных стилей — «почему этот блок не там, где я жду». */
