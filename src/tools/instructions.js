@@ -181,11 +181,13 @@ const HINTS = [
     ru: `- «выдержит ли длинный текст», «что будет, если контента больше» — layout_stress; «работает ли
   слайдер, аккордеон, кнопка», «честная ли анимация» — interaction_audit в сессии с animations: "allow";
   «проверь формы», «ошибки валидации» — form_audit; «не съезжает ли шапка при открытом меню» — browser_act
-  с anchors;`,
+  с anchors; «проверь вёрстку после правки», «что сдвинулось от этой правки» — layout_diff: save до правки,
+  compare после;`,
     en: `- "will it survive a long title", "what if there is more content" — layout_stress; "does the slider,
   the accordion, the button actually work", "is the animation honest" — interaction_audit in a session
   with animations: "allow"; "check the forms", "validation errors" — form_audit; "does the header shift
-  when the menu opens" — browser_act with anchors;`,
+  when the menu opens" — browser_act with anchors; "check the layout after the edit", "what did this edit
+  move" — layout_diff: save before the edit, compare after;`,
   },
   {
     groups: ['media'],

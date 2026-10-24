@@ -25,6 +25,7 @@ import { MAX_STEPS, runSteps } from '../browser/batch.js';
 import { diffBoxes, settleBoxes } from '../browser/boxes.js';
 import { profileKey } from '../browser/profile.js';
 import { evaluateOnPage } from '../browser/evaluate.js';
+import { getScript, listScripts, removeScript, saveScript } from '../browser/scripts.js';
 import { addInjection, clearInjections, listInjections, removeInjection } from '../browser/inject.js';
 import { addRoute, clearRoutes, listRecorded, listRoutes } from '../browser/routes.js';
 import { cappedText, json, profileSchema } from './shared.js';
@@ -157,8 +158,8 @@ export function register(server) {
           .optional()
           .describe(
             t({
-              ru: `Пакет до ${MAX_STEPS} шагов подряд; поля шага — как у вызова, плюс action screenshot (name, selector, saveTo) и eval (expression)`,
-              en: `A batch of up to ${MAX_STEPS} steps in a row; step fields are those of the call, plus action screenshot (name, selector, saveTo) and eval (expression)`,
+              ru: `Пакет до ${MAX_STEPS} шагов подряд; поля шага — как у вызова, плюс action screenshot (name, selector, clip, fullPage, hide, mask, saveTo) и eval (expression)`,
+              en: `A batch of up to ${MAX_STEPS} steps in a row; step fields are those of the call, plus action screenshot (name, selector, clip, fullPage, hide, mask, saveTo) and eval (expression)`,
             }),
           ),
       },
@@ -190,14 +191,60 @@ export function register(server) {
     {
       title: t({ ru: 'Выполнить JS на странице', en: "Run JS on the page" }),
       description: t({
-        ru: 'Выполняет выражение или тело функции в контексте страницы и возвращает результат. Годится и IIFE, и цепочка через .map(function(){return …}), и несколько инструкций с return в конце. Если результат undefined, об этом сказано явно, а не возвращается пустой ответ.',
-        en: "Evaluates an expression or a function body in the page context and returns the result. Accepts an IIFE, a chained .map(function(){return …}), or several statements ending with return. If the result is undefined that is stated explicitly instead of returning an empty answer.",
+        ru: 'Выполняет выражение или тело функции в контексте страницы и возвращает результат. Годится и IIFE, и цепочка через .map(function(){return …}), и несколько инструкций с return в конце. Если результат undefined, об этом сказано явно, а не возвращается пустой ответ. name сохраняет скрипт на стенде для любой сессии, urls — прогон по списку страниц; подробности — help.',
+        en: "Evaluates an expression or a function body in the page context and returns the result. Accepts an IIFE, a chained .map(function(){return …}), or several statements ending with return. If the result is undefined that is stated explicitly instead of returning an empty answer. name saves the script on the stand for any session, urls runs it over a list of pages; details — help.",
       }),
-      inputSchema: { sessionId: z.string(), expression: z.string() },
+      inputSchema: {
+        sessionId: z.string(),
+        expression: z.string().optional().describe(d('Выражение или тело функции. Не нужно, если скрипт вызывается по name')),
+        name: z.string().optional().describe(d('Имя скрипта на стенде: с expression — сохранить и выполнить, без него — выполнить сохранённый')),
+        urls: z.array(z.string()).optional().describe(d('Выполнить на каждой из этих страниц по очереди в текущей сессии')),
+        action: z.enum(['run', 'list', 'remove']).optional().describe(d('list — сохранённые скрипты, remove — удалить по name. По умолчанию run')),
+      },
     },
-    async ({ sessionId, expression }) => {
+    async ({ sessionId, expression, name, urls, action = 'run' }) => {
+      if (action === 'list') return json({ scripts: await listScripts() });
+      if (action === 'remove') {
+        if (!name) throw new Error('Для remove нужен name.');
+        return json(await removeScript(name));
+      }
       const session = getSession(sessionId);
-      const result = await evaluateOnPage(session.page, expression);
+      const saved = name && expression ? await saveScript(name, expression) : null;
+      const source = expression ?? (name ? await getScript(name) : null);
+      if (!source) throw new Error('Нужен expression — или name сохранённого скрипта.');
+      const script = name ? { script: name, ...(saved ? { saved: true, ...(saved.replaced ? { replaced: true } : {}) } : {}) } : {};
+
+      if (urls?.length) {
+        /* Бюджет на страницу — доля общего предела: двадцать страниц не должны вытеснить друг друга. */
+        const budget = Math.max(500, Math.floor(CONFIG.maxTextBytes / urls.length));
+        const pages = [];
+        for (const url of urls) {
+          try {
+            const navigation = await gotoAndSettle(session, url);
+            const result = await evaluateOnPage(session.page, source);
+            const serialized = JSON.stringify(result.value ?? null) ?? 'null';
+            pages.push({
+              url,
+              ...(navigation.status && navigation.status >= 400 ? { status: navigation.status } : {}),
+              type: result.type,
+              ...(serialized.length <= budget
+                ? { value: result.value ?? null }
+                : { value: cappedText(serialized, { max: budget }).text, valueSerialized: true, truncated: true }),
+              ...(result.note ? { note: result.note } : {}),
+            });
+          } catch (err) {
+            pages.push({ url, error: err.message.split('\n')[0] });
+          }
+        }
+        takeNavigationSince(session);
+        return json({
+          ...script,
+          pages,
+          note: `Сессия осталась на последней странице: ${urls.at(-1)}.${pages.some((p) => p.truncated) ? ' Часть значений обрезана — верните нужные поля, а не узел целиком.' : ''}`,
+        });
+      }
+
+      const result = await evaluateOnPage(session.page, source);
       /* Между вызовами страница могла перезагрузиться сама — тогда замер относится уже к
          другой странице, и знать об этом надо до того, как по нему сделан вывод. */
       const navigated = takeNavigationSince(session);
@@ -208,9 +255,10 @@ export function register(server) {
        * единственная мера, общая для массива, объекта и текста.
        */
       const serialized = JSON.stringify(result.value ?? null) ?? 'null';
-      if (serialized.length <= CONFIG.maxTextBytes) return json(result);
+      if (serialized.length <= CONFIG.maxTextBytes) return json({ ...script, ...result });
       const part = cappedText(serialized, { max: CONFIG.maxTextBytes });
       return json({
+        ...script,
         ...result,
         value: part.text,
         valueSerialized: true,

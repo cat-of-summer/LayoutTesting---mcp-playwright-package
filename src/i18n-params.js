@@ -362,6 +362,18 @@ const EN = {
   'Текст или часть имени слоя': 'A text or part of a layer name',
   'Отступ строк от картинки для clearance, px (8)': 'Gap from text lines to the image for clearance, px (8)',
   'Без канала редактора: весь файл одним запросом REST, а не только снятое': 'Without the editor channel: the whole file in one REST request, not only what was synced',
+  'Не считать controlOverlaps для этих блоков — намеренные наложения своего UI kit': 'Skip controlOverlaps for these blocks — intentional overlaps of your own UI kit',
+  'save — снимок до правки, compare — после': 'save — a snapshot before the edit, compare — after it',
+  'Корень снимка; при compare берётся из сохранённого. По умолчанию body': 'The snapshot root; compare takes it from the saved one. body by default',
+  'Имя снимка в сессии, по умолчанию default': 'The snapshot name in the session, default by default',
+  'Порог сдвига в px, по умолчанию 1': 'The shift threshold in px, 1 by default',
+  'Кадр блока с обводкой изменившегося': 'A shot of the block with the changes outlined',
+  'После compare сохранить новый снимок под тем же именем — для следующей правки': 'After compare, store the new snapshot under the same name — for the next edit',
+  'Выражение или тело функции. Не нужно, если скрипт вызывается по name': 'An expression or a function body. Not needed when the script is called by name',
+  'Имя скрипта на стенде: с expression — сохранить и выполнить, без него — выполнить сохранённый': 'A script name on the stand: with expression — save and run it, without — run the saved one',
+  'Выполнить на каждой из этих страниц по очереди в текущей сессии': 'Run on each of these pages in turn in the current session',
+  'list — сохранённые скрипты, remove — удалить по name. По умолчанию run': 'list — the saved scripts, remove — delete by name. run by default',
+  'Вложить кадр кусками в натуральную величину — мелкие дефекты видны без clip по частям': 'Embed the frame in full-size pieces — small defects are visible without clipping part by part',
 };
 
 /**

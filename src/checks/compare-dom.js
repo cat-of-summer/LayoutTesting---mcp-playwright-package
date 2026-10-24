@@ -20,7 +20,7 @@
  */
 
 /** Свойства, по которым видно расхождение вёрстки, а не разницу контента. */
-const WATCHED = [
+export const WATCHED = [
   'display',
   'font-family',
   'font-size',

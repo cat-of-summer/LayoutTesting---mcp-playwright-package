@@ -647,6 +647,23 @@ export async function gotoAndSettle(
   page.on('requestfinished', onDone);
   page.on('requestfailed', onDone);
   page.on('response', onResponse);
+  /*
+   * Неудачный переход Chrome доводит до конца уже после отказа: страница ошибки
+   * (chrome-error://chromewebdata/) фиксируется навигацией следом, и следующий page.goto — из
+   * browser_goto или из browser_eval по списку urls — падал "interrupted by another navigation".
+   * Ждём её (не дольше полутора секунд — это время тратится только на неудаче) и только потом
+   * отдаём ошибку.
+   */
+  let errorPage = false;
+  const errorFrame = (frame) => frame === page.mainFrame() && frame.url().startsWith('chrome-error:');
+  const onFrame = (frame) => {
+    if (errorFrame(frame)) errorPage = true;
+  };
+  page.on('framenavigated', onFrame);
+  const settleFailed = async () => {
+    if (!errorPage) await page.waitForEvent('framenavigated', { predicate: errorFrame, timeout: 1500 }).catch(() => {});
+    await page.waitForLoadState('load', { timeout: 2000 }).catch(() => {});
+  };
   try {
     response = await session.page.goto(url, { waitUntil, timeout });
   } catch (err) {
@@ -670,12 +687,14 @@ export async function gotoAndSettle(
           retried = 1;
         } catch (second) {
           session.navByTool = false;
+          await settleFailed();
           const hint = navigationErrorHint(second.message, url);
           throw hint ? new Error(`${second.message}\n\n${hint}`) : second;
         }
       } else {
         // Иначе признак «идёт свой переход» остался бы поднятым на всю жизнь сессии.
         session.navByTool = false;
+        await settleFailed();
         throw err;
       }
     } else {
@@ -687,6 +706,7 @@ export async function gotoAndSettle(
     page.off('requestfinished', onDone);
     page.off('requestfailed', onDone);
     page.off('response', onResponse);
+    page.off('framenavigated', onFrame);
     if (cdp) {
       await cdp.send('Network.setCacheDisabled', { cacheDisabled: false }).catch(() => {});
       await cdp.detach().catch(() => {});

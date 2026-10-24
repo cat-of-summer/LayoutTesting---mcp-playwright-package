@@ -131,7 +131,7 @@ test('выгрузка: путь от корня, абсолютный путь 
   });
 
   delete process.env.EXPORTS_DIR;
-  await assert.rejects(exportFile(source, 'a.png', { dir, url: 'http://x/shot.png' }), /не настроена.*curl -fsSL -o <путь> http:\/\/x\/shot\.png/);
+  await assert.rejects(exportFile(source, 'a.png', { dir, url: 'http://x/shot.png' }), /не настроена.*curl -fsSL -o shot\.png http:\/\/x\/shot\.png/);
 
   await fs.mkdir(dir);
   const plain = await exportFile(source, 'games/puzzle', { dir });

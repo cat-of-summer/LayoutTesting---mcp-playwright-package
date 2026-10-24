@@ -1,0 +1,86 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<title>Подписи и контролы: шестой отзыв</title>
+<style>
+  body { margin: 0; padding: 24px; font: 14px/20px system-ui, sans-serif; color: #1f2328; }
+  section { margin-bottom: 40px; }
+
+  /* 1. Кнопка Primer в ячейке width: 1% ужата до паддингов, подпись рисуется поверх соседа. */
+  table { border-collapse: collapse; }
+  td { border: 1px solid #d0d7de; padding: 4px; }
+  td.shrink { width: 1%; }
+  .Button { display: inline-flex; align-items: center; position: relative; width: 28px; height: 32px;
+            padding: 0 12px; box-sizing: border-box; border: 1px solid #d0d7de; border-radius: 6px;
+            background: #f6f8fa; font: inherit; }
+  .Button-content { display: grid; min-width: 0; }
+  .Button-label { white-space: nowrap; }
+
+  /* 2. Голый текст в прозрачной кнопке. */
+  .bare { width: 28px; padding: 0; border: 0; background: transparent; white-space: nowrap; font: inherit; }
+
+  /* 3. Поле с иконкой внутри и ToggleSwitch — наложения намеренные. */
+  .FormControl { position: relative; width: 240px; }
+  .FormControl-input { width: 100%; height: 32px; padding-left: 28px; box-sizing: border-box; }
+  .FormControl-input-leadingVisual { position: absolute; left: 8px; top: 8px; width: 16px; height: 16px; pointer-events: none; }
+  .ToggleSwitch-track { position: relative; width: 64px; height: 32px; border: 1px solid #d0d7de; background: #eee; }
+  .ToggleSwitch-icons { position: absolute; inset: 4px; display: flex; justify-content: space-between; }
+
+  /* 4. Меню поверх кнопок и стопка аватаров — тоже замысел. */
+  .menu-host { position: relative; height: 80px; }
+  .menu { position: absolute; top: 0; left: 0; background: #fff; border: 1px solid #ccc; }
+  .avatars a { display: inline-block; width: 32px; height: 32px; border-radius: 50%; background: #79c; margin-left: -8px; }
+
+  /* 5. Ряд сетки шире контейнера на гаттеры. */
+  .container { width: 400px; }
+  .row { display: flex; margin: 0 -15px; }
+  .col { flex: 1; padding: 0 15px; }
+
+  /* 6. Флажки с подписями и мелкие иконки вплотную. */
+  .checks label { display: flex; align-items: center; gap: 8px; height: 20px; margin-bottom: 12px; }
+  .checks input { width: 16px; height: 16px; margin: 0; }
+  .icons button { width: 16px; height: 16px; padding: 0; margin-right: 2px; border: 0; background: #ccc; }
+</style>
+</head>
+<body>
+
+<section id="table">
+  <table>
+    <tr>
+      <td class="shrink"><button class="Button" id="spill"><span class="Button-content"><span class="Button-label">Удалить всё</span></span></button></td>
+      <td><button class="Button" id="victim" style="width:auto"><span class="Button-content"><span class="Button-label">Ок</span></span></button></td>
+    </tr>
+  </table>
+</section>
+
+<section id="bare">
+  <button class="bare" id="bare-btn">Длинная подпись</button>
+</section>
+
+<section id="intended">
+  <div class="FormControl">
+    <input class="FormControl-input" placeholder="Поиск" aria-label="Поиск">
+    <span class="FormControl-input-leadingVisual"><svg width="16" height="16"><circle cx="8" cy="8" r="6" fill="#888"/></svg></span>
+  </div>
+  <button class="ToggleSwitch-track" role="switch" aria-checked="false"><span class="ToggleSwitch-icons"><svg width="12" height="12"></svg><svg width="12" height="12"></svg></span></button>
+  <div class="menu-host">
+    <button>Кнопка под меню</button>
+    <div class="menu" role="menu"><a href="#a" role="menuitem">Пункт меню поверх</a></div>
+  </div>
+  <div class="avatars"><a href="#1" aria-label="Аня"></a><a href="#2" aria-label="Боря"></a><a href="#3" aria-label="Вера"></a></div>
+  <div class="container"><div class="row"><div class="col">Колонка один</div><div class="col">Колонка два</div></div></div>
+</section>
+
+<section class="checks" id="checks">
+  <label><input type="checkbox"> Первый флажок</label>
+  <label><input type="checkbox"> Второй флажок</label>
+  <label><input type="checkbox"> Третий флажок</label>
+</section>
+
+<section class="icons" id="icons">
+  <button aria-label="Жирный"></button><button aria-label="Курсив"></button>
+</section>
+
+</body>
+</html>

@@ -97,7 +97,7 @@ const options = { skip: enabled ? false : 'нужен LT_FULL_TESTS=1 и пол�
  * бюджетом не закреплено намеренно: это производная от состава групп, и её сторожит
  * selection.test.js, который следит за составом, а не за размером.
  */
-const BUDGET = { total: 78000, perToolSchema: 2700, tools: 66 };
+const BUDGET = { total: 81000, perToolSchema: 2700, tools: 67 };
 
 /*
  * Инструменты, где схема кратно тяжелее описания, и это не дефект.

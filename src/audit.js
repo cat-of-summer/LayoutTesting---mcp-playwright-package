@@ -2,7 +2,7 @@ import { CONFIG } from './config.js';
 import { newRunId, writeJson, runDir, slug } from './artifacts.js';
 import { createSession, closeSession, gotoAndSettle } from './browser/pool.js';
 import { profileKey } from './browser/profile.js';
-import { layoutAudit } from './checks/layout.js';
+import { OUTSIDE_TOTAL, layoutAudit } from './checks/layout.js';
 import { pageSnapshot } from './checks/snapshot.js';
 import { takeScreenshot, compareWithBaseline } from './checks/visual.js';
 import { runAxe, runPa11y } from './checks/a11y.js';
@@ -189,7 +189,7 @@ export function summarize(results, errors = {}) {
 /** Ненулевые счётчики layout_audit, без служебных. */
 function layoutBreakdown(layout) {
   if (!layout?.counts) return null;
-  const out = Object.fromEntries(Object.entries(layout.counts).filter(([k, v]) => v && k !== 'boxOverflowClipped'));
+  const out = Object.fromEntries(Object.entries(layout.counts).filter(([k, v]) => v && !OUTSIDE_TOTAL.includes(k)));
   return Object.keys(out).length ? out : null;
 }
 

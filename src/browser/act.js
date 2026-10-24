@@ -20,6 +20,58 @@ export const STATE_ACTIONS = ['click', 'fill', 'type', 'press', 'hover', 'scroll
  */
 export const ACTIONS = [...STATE_ACTIONS, 'tap', 'down', 'up', 'drag'];
 
+/*
+ * Привычные имена из других инструментов. { action: 'key', value: 'Escape' } — ошибка enum, и
+ * правильное press агент находил вторым вызовом; подсказка в тексте ошибки этот вызов экономит.
+ */
+const SYNONYMS = {
+  key: 'press',
+  keypress: 'press',
+  keydown: 'down',
+  keyup: 'up',
+  sleep: 'wait',
+  pause: 'wait',
+  delay: 'wait',
+  input: 'fill',
+  check: 'click',
+  touch: 'tap',
+  dblclick: 'click',
+  evaluate: 'eval',
+  js: 'eval',
+  script: 'eval',
+  shot: 'screenshot',
+  capture: 'screenshot',
+};
+const ELSEWHERE = {
+  goto: 'переход — отдельным вызовом browser_goto',
+  navigate: 'переход — отдельным вызовом browser_goto',
+  reload: 'перезагрузка — browser_goto на тот же адрес',
+};
+
+function distance(a, b) {
+  const row = Array.from({ length: b.length + 1 }, (_, i) => i);
+  for (let i = 1; i <= a.length; i += 1) {
+    let prev = row[0];
+    row[0] = i;
+    for (let j = 1; j <= b.length; j += 1) {
+      const next = row[j];
+      row[j] = Math.min(row[j] + 1, row[j - 1] + 1, prev + (a[i - 1] === b[j - 1] ? 0 : 1));
+      prev = next;
+    }
+  }
+  return row[b.length];
+}
+
+/** Подсказка к неизвестному действию: синоним, другой инструмент или ближайшее по написанию. */
+export function suggestAction(value, allowed = ACTIONS) {
+  const name = String(value ?? '').trim().toLowerCase();
+  if (ELSEWHERE[name]) return `${ELSEWHERE[name]}, в действиях его нет`;
+  const synonym = SYNONYMS[name];
+  if (synonym && allowed.includes(synonym)) return `возможно, вы имели в виду ${synonym}`;
+  const [best] = allowed.map((a) => [a, distance(name, a)]).sort((x, y) => x[1] - y[1]);
+  return best && best[1] <= Math.max(1, Math.floor(best[0].length / 3)) ? `возможно, вы имели в виду ${best[0]}` : null;
+}
+
 /** Перетаскивание по умолчанию: столько длится, точка — примерно на кадр. */
 const DRAG_MS = 300;
 const FRAME_MS = 16;
@@ -132,7 +184,10 @@ async function run(session, { action, selector, value, files, x, y, to, duration
     case 'hover': await target.hover(pressed); break;
     case 'select': await target.selectOption(value ?? '', wait); break;
     case 'upload': return { action, selector, ...(await upload(page, target, files, wait, pressed)) };
-    default: throw new Error(`Неизвестное действие: ${action}`);
+    default: {
+      const hint = suggestAction(action);
+      throw new Error(`Неизвестное действие: ${action}${hint ? ` — ${hint}` : ''}. Доступны: ${ACTIONS.join(', ')}.`);
+    }
   }
   return { action, selector };
 }

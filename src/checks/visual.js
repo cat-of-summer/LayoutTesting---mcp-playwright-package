@@ -313,6 +313,74 @@ export async function inlineImage(absPath, maxWidth = 900, { maxRatio = 4 } = {}
   return done(cut, shownHeight, { fullHeight: meta.height, shownHeight });
 }
 
+/*
+ * Кадр, который клиент вложит без уменьшения: длинная сторона и площадь — пороги, выше которых
+ * модель получает картинку ужатой. Кадр 1425×3413, вложенный целиком, приходил в треть величины,
+ * и обрезанная подпись или слипшиеся рамки на нём не видны.
+ */
+export const TILE_MAX_SIDE = 1560;
+export const TILE_MAX_PIXELS = 1_150_000;
+
+/**
+ * Нарезать кадр по высоте на куски в натуральную величину.
+ *
+ * Ширина — исходная, пока она не больше TILE_MAX_SIDE (шире — ужимается до неё: иначе модель
+ * ужмёт сама). Высота куска — сколько позволяет площадь. Соседние куски перекрываются на overlap,
+ * чтобы дефект на стыке был виден целиком хотя бы в одном. Куски ложатся файлами рядом с кадром.
+ *
+ * Бюджет на все куски — maxBytes: кусок с фотографиями в PNG весит мегабайт, и восемь таких не
+ * пролезают в ответ. Тяжёлый кусок перекодируется в JPEG (текст на нём читается), а когда бюджет
+ * кончился, нарезка останавливается и в ответе rest — откуда продолжать clip-ом.
+ */
+export async function tileImage(absPath, { maxTiles = 8, overlap = 40, maxBytes = 4_000_000 } = {}) {
+  const meta = await sharp(absPath).metadata();
+  const scale = meta.width > TILE_MAX_SIDE ? TILE_MAX_SIDE / meta.width : 1;
+  const width = Math.round(meta.width * scale);
+  const fullHeight = Math.round(meta.height * scale);
+  const tileHeight = Math.max(overlap * 2, Math.min(TILE_MAX_SIDE, Math.floor(TILE_MAX_PIXELS / width)));
+  const step = tileHeight - overlap;
+  const source = scale === 1 ? sharp(absPath) : sharp(await sharp(absPath).resize({ width }).png().toBuffer());
+  const buffer = await source.png().toBuffer();
+
+  const tiles = [];
+  let top = 0;
+  let spent = 0;
+  while (top < fullHeight && tiles.length < maxTiles) {
+    const height = Math.min(tileHeight, fullHeight - top);
+    const piece = () => sharp(buffer).extract({ left: 0, top, width, height });
+    let data = await piece().png({ compressionLevel: 9 }).toBuffer();
+    let ext = 'png';
+    if (data.length > 900_000) {
+      data = await piece().jpeg({ quality: 85 }).toBuffer();
+      ext = 'jpg';
+    }
+    if (tiles.length && spent + data.length > maxBytes) break;
+    spent += data.length;
+    const file = absPath.replace(/\.(\w+)$/, `__tile-${tiles.length + 1}.${ext}`);
+    await fs.writeFile(file, data);
+    /* Координаты — в пикселях исходного кадра: по ним агент снимает clip, если нужно крупнее. */
+    tiles.push({
+      index: tiles.length + 1,
+      y0: Math.round(top / scale),
+      y1: Math.round((top + height) / scale),
+      file,
+      mimeType: ext === 'png' ? 'image/png' : 'image/jpeg',
+      data: data.toString('base64'),
+      bytes: data.length,
+    });
+    if (top + height >= fullHeight) break;
+    top += step;
+  }
+  const covered = tiles.length ? tiles.at(-1).y1 : 0;
+  return {
+    tiles,
+    width,
+    tileHeight,
+    scale,
+    ...(covered < meta.height ? { rest: { from: covered, to: meta.height } } : {}),
+  };
+}
+
 /**
  * Картинка как data:-URI — для отчётов, которые должны пересылаться одним файлом.
  * PNG со скриншотами фотографий весит столько, что документ из пары десятков кадров

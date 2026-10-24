@@ -108,6 +108,10 @@ export function diffBoxes(before, after, { threshold = 1 } = {}) {
       stable += 1;
     }
   }
+  /* Ключи только второго замера: у якорей их нет, а снимок поддерева в layout_diff их знает. */
+  for (const selector of Object.keys(after)) {
+    if (!(selector in before) && after[selector] && !after[selector].error) appeared.push(selector);
+  }
   return {
     stable,
     ...(moved.length ? { moved } : {}),

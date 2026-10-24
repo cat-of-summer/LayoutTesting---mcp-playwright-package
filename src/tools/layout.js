@@ -13,6 +13,7 @@ import { runStress, STRESS_SCENARIOS } from '../checks/stress.js';
 import { runInteractions, INTERACTION_ACTIONS } from '../checks/interaction.js';
 import { matchedRules } from '../checks/cssom.js';
 import { elementLayers } from '../checks/layers.js';
+import { diffTrees, highlightDiff, snapshotTree } from '../checks/layout-diff.js';
 import { json, statesSchema, stepSchema, text } from './shared.js';
 import { inStates, inStatesAcrossWidths } from '../checks/states.js';
 import { interactionScope, layoutSignature, recordForms, recordInteraction, recordLayout } from '../checks/ready.js';
@@ -25,8 +26,8 @@ export function register(server) {
     {
       title: t({ ru: 'Эвристики вёрстки', en: "Layout heuristics" }),
       description: t({
-        ru: 'Ищет горизонтальный скролл, вылеты за viewport, наложения элементов, обрезанный текст, текст под непрозрачным слоем, мёртвый z-index (задан на position: static), битые картинки, картинки без размеров, мелкие тач-таргеты, низкий контраст и текст на картинке — с масштабом и сдвигом, при которых они разойдутся (clearance). Со states — и в открытых модалках и меню, чьё содержимое в закрытом виде не видно.',
-        en: "Finds horizontal scroll, elements past the viewport, overlapping content, clipped text, text under an opaque layer, dead z-index (set on position: static), broken images, images without dimensions, small tap targets, low contrast and text over an image — with the scale and shift that separate them (clearance). With states — in open modals and menus too, whose content is invisible while closed. The first thing to run when the complaint sounds like \"the layout is broken\".",
+        ru: 'Ищет горизонтальный скролл, вылеты за viewport, наложения элементов и контролов, подписи шире своей кнопки, обрезанный текст, текст под непрозрачным слоем, мёртвый z-index (задан на position: static), битые картинки, картинки без размеров, мелкие тач-таргеты, низкий контраст и текст на картинке — с масштабом и сдвигом, при которых они разойдутся (clearance). Со states — и в открытых модалках и меню, чьё содержимое в закрытом виде не видно.',
+        en: "Finds horizontal scroll, elements past the viewport, overlapping content and controls, labels wider than their button, clipped text, text under an opaque layer, dead z-index (set on position: static), broken images, images without dimensions, small tap targets, low contrast and text over an image — with the scale and shift that separate them (clearance). With states — in open modals and menus too, whose content is invisible while closed. The first thing to run when the complaint sounds like \"the layout is broken\".",
       }),
       inputSchema: {
         sessionId: z.string(),
@@ -45,9 +46,13 @@ export function register(server) {
         widths: z.array(z.number()).optional().describe(d('Прогнать по этим ширинам окна сводкой; окно вернётся к исходному')),
         states: statesSchema,
         inkMargin: z.number().optional().describe(d('Отступ строк от картинки для clearance, px (8)')),
+        overlapIgnore: z
+          .array(z.string())
+          .optional()
+          .describe(d('Не считать controlOverlaps для этих блоков — намеренные наложения своего UI kit')),
       },
     },
-    async ({ sessionId, minTarget, contrastRatio, maxItems, categories, include, exclude, widths, states, inkMargin }) => {
+    async ({ sessionId, minTarget, contrastRatio, maxItems, categories, include, exclude, widths, states, inkMargin, overlapIgnore }) => {
       const session = getSession(sessionId);
       const options = {
         minTarget,
@@ -57,6 +62,7 @@ export function register(server) {
         include,
         exclude,
         inkMargin,
+        overlapIgnore,
         frozen: Boolean(session.motionFrozen),
       };
       const check = () =>
@@ -179,6 +185,59 @@ export function register(server) {
     },
     async ({ sessionId, selector, pseudo, maxItems }) =>
       json(await elementLayers(getSession(sessionId).page, { selector, pseudo, maxItems })),
+  );
+
+  server.registerTool(
+    'layout_diff',
+    {
+      title: t({ ru: 'Геометрия до и после правки', en: 'Geometry before and after an edit' }),
+      description: t({
+        ru: 'Проверка одной правки: save — снимок блока до неё, compare — после; ответ — что сдвинулось и на сколько, что пропало и появилось, какие стили поменялись.',
+        en: 'Checks one edit: save snapshots the block before it, compare after; the answer is what moved and by how much, what vanished or appeared and which styles changed.',
+      }),
+      inputSchema: {
+        sessionId: z.string(),
+        action: z.enum(['save', 'compare']).describe(d('save — снимок до правки, compare — после')),
+        selector: z.string().optional().describe(d('Корень снимка; при compare берётся из сохранённого. По умолчанию body')),
+        name: z.string().optional().describe(d('Имя снимка в сессии, по умолчанию default')),
+        threshold: z.number().optional().describe(d('Порог сдвига в px, по умолчанию 1')),
+        highlight: z.boolean().optional().describe(d('Кадр блока с обводкой изменившегося')),
+        update: z.boolean().optional().describe(d('После compare сохранить новый снимок под тем же именем — для следующей правки')),
+        maxItems: z.number().optional(),
+      },
+    },
+    async ({ sessionId, action, selector, name = 'default', threshold = 1, highlight = false, update = false, maxItems = 30 }) => {
+      const session = getSession(sessionId);
+      session.layoutSnapshots ??= new Map();
+      if (action === 'save') {
+        const snap = await snapshotTree(session.page, selector || 'body');
+        session.layoutSnapshots.set(name, snap);
+        return json({
+          saved: name,
+          selector: snap.selector,
+          nodes: snap.count,
+          ...(snap.truncated ? { truncated: true, note: 'Узлов больше предела — снимок неполный. Сузьте selector до блока, который правите.' } : {}),
+        });
+      }
+      const before = session.layoutSnapshots.get(name);
+      if (!before) {
+        const known = [...session.layoutSnapshots.keys()];
+        throw new Error(`Снимка "${name}" нет${known.length ? ` — есть: ${known.join(', ')}` : ''}. Сначала layout_diff с action: "save".`);
+      }
+      const root = selector || before.selector;
+      const after = await snapshotTree(session.page, root);
+      const diff = diffTrees(before, after, { threshold, maxItems });
+      if (update) session.layoutSnapshots.set(name, after);
+      const shot = highlight && !diff.unchanged ? await highlightDiff(session.page, root, diff, { name: `diff-${name}` }) : null;
+      return json({
+        name,
+        selector: root,
+        ...(before.url !== after.url ? { urlChanged: { before: before.url, after: after.url } } : {}),
+        ...diff,
+        ...(shot ? { highlight: shot } : {}),
+        ...(diff.unchanged ? { note: 'Геометрия и стили блока не изменились: правка не доехала до страницы (HMR, кэш) или меняет то, чего снимок не видит.' } : {}),
+      });
+    },
   );
 
   server.registerTool(

@@ -19,7 +19,17 @@ import { auditForms } from './forms.js';
 import { lintLiveCss } from './css-live.js';
 
 /* Категории layout_audit, при которых страница не готова. Остальные — повод посмотреть, не блокер. */
-export const BLOCKING_CATEGORIES = ['documentOverflow', 'overlaps', 'clippedText', 'coveredText', 'brokenImages', 'tinyTargets', 'textOverImage'];
+export const BLOCKING_CATEGORIES = [
+  'documentOverflow',
+  'overlaps',
+  'controlOverlaps',
+  'clippedText',
+  'coveredText',
+  'contentOverflow',
+  'brokenImages',
+  'tinyTargets',
+  'textOverImage',
+];
 
 /* Ширины по умолчанию, если кадров нет: телефон, планшет, ноутбук, десктоп. */
 const DEFAULT_WIDTHS = [375, 768, 1024, 1440];

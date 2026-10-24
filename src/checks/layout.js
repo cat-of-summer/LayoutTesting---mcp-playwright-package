@@ -4,7 +4,7 @@
  */
 
 function collectLayoutIssues(options) {
-  const { minTarget, contrastRatio, maxItems: shownMax, categories, include, exclude, frozen, inkMargin = 8 } = options;
+  const { minTarget, contrastRatio, maxItems: shownMax, categories, include, exclude, frozen, inkMargin = 8, overlapIgnore = null, outsideTotal: OUTSIDE_TOTAL = [] } = options;
   /*
    * Потолок сбора и потолок показа — разные числа.
    *
@@ -81,7 +81,7 @@ function collectLayoutIssues(options) {
       x1 = Math.max(x1, px1);
       y1 = Math.max(y1, py1);
     }
-    return { w: x1 - x0, h: y1 - y0, extendedBy };
+    return { w: x1 - x0, h: y1 - y0, extendedBy, bounds: { left: x0, top: y0, right: x1, bottom: y1 } };
   };
   const box = (r) => ({
     x: Math.round(r.x),
@@ -422,6 +422,8 @@ function collectLayoutIssues(options) {
     lowContrast: [],
     textOverImage: [],
     coveredText: [],
+    contentOverflow: [],
+    controlOverlaps: [],
     deadZIndex: [],
   };
 
@@ -485,6 +487,13 @@ function collectLayoutIssues(options) {
   const inScope = new Set(all);
   const visible = [];
   const overflowing = [];
+  const TARGETS = 'a[href], button, input:not([type="hidden"]), select, textarea, [role="button"], [role="link"], [onclick]';
+  const CONTROLS =
+    'a[href], button, input:not([type="hidden"]), select, textarea, [role="button"], [role="link"], [role="tab"], [role="checkbox"], [role="radio"], [role="switch"], [role="menuitem"]';
+  const targets = [];
+  const tinyCandidates = [];
+  const controls = [];
+  let textBlocks = 0;
 
   for (const el of all) {
     const style = getComputedStyle(el);
@@ -533,25 +542,17 @@ function collectLayoutIssues(options) {
       }
     }
 
-    // Тач-таргеты меньше порога — по WCAG 2.2 «Target Size (Minimum)».
-    if (issues.tinyTargets.length < maxItems) {
-      const interactive =
-        el.matches('a[href], button, input, select, textarea, [role="button"], [role="link"], [onclick]') &&
-        !el.matches('input[type="hidden"]');
-      if (interactive && (rect.width < minTarget || rect.height < minTarget)) {
-        const effective = effectiveTarget(el, rect);
-        if (effective.w < minTarget || effective.h < minTarget) {
-          issues.tinyTargets.push({
-            selector: cssPath(el),
-            text: label(el),
-            box: box(rect),
-            minRequired: minTarget,
-            ...(effective.extendedBy.length
-              ? { effective: { w: Math.round(effective.w), h: Math.round(effective.h) }, extendedBy: effective.extendedBy }
-              : {}),
-          });
-        }
-      }
+    if (Array.from(el.childNodes).some((n) => n.nodeType === 3 && n.nodeValue.trim().length > 1)) textBlocks += 1;
+    if (el.matches(CONTROLS)) controls.push({ el, style, rect });
+
+    // Тач-таргеты меньше порога — по WCAG 2.2 «Target Size (Minimum)». Решение — после обхода:
+    // исключение Spacing судит по соседним целям, а они ещё не собраны.
+    if (el.matches(TARGETS) && !isScreenReaderOnly(el, style, rect)) {
+      const small = rect.width < minTarget || rect.height < minTarget;
+      const effective = small ? effectiveTarget(el, rect) : null;
+      const target = { el, style, rect, effective, bounds: effective ? effective.bounds : rect };
+      targets.push(target);
+      if (effective && (effective.w < minTarget || effective.h < minTarget)) tinyCandidates.push(target);
     }
 
     // z-index на неспозиционированном элементе не действует — правка, которая
@@ -700,6 +701,101 @@ function collectLayoutIssues(options) {
     .sort((a, b) => b.overflowRight + b.overflowLeft - (a.overflowRight + a.overflowLeft))
     .slice(0, maxItems)
     .map(({ el, right, ...rest }) => rest);
+
+  /*
+   * Мелкие цели и исключения WCAG 2.5.8.
+   *
+   * Флажок Primer 16×16 с подписью давал 16–18 находок на страницу, и все они валили page_ready,
+   * хотя критерий их не требует. Три исключения из текста критерия:
+   *   - подпись: клик по связанному label активирует контрол, и зона нажатия — объединение;
+   *   - строка текста: ссылка внутри предложения (Inline);
+   *   - промежуток: круг диаметром minTarget с центром в цели не задевает другие цели и круги
+   *     других мелких целей (Spacing).
+   * Прошедшие по исключению не пропадают молча — их число в tinyTargetsExempt с разбивкой.
+   */
+  const tinyExempt = { label: 0, inline: 0, spacing: 0 };
+  const tinySpaced = [];
+  {
+    const union = (a, b) => ({ left: Math.min(a.left, b.left), top: Math.min(a.top, b.top), right: Math.max(a.right, b.right), bottom: Math.max(a.bottom, b.bottom) });
+    const labelsOf = (el) =>
+      Array.from(el.labels || []).filter((l) => {
+        const r = l.getBoundingClientRect();
+        return r.width > 0 && r.height > 0;
+      });
+    for (const target of targets) {
+      target.labels = labelsOf(target.el);
+      for (const l of target.labels) target.bounds = union(target.bounds, l.getBoundingClientRect());
+    }
+    const small = new Set(tinyCandidates);
+    const r = minTarget / 2;
+    const center = (b) => ({ x: (b.left + b.right) / 2, y: (b.top + b.bottom) / 2 });
+    const distToRect = (p, b) => Math.hypot(Math.max(b.left - p.x, 0, p.x - b.right), Math.max(b.top - p.y, 0, p.y - b.bottom));
+    const sentence = (el, style) =>
+      el.tagName === 'A' &&
+      style.display === 'inline' &&
+      Array.from(el.parentElement?.childNodes || []).some((n) => n.nodeType === 3 && n.nodeValue.trim().length > 1);
+
+    for (const target of tinyCandidates) {
+      const { el, style, rect, effective, bounds, labels } = target;
+      const w = bounds.right - bounds.left;
+      const h = bounds.bottom - bounds.top;
+      if (labels.length && w >= minTarget && h >= minTarget) {
+        tinyExempt.label += 1;
+        continue;
+      }
+      if (sentence(el, style)) {
+        tinyExempt.inline += 1;
+        continue;
+      }
+      const c = center(bounds);
+      const crowded = targets.find((other) => {
+        if (other === target || other.el.contains(el) || el.contains(other.el)) return false;
+        if (distToRect(c, other.bounds) < r) return true;
+        if (!small.has(other)) return false;
+        const oc = center(other.bounds);
+        return Math.hypot(c.x - oc.x, c.y - oc.y) < minTarget;
+      });
+      /*
+       * Флажок с подписью, прошедший по промежутку, — штатный компонент, его не показываем. Голая
+       * мелкая цель с промежутком критерию тоже не нарушает, но крестик модалки 15×15 агенту
+       * видеть стоит: такие идут в конец списка с exempt и в счёт не входят.
+       */
+      if (!crowded && labels.length) {
+        tinyExempt.label += 1;
+        continue;
+      }
+      if (!crowded) {
+        tinyExempt.spacing += 1;
+        if (tinySpaced.length < maxItems) {
+          tinySpaced.push({
+            selector: cssPath(el),
+            text: label(el),
+            box: box(rect),
+            minRequired: minTarget,
+            ...(effective.extendedBy.length
+              ? { effective: { w: Math.round(effective.w), h: Math.round(effective.h) }, extendedBy: effective.extendedBy }
+              : {}),
+            exempt: 'spacing',
+          });
+        }
+        continue;
+      }
+      if (issues.tinyTargets.length >= maxItems) continue;
+      issues.tinyTargets.push({
+        selector: cssPath(el),
+        text: label(el),
+        box: box(rect),
+        minRequired: minTarget,
+        ...(effective.extendedBy.length
+          ? { effective: { w: Math.round(effective.w), h: Math.round(effective.h) }, extendedBy: effective.extendedBy }
+          : {}),
+        ...(labels.length ? { withLabel: { w: Math.round(w), h: Math.round(h) } } : {}),
+        tooClose: cssPath(crowded.el),
+      });
+    }
+  }
+  const tinyCounted = issues.tinyTargets.length;
+  issues.tinyTargets = [...issues.tinyTargets, ...tinySpaced];
 
   for (const img of Array.from(document.images)) {
     // Картинки живут отдельным списком документа, поэтому сужение применяем к ним явно.
@@ -880,20 +976,23 @@ function collectLayoutIssues(options) {
    * были, — и заметить это было нечем. Сортировка «клипы в конец» стояла после сбора и помочь
    * уже не могла.
    */
+  /* Коробка, у которой вылет детей виден глазом: она обрезает, окрашена или обведена. */
+  const painted = (style) =>
+    /hidden|clip|auto|scroll/.test(style.overflow + style.overflowX + style.overflowY) ||
+    style.backgroundImage !== 'none' ||
+    !/^rgba\(0, 0, 0, 0\)$|^transparent$/.test(style.backgroundColor) ||
+    parseFloat(style.borderTopWidth) > 0 ||
+    parseFloat(style.borderBottomWidth) > 0 ||
+    parseFloat(style.borderLeftWidth) > 0 ||
+    parseFloat(style.borderRightWidth) > 0;
+  /* Детей такой коробки разбирает boxOverflow; contentOverflow берёт остальные. */
+  const boxChecked = (style, rect) => painted(style) && rect.width >= 16 && rect.height >= 16;
   const overflowReal = [];
   const overflowClipped = [];
   for (const { el, style, rect } of visible) {
     if (overflowReal.length >= maxItems && overflowClipped.length >= maxItems) break;
     const clips = /hidden|clip|auto|scroll/.test(style.overflow + style.overflowX + style.overflowY);
-    const painted =
-      clips ||
-      style.backgroundImage !== 'none' ||
-      !/^rgba\(0, 0, 0, 0\)$|^transparent$/.test(style.backgroundColor) ||
-      parseFloat(style.borderTopWidth) > 0 ||
-      parseFloat(style.borderBottomWidth) > 0 ||
-      parseFloat(style.borderLeftWidth) > 0 ||
-      parseFloat(style.borderRightWidth) > 0;
-    if (!painted || rect.width < 16 || rect.height < 16) continue;
+    if (!boxChecked(style, rect)) continue;
 
     for (const child of el.children) {
       const childStyle = getComputedStyle(child);
@@ -930,11 +1029,350 @@ function collectLayoutIssues(options) {
   issues.boxOverflow = [...overflowReal, ...overflowClipped];
   const clippedOverflow = overflowClipped.length;
 
+  /*
+   * Содержимое шире своего блока при overflow: visible.
+   *
+   * Кнопка в ячейке с width: 1% ужималась до паддингов (28px), а подпись шириной 72px рисовалась
+   * поверх соседней ячейки — и отчёт молчал: clippedText ждёт overflow: hidden, boxOverflow
+   * сравнивает только детей-элементов окрашенной коробки, а у прозрачной кнопки или у текста прямо
+   * в ней такого сравнения нет. Здесь мерится то, что нарисовано: строки собственного текста и
+   * дети в потоке против рамки блока. scrollWidth не годится — он включает абсолютных потомков.
+   *
+   * Отрицательный margin ребёнка — замысел (ряд сетки шире контейнера на гаттеры): сторона, на
+   * которую ребёнок вынесен своим margin, не считается. Вылет, который срезает обрезающий предок,
+   * глазом не виден и тоже не считается.
+   *
+   * Что лежит под вылетом, проверяется пробой: вылет поверх соседа — дефект, вылет в пустое поле
+   * своего же предка — повод посмотреть. Вторые считаются отдельно в contentOverflowFree.
+   */
+  const contentFound = [];
+  {
+    const px = (v) => parseFloat(v) || 0;
+    const REPLACED = /^(svg|img|input|select|textarea|iframe|video|canvas|picture|object|embed|br|hr|button)$/i;
+    /* Текст, спрятанный приёмом замены картинкой: text-indent: -9999px, нулевой шрифт, прозрачный цвет. */
+    const hiddenText = (style) => parseFloat(style.textIndent) < -99 || parseFloat(style.fontSize) === 0 || parseColor(style.color)?.a === 0;
+    for (const { el, style, rect } of visible) {
+      if (contentFound.length >= maxItems) break;
+      if (el === document.body || /^(inline|contents)$/.test(style.display)) continue;
+      if (style.overflowX !== 'visible' || style.overflowY !== 'visible') continue;
+      if (isScreenReaderOnly(el, style, rect)) continue;
+      /* У кнопки своя строка не мерится Range — её содержимое разбирается по её детям ниже,
+         а голый текст кнопки — через scroll-размеры, которые у кнопки не включают абсолютных. */
+      if (REPLACED.test(el.tagName) && el.tagName !== 'BUTTON') continue;
+
+      const out = { top: 0, right: 0, bottom: 0, left: 0 };
+      let cause = null;
+      /* Допуск — порог, а в ответ идёт настоящий вылет: иначе 40px выглядели бы как 36. */
+      const take = (r, tolX, tolY, by) => {
+        const sides = { top: rect.top - r.top, right: r.right - rect.right, bottom: r.bottom - rect.bottom, left: rect.left - r.left };
+        for (const [side, value] of Object.entries(sides)) {
+          const tol = side === 'top' || side === 'bottom' ? tolY : tolX;
+          if (value > tol && value > out[side]) {
+            out[side] = value;
+            cause = cause || by;
+          }
+        }
+      };
+
+      /* Строки текста: по вертикали прямоугольник строки выше line-height на поля шрифта, и бейдж
+         с height меньше строки "вылезал" бы на пару пикселей. Настоящий вылет — лишняя строка
+         целиком, он больше трети её высоты. */
+      if (el.tagName === 'BUTTON') {
+        const hasOwnText = Array.from(el.childNodes).some((n) => n.nodeType === 3 && n.nodeValue.trim());
+        if (hasOwnText && el.scrollWidth > el.clientWidth + 2) {
+          const extra = el.scrollWidth - el.clientWidth;
+          take({ left: rect.left - extra / 2, right: rect.right + extra / 2, top: rect.top, bottom: rect.bottom }, 2, 0, 'текст');
+        }
+      } else if (!hiddenText(style)) {
+        for (const node of el.childNodes) {
+          if (node.nodeType !== 3 || !node.nodeValue.trim()) continue;
+          const range = document.createRange();
+          range.selectNodeContents(node);
+          for (const line of range.getClientRects()) {
+            if (line.width > 1 && line.height > 1) take(line, 2, Math.max(2, line.height * 0.35), 'текст');
+          }
+        }
+      }
+
+      /* Дети в потоке — если их не разбирает boxOverflow. */
+      if (!boxChecked(style, rect)) {
+        for (const child of el.children) {
+          const cs = getComputedStyle(child);
+          if (cs.position === 'absolute' || cs.position === 'fixed' || cs.float !== 'none' || cs.transform !== 'none') continue;
+          const cr = child.getBoundingClientRect();
+          if (!isVisible(child, cs, cr)) continue;
+          /* Сторона, вынесенная отрицательным margin, считается по margin-боксу. */
+          const neg = (v) => Math.min(0, px(v));
+          take(
+            { left: cr.left - neg(cs.marginLeft), right: cr.right + neg(cs.marginRight), top: cr.top - neg(cs.marginTop), bottom: cr.bottom + neg(cs.marginBottom) },
+            2,
+            2,
+            cssPath(child),
+          );
+        }
+      }
+
+      const worst = Math.max(out.top, out.right, out.bottom, out.left);
+      if (worst <= 0) continue;
+      /* Вылет, срезанный обрезающим предком, не виден. */
+      const extent = { left: rect.left - out.left, right: rect.right + out.right, top: rect.top - out.top, bottom: rect.bottom + out.bottom };
+      const seen = clippedRect(el, { ...extent, x: extent.left, y: extent.top, width: extent.right - extent.left, height: extent.bottom - extent.top });
+      if (!seen) continue;
+      const shown = {
+        top: Math.round(Math.min(out.top, rect.top - seen.top)),
+        right: Math.round(Math.min(out.right, seen.right - rect.right)),
+        bottom: Math.round(Math.min(out.bottom, seen.bottom - rect.bottom)),
+        left: Math.round(Math.min(out.left, rect.left - seen.left)),
+      };
+      if (Math.max(shown.top, shown.right, shown.bottom, shown.left) <= 0) continue;
+      contentFound.push({ el, rect, out: shown, cause });
+    }
+
+    /* Проба под вылетом — по образцу второго прохода coveredText: прокрутка к элементу и обратно. */
+    const scrollX = window.scrollX;
+    const scrollY = window.scrollY;
+    for (const [i, item] of contentFound.entries()) {
+      if (i >= 30) {
+        item.neighbour = undefined;
+        continue;
+      }
+      let rect = item.el.getBoundingClientRect();
+      if (rect.top < 0 || rect.bottom > vh) {
+        window.scrollTo(scrollX, Math.max(0, window.scrollY + rect.top - vh / 3));
+        rect = item.el.getBoundingClientRect();
+      }
+      const side = Object.entries(item.out).sort((a, b) => b[1] - a[1])[0][0];
+      const d = item.out[side];
+      const strip =
+        side === 'right'
+          ? { left: rect.right, right: rect.right + d, top: rect.top, bottom: rect.bottom }
+          : side === 'left'
+            ? { left: rect.left - d, right: rect.left, top: rect.top, bottom: rect.bottom }
+            : side === 'bottom'
+              ? { left: rect.left, right: rect.right, top: rect.bottom, bottom: rect.bottom + d }
+              : { left: rect.left, right: rect.right, top: rect.top - d, bottom: rect.top };
+      const points = [0.25, 0.5, 0.75].map((k) =>
+        side === 'left' || side === 'right'
+          ? [(strip.left + strip.right) / 2, strip.top + (strip.bottom - strip.top) * k]
+          : [strip.left + (strip.right - strip.left) * k, (strip.top + strip.bottom) / 2],
+      );
+      let neighbour = null;
+      let probed = false;
+      for (const [x, y] of points) {
+        if (x < 0 || y < 0 || x > vw || y > vh) continue;
+        probed = true;
+        const other = document.elementsFromPoint(x, y).find((node) => node !== item.el && !item.el.contains(node) && !node.contains(item.el));
+        if (other) {
+          neighbour = other;
+          break;
+        }
+      }
+      item.neighbour = probed ? neighbour : undefined;
+    }
+    window.scrollTo(scrollX, scrollY);
+  }
+  const contentOver = [];
+  const contentFree = [];
+  /* Текст, вылезший из контейнера под соседа, уже назван в coveredText — второй раз не нужен. */
+  const coveredHosts = new Set(issues.coveredText.map((item) => item.container).filter(Boolean));
+  for (const { el, rect, out, cause, neighbour } of contentFound) {
+    if (coveredHosts.has(cssPath(el))) continue;
+    const control = el.matches(CONTROLS) ? null : el.closest(CONTROLS);
+    const entry = {
+      selector: cssPath(el),
+      text: label(el),
+      box: box(rect),
+      overflowPx: Object.fromEntries(Object.entries(out).filter(([, value]) => value > 0)),
+      cause,
+      ...(control ? { control: cssPath(control) } : {}),
+      overNeighbour: neighbour === undefined ? null : neighbour ? cssPath(neighbour) : false,
+    };
+    (neighbour === null ? contentFree : contentOver).push(entry);
+  }
+  issues.contentOverflow = [...contentOver, ...contentFree];
+
+  /*
+   * Пересечения контролов — между собой и с текстом.
+   *
+   * overlaps берёт только соседей в потоке с position: static у одного родителя: кнопки Primer
+   * (position: relative) в соседних ячейках таблицы туда не попадают никогда. Здесь пары — любые
+   * видимые контролы и строки текста, не вложенные друг в друга и лежащие в одном слое.
+   *
+   * Слой — ближайший предок с absolute, fixed или sticky либо открытое меню, диалог, подсказка.
+   * Выпадающее меню поверх кнопок страницы — замысел, а не наложение. Иконка или подпись внутри
+   * поля ввода (целиком в его рамке) и стопка с отрицательным margin (аватары, группа кнопок со
+   * слитыми рамками) — тоже замысел. Остальное исключается через overlapIgnore.
+   */
+  {
+    const layerCache = new Map();
+    const layerOf = (el) => {
+      const chain = [];
+      let node = el;
+      let layer = null;
+      while (node && node !== document.body && node !== document.documentElement) {
+        if (layerCache.has(node)) {
+          layer = layerCache.get(node);
+          break;
+        }
+        chain.push(node);
+        const s = getComputedStyle(node);
+        if (
+          /^(absolute|fixed|sticky)$/.test(s.position) ||
+          node.tagName === 'DIALOG' ||
+          node.hasAttribute('popover') ||
+          /^(dialog|alertdialog|menu|listbox|tooltip)$/.test(node.getAttribute('role') || '')
+        ) {
+          layer = node;
+          break;
+        }
+        node = node.parentElement;
+      }
+      /* Узлы выше найденного слоя к нему не относятся — кэшируем только цепочку до него. */
+      for (const n of chain) {
+        if (n === layer) {
+          layerCache.set(n, n);
+          break;
+        }
+        layerCache.set(n, layer);
+      }
+      return layer;
+    };
+    const ignored = (el) =>
+      el.closest('[aria-hidden="true"]') ||
+      (overlapIgnore || []).some((sel) => {
+        try {
+          return Boolean(el.closest(sel));
+        } catch {
+          return false;
+        }
+      });
+    const FIELD = /^(INPUT|SELECT|TEXTAREA)$/;
+    const items = [];
+    const controlSet = new Set(controls.map((c) => c.el));
+    for (const { el, style, rect } of controls) {
+      if (style.position === 'fixed' || isScreenReaderOnly(el, style, rect) || ignored(el)) continue;
+      const parts = (style.display === 'inline' ? Array.from(el.getClientRects()) : [rect]).map((r) => clippedRect(el, r)).filter(Boolean);
+      if (parts.length) items.push({ el, style, parts, control: true });
+    }
+    /* Строку режет и собственная рамка: строки за line-clamp Range отдаёт, хотя их не видно. */
+    const ownClip = (el, style, r) => {
+      if (style.overflowX === 'visible' && style.overflowY === 'visible') return r;
+      const b = el.getBoundingClientRect();
+      const left = b.left + (parseFloat(style.borderLeftWidth) || 0);
+      const top = b.top + (parseFloat(style.borderTopWidth) || 0);
+      const c = {
+        left: style.overflowX === 'visible' ? r.left : Math.max(r.left, left),
+        right: style.overflowX === 'visible' ? r.right : Math.min(r.right, left + el.clientWidth),
+        top: style.overflowY === 'visible' ? r.top : Math.max(r.top, top),
+        bottom: style.overflowY === 'visible' ? r.bottom : Math.min(r.bottom, top + el.clientHeight),
+      };
+      return c.right - c.left > 1 && c.bottom - c.top > 1 ? { ...c, width: c.right - c.left, height: c.bottom - c.top } : null;
+    };
+    for (const { el, style, rect } of visible) {
+      if (controlSet.has(el) || style.position === 'fixed' || ignored(el)) continue;
+      if (!Array.from(el.childNodes).some((n) => n.nodeType === 3 && n.nodeValue.trim().length > 1)) continue;
+      const lines = [];
+      for (const node of el.childNodes) {
+        if (node.nodeType !== 3 || !node.nodeValue.trim()) continue;
+        const range = document.createRange();
+        range.selectNodeContents(node);
+        for (const line of range.getClientRects()) {
+          if (line.width > 1 && line.height > 1) {
+            const own = ownClip(el, style, line);
+            const seen = own && clippedRect(el, own);
+            if (seen) lines.push(seen);
+          }
+        }
+      }
+      if (lines.length) items.push({ el, style, parts: lines, control: false });
+    }
+
+    const CELL = 200;
+    const buckets = new Map();
+    for (const [index, item] of items.entries()) {
+      const u = item.parts.reduce((a, r) => ({ left: Math.min(a.left, r.left), top: Math.min(a.top, r.top), right: Math.max(a.right, r.right), bottom: Math.max(a.bottom, r.bottom) }), item.parts[0]);
+      item.union = u;
+      for (let cx = Math.floor(u.left / CELL); cx <= Math.floor(u.right / CELL); cx += 1) {
+        for (let cy = Math.floor(u.top / CELL); cy <= Math.floor(u.bottom / CELL); cy += 1) {
+          const key = `${cx}:${cy}`;
+          if (!buckets.has(key)) buckets.set(key, []);
+          buckets.get(key).push(index);
+        }
+      }
+    }
+    const area = (r) => (r.right - r.left) * (r.bottom - r.top);
+    const negMargin = (style, a, b) => Math.max(0, -(parseFloat(style[a]) || 0), -(parseFloat(style[b]) || 0));
+    const inside = (inner, outer) => {
+      const ox = Math.min(inner.right, outer.right) - Math.max(inner.left, outer.left);
+      const oy = Math.min(inner.bottom, outer.bottom) - Math.max(inner.top, outer.top);
+      return ox > 0 && oy > 0 && (ox * oy) / Math.max(1, area(inner)) >= 0.9;
+    };
+    /*
+     * Строка с text-overflow: ellipsis. У обрезанной inline-ссылки в ней Chrome отдаёт лишний
+     * фрагмент поверх соседней ссылки (сообщения коммитов на GitHub), хотя на экране они идут
+     * подряд. Внутри одной такой строки пары не сравниваются.
+     */
+    const ellipsisLine = (el) => {
+      let node = el;
+      while (node && getComputedStyle(node).display === 'inline') node = node.parentElement;
+      return node && getComputedStyle(node).textOverflow === 'ellipsis' ? node : null;
+    };
+    const done = new Set();
+    outer: for (const list of buckets.values()) {
+      for (let i = 0; i < list.length; i += 1) {
+        for (let j = i + 1; j < list.length; j += 1) {
+          const [ia, ib] = list[i] < list[j] ? [list[i], list[j]] : [list[j], list[i]];
+          const a = items[ia];
+          const b = items[ib];
+          if (!a.control && !b.control) continue;
+          const key = `${ia}:${ib}`;
+          if (done.has(key)) continue;
+          done.add(key);
+          if (a.el.contains(b.el) || b.el.contains(a.el)) continue;
+          if (layerOf(a.el) !== layerOf(b.el)) continue;
+          const line = ellipsisLine(a.el);
+          if (line && line === ellipsisLine(b.el)) continue;
+          if ((FIELD.test(a.el.tagName) && inside(b.union, a.union)) || (FIELD.test(b.el.tagName) && inside(a.union, b.union))) continue;
+          let best = null;
+          for (const ra of a.parts) {
+            for (const rb of b.parts) {
+              const ox = Math.min(ra.right, rb.right) - Math.max(ra.left, rb.left);
+              const oy = Math.min(ra.bottom, rb.bottom) - Math.max(ra.top, rb.top);
+              /* Строки текста выше line-height на поля шрифта: соседние строки задевают друг друга
+                 на пару пикселей по вертикали, и это не наложение. */
+              const minH = Math.min(ra.bottom - ra.top, rb.bottom - rb.top);
+              if (ox > 2 && oy > Math.max(2, minH * 0.35) && (!best || ox * oy > best.ox * best.oy)) best = { ox, oy };
+            }
+          }
+          if (!best) continue;
+          if (a.control && b.control) {
+            const nx = Math.max(negMargin(a.style, 'marginLeft', 'marginRight'), negMargin(b.style, 'marginLeft', 'marginRight'));
+            const ny = Math.max(negMargin(a.style, 'marginTop', 'marginBottom'), negMargin(b.style, 'marginTop', 'marginBottom'));
+            if ((nx > 0 && best.ox <= nx + 1) || (ny > 0 && best.oy <= ny + 1)) continue;
+          }
+          const smaller = Math.min(area(a.union), area(b.union)) || 1;
+          issues.controlOverlaps.push({
+            a: { selector: cssPath(a.el), text: label(a.el), box: box(a.el.getBoundingClientRect()), kind: a.control ? 'control' : 'text' },
+            b: { selector: cssPath(b.el), text: label(b.el), box: box(b.el.getBoundingClientRect()), kind: b.control ? 'control' : 'text' },
+            overlapPx: { w: Math.round(best.ox), h: Math.round(best.oy) },
+            share: Math.round(Math.min(1, (best.ox * best.oy) / smaller) * 100) / 100,
+          });
+          if (issues.controlOverlaps.length >= maxItems) break outer;
+        }
+      }
+    }
+  }
+
   const counts = Object.fromEntries(
     Object.entries(issues).map(([k, v]) => [k, Array.isArray(v) ? v.length : v ? 1 : 0]),
   );
   counts.boxOverflow -= clippedOverflow;
   if (clippedOverflow) counts.boxOverflowClipped = clippedOverflow;
+  counts.tinyTargets = tinyCounted;
+  counts.contentOverflow -= contentFree.length;
+  if (contentFree.length) counts.contentOverflowFree = contentFree.length;
+  const exemptTotal = tinyExempt.label + tinyExempt.inline + tinyExempt.spacing;
+  if (exemptTotal) counts.tinyTargetsExempt = exemptTotal;
   const countsCapped = Object.entries(issues)
     .filter(([, v]) => Array.isArray(v) && v.length >= COLLECT_CAP)
     .map(([k]) => k);
@@ -992,12 +1430,42 @@ function collectLayoutIssues(options) {
     ? Object.fromEntries(Object.entries(issues).filter(([k]) => wanted.has(k)))
     : issues;
 
+  /*
+   * Полнота разбора.
+   *
+   * Ноль находок по странице, которая ещё не дорисовалась, выглядит так же, как ноль по здоровой:
+   * отчёт не отличал "проверил и не нашёл" от "проверять было нечего". Теперь ответ всегда несёт,
+   * сколько узлов разобрано, и состояние страницы, а признаки недорисованной — отдельным warning.
+   */
+  /* Ленивая картинка ниже экрана и не должна быть загружена — это не признак недорисованной страницы. */
+  const pendingImages = Array.from(document.images).filter((img) => inScope.has(img) && !img.complete && img.loading !== 'lazy').length;
+  const pageState = {
+    readyState: document.readyState,
+    fonts: document.fonts ? document.fonts.status : null,
+    pendingImages,
+    bodyHeight: Math.round(document.body ? document.body.scrollHeight : 0),
+  };
+  const checked = { nodes: all.length, visible: visible.length, textBlocks, controls: controls.length };
+  const unfinished = [
+    /* Порог — почти пустая страница, а не маленькая: история Storybook из кнопки тоже страница. */
+    ...(visible.length < 3 ? [`видимых узлов всего ${visible.length}`] : []),
+    ...(document.readyState !== 'complete' ? [`document.readyState = ${document.readyState}`] : []),
+    ...(pageState.fonts === 'loading' ? ['шрифты ещё грузятся'] : []),
+    ...(pendingImages ? [`картинок в загрузке: ${pendingImages}`] : []),
+  ];
+
   return {
     viewport: { width: vw, height: vh },
     total: Object.entries(counts)
-      .filter(([k]) => k !== 'boxOverflowClipped')
+      .filter(([k]) => !OUTSIDE_TOTAL.includes(k))
       .reduce((a, [, b]) => a + b, 0),
     counts,
+    checked,
+    pageState,
+    ...(unfinished.length
+      ? { warning: `Отчёт может быть по недорисованной странице: ${unfinished.join('; ')}. Ноль находок тогда ничего не значит — дождитесь загрузки (browser_act wait) и повторите.` }
+      : {}),
+    ...(exemptTotal ? { exempt: { tinyTargets: tinyExempt } } : {}),
     ...(countsCapped.length ? { countsCapped: `Сбор остановлен на ${COLLECT_CAP}: ${countsCapped.join(', ')} — настоящее число больше.` } : {}),
     ...(motion ? { motion } : {}),
     ...(wanted ? { categories: [...wanted] } : {}),
@@ -1022,14 +1490,34 @@ export const AUDIT_CATEGORIES = [
   'lowContrast',
   'textOverImage',
   'coveredText',
+  'contentOverflow',
+  'controlOverlaps',
   'deadZIndex',
 ];
 
+/*
+ * Счётчики рядом с категориями, которые в total не входят: намеренные клипы, вылет в пустое поле
+ * своего предка и мелкие цели, прошедшие по исключению WCAG. Они в ответе ради масштаба, а не как
+ * находки.
+ */
+export const OUTSIDE_TOTAL = ['boxOverflowClipped', 'contentOverflowFree', 'tinyTargetsExempt'];
+
 export async function layoutAudit(
   page,
-  { minTarget = 24, contrastRatio = 4.5, maxItems = 50, categories = null, include = null, exclude = null, frozen = false, inkMargin = 8 } = {},
+  { minTarget = 24, contrastRatio = 4.5, maxItems = 50, categories = null, include = null, exclude = null, frozen = false, inkMargin = 8, overlapIgnore = null } = {},
 ) {
-  return page.evaluate(collectLayoutIssues, { minTarget, contrastRatio, maxItems, categories, include, exclude, frozen, inkMargin });
+  return page.evaluate(collectLayoutIssues, {
+    minTarget,
+    contrastRatio,
+    maxItems,
+    categories,
+    include,
+    exclude,
+    frozen,
+    inkMargin,
+    overlapIgnore,
+    outsideTotal: OUTSIDE_TOTAL,
+  });
 }
 
 /** Дамп вычисленных стилей — «почему этот блок не там, где я жду». */
@@ -1104,7 +1592,7 @@ export async function computedStyles(page, selector, props, { pseudo = null, all
  * категорий в отчёте, и coveredText с textOverImage, стоящие в конце, отрезались всегда: подпись
  * под картинкой соседней строки оставалась в счётчике, а в ответе её не было.
  */
-const TOP_ORDER = ['documentOverflow', 'overlaps', 'coveredText', 'clippedText', 'textOverImage', 'brokenImages', 'boxOverflow', 'tinyTargets'];
+const TOP_ORDER = ['documentOverflow', 'overlaps', 'controlOverlaps', 'coveredText', 'contentOverflow', 'clippedText', 'textOverImage', 'brokenImages', 'boxOverflow', 'tinyTargets'];
 
 /** По одной находке из каждой категории по кругу, с серьёзных: восемь строк на ширину. */
 export function topIssues(report, limit = 8) {
@@ -1128,6 +1616,8 @@ const rank = (category) => {
 export const widthSummary = (report) => ({
   total: report.total,
   counts: report.counts,
+  checked: report.checked,
+  ...(report.warning ? { warning: report.warning } : {}),
   top: topIssues(report),
   ...(report.motion ? { motion: report.motion } : {}),
 });

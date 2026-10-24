@@ -16,6 +16,7 @@ import {
   takeScreenshot,
   compareWithBaseline,
   inlineImage,
+  tileImage,
   listBaselines,
   pruneBaselines,
   removeBaseline,
@@ -24,7 +25,7 @@ import { comparePages } from '../checks/compare.js';
 import { compareLayout } from '../checks/compare-dom.js';
 import { buildVisualGuide } from '../checks/guide.js';
 import { json, linkBlocks, text } from './shared.js';
-import { exportFile } from '../exports.js';
+import { downloadCommand, exportFile } from '../exports.js';
 import { t } from '../i18n.js';
 
 export function register(server) {
@@ -33,8 +34,8 @@ export function register(server) {
     {
       title: t({ ru: 'Скриншот', en: "Screenshot" }),
       description: t({
-        ru: "Снимок страницы или элемента. По умолчанию снимается страница целиком, а не видимая область: на длинной странице это кадр в тысячи точек, и для разбора обычно нужен selector или clip. Возвращает адрес артефакта; картинку вкладывает в ответ только при inline: true. Если часть ресурсов не загрузилась, в ответе будет warnings — снимок тогда неполный.",
-        en: "A screenshot of the page or of one element. By default the whole page is captured rather than the visible area: on a long page that is a frame thousands of pixels tall, so a selector or a clip is usually what you want. Returns the artifact address; the image itself is embedded in the response only with inline: true. If some resources failed to load the response carries warnings — the shot is incomplete then.",
+        ru: "Снимок страницы или элемента. По умолчанию снимается страница целиком, а не видимая область: на длинной странице это кадр в тысячи точек, и для разбора обычно нужен selector или clip. Возвращает адрес артефакта (path — внутри контейнера, с хоста — download или saveTo). Картинку вкладывает только при inline: true; tiles: true — кусками в натуральную величину. Если часть ресурсов не загрузилась, в ответе будет warnings — снимок тогда неполный.",
+        en: "A screenshot of the page or of one element. By default the whole page is captured rather than the visible area: on a long page that is a frame thousands of pixels tall, so a selector or a clip is usually what you want. Returns the artifact address (path is inside the container; from the host use download or saveTo). The image is embedded only with inline: true; tiles: true embeds it in full-size pieces. If some resources failed to load the response carries warnings — the shot is incomplete then.",
       }),
       inputSchema: {
         sessionId: z.string(),
@@ -60,6 +61,10 @@ export function register(server) {
         quality: z.number().optional().describe(d('Качество jpeg и webp, 1–100 (по умолчанию 80)')),
         maxWidth: z.number().optional().describe(d('Уменьшить до этой ширины — для вставки в документы')),
         inline: z.boolean().optional().describe(d('Вложить уменьшенную картинку в ответ')),
+        tiles: z
+          .boolean()
+          .optional()
+          .describe(d('Вложить кадр кусками в натуральную величину — мелкие дефекты видны без clip по частям')),
         saveTo: z.string().optional().describe(d('Копию — в папку на хосте (EXPORTS_DIR): путь от неё или абсолютный внутри неё')),
         runId: z.string().optional(),
       },
@@ -77,6 +82,7 @@ export function register(server) {
       quality,
       maxWidth,
       inline = false,
+      tiles = false,
       saveTo,
       runId,
     }) => {
@@ -104,10 +110,13 @@ export function register(server) {
        * за поломку текущей страницы, хотя к ней они отношения не имеют.
        */
       const failures = summarizeFailures(session.logs.network.slice(session.logMarks?.network || 0));
-      const payload = failures ? { ...shot, warnings: failures } : shot;
+      /* path — путь в контейнере стенда, с хоста он не открывается; download — готовая команда. */
+      const payload = { ...shot, ...(shot.url ? { download: downloadCommand(shot.url) } : {}), ...(failures ? { warnings: failures } : {}) };
       if (saveTo) payload.savedTo = await exportFile(shot.path, saveTo, { url: shot.url });
 
-      const img = inline ? await inlineImage(shot.path) : null;
+      /* Куски заменяют уменьшенную картинку: вкладывать то же самое дважды незачем. */
+      const tiled = tiles ? await tileImage(shot.path) : null;
+      const img = inline && !tiled ? await inlineImage(shot.path) : null;
       /* Обрезку вложенной картинки объявляем: иначе агент разбирает верхнюю треть страницы,
          считая, что видит её целиком. */
       const body = img?.cropped
@@ -122,8 +131,24 @@ export function register(server) {
 
       /* Ссылки собираем тем же правилом, что и json(): этот ответ строится вручную ради
          image-блока, но адресуемость артефакта от этого не меняется. */
-      const content = [{ type: 'text', text: JSON.stringify(body) }, ...linkBlocks(body)];
+      const withTiles = tiled
+        ? {
+            ...body,
+            tiles: tiled.tiles.map(({ file, data, ...tile }) => ({ ...tile, url: publicUrl(file) })),
+            ...(tiled.scale !== 1 ? { tilesScale: Math.round(tiled.scale * 1000) / 1000 } : {}),
+            ...(tiled.rest
+              ? {
+                  tilesNote: `Вложено ${tiled.tiles.length} кусков до y = ${tiled.rest.from} из ${tiled.rest.to}: предел ответа. Дальше — тот же вызов с clip {x: 0, y: ${tiled.rest.from}, width: ${shot.width}, height: …} и tiles: true.`,
+                }
+              : {}),
+          }
+        : body;
+      const content = [{ type: 'text', text: JSON.stringify(withTiles) }, ...linkBlocks(withTiles)];
       if (img) content.push({ type: 'image', data: img.data, mimeType: img.mimeType });
+      for (const tile of tiled?.tiles || []) {
+        content.push({ type: 'text', text: `Кусок ${tile.index} из ${tiled.tiles.length}: y ${tile.y0}–${tile.y1}` });
+        content.push({ type: 'image', data: tile.data, mimeType: tile.mimeType });
+      }
       return { content };
     },
   );

@@ -11,11 +11,11 @@
  * screenshot, чтение состояния игры — eval. Время каждого шага отдаётся от начала пакета.
  */
 import { z } from 'zod';
-import { ACTIONS, perform } from './act.js';
+import { ACTIONS, perform, suggestAction } from './act.js';
 import { evaluateOnPage } from './evaluate.js';
 import { takeScreenshot } from '../checks/visual.js';
 import { newRunId, slug } from '../artifacts.js';
-import { exportFile } from '../exports.js';
+import { downloadCommand, exportFile } from '../exports.js';
 
 /** Больше — это уже сценарий, а не пакет: его пишут кодом и гоняют иначе. */
 export const MAX_STEPS = 200;
@@ -28,9 +28,11 @@ const MAX_EVAL_CHARS = 4000;
  * у самого вызова, и платить за них в манифесте второй раз незачем. Проверяется здесь, а
  * лишнее поле — ошибка, а не молчание: опечатка в duration иначе дала бы паузу в ноль.
  */
+const STEP_ACTIONS = [...ACTIONS, 'screenshot', 'eval'];
+
 const stepParser = z
   .object({
-    action: z.enum([...ACTIONS, 'screenshot', 'eval']),
+    action: z.enum(STEP_ACTIONS),
     selector: z.string().optional(),
     value: z.string().optional(),
     files: z.array(z.string()).optional(),
@@ -43,6 +45,9 @@ const stepParser = z
     /* screenshot */
     name: z.string().optional(),
     fullPage: z.boolean().optional(),
+    clip: z.object({ x: z.number(), y: z.number(), width: z.number(), height: z.number() }).optional(),
+    hide: z.array(z.string()).optional(),
+    mask: z.array(z.string()).optional(),
     saveTo: z.string().optional(),
     /* eval */
     expression: z.string().optional(),
@@ -52,7 +57,13 @@ const stepParser = z
 function parseStep(raw, i) {
   const parsed = stepParser.safeParse(raw);
   if (parsed.success) return parsed.data;
-  const issues = parsed.error.issues.map((issue) => `${issue.path.join('.') || 'шаг'}: ${issue.message}`).join('; ');
+  const issues = parsed.error.issues
+    .map((issue) => {
+      const where = issue.path.join('.') || 'шаг';
+      const hint = where === 'action' && raw && typeof raw === 'object' ? suggestAction(raw.action, STEP_ACTIONS) : null;
+      return `${where}: ${issue.message}${hint ? ` — ${hint}` : ''}`;
+    })
+    .join('; ');
   throw new Error(`Шаг ${i}: ${issues}`);
 }
 
@@ -97,9 +108,12 @@ async function shoot(session, step, i, runId) {
     name: `${slug(name)}__${slug(session.key)}`,
     fullPage: step.fullPage ?? false,
     selector: step.selector,
+    clip: step.clip,
+    hide: step.hide,
+    mask: step.mask,
     timeout: step.timeout,
   });
-  const out = { action: 'screenshot', ...(step.selector ? { selector: step.selector } : {}), ...shot };
+  const out = { action: 'screenshot', ...(step.selector ? { selector: step.selector } : {}), ...shot, ...(shot.url ? { download: downloadCommand(shot.url) } : {}) };
   if (step.saveTo) out.savedTo = await exportFile(shot.path, step.saveTo, { url: shot.url });
   return out;
 }
