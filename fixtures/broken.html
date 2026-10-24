@@ -68,8 +68,13 @@
 
 <section id="targets">
   <h2>6. Мелкий тач-таргет</h2>
-  <button class="tiny">×</button>
-  <a href="#overflow" style="display:inline-block;width:18px;height:18px;">↑</a>
+  <!-- Вплотную, с явным промежутком 2px: пробел между inline-элементами зависит от шрифта, и на
+       другом наборе шрифтов цели проходили исключение Spacing из WCAG 2.5.8 — круги в 24px
+       переставали пересекаться. -->
+  <div style="display:flex;gap:2px">
+    <button class="tiny">×</button>
+    <a href="#overflow" style="display:inline-block;width:18px;height:18px;">↑</a>
+  </div>
 </section>
 
 <section id="contrast">
