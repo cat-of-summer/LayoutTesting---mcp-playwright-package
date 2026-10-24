@@ -800,7 +800,7 @@ docker compose exec playwright lt compare --url ... --name main --mask ".ads,.cl
 | `FIGMA_EDITOR_JOB_MS` | потолок одной операции в редакторе Figma, по умолчанию 2 минуты: зависшая вкладка закрывается |
 | `FIGMA_EDITOR_QUEUE_MAX` | сколько операций ждут редактор, по умолчанию 3; лишняя сразу получает «занято» |
 | `EXPORTS_DIR` | папка на хосте для `screenshot` с `saveTo`, монтируется в `exports/`; по умолчанию `./exports` |
-| `WSL_DISTRO_NAME` | имя дистрибутива WSL, где запущен стенд: с ним ответ `saveTo` несёт `windowsPath` вида `//wsl.localhost/<дистрибутив>/…`. Compose, запущенный из WSL, передаёт его сам |
+| `WSL_DISTRO_NAME` | имя дистрибутива WSL, где запущен стенд: с ним ответ `saveTo` несёт `windowsPath` вида `//wsl.localhost/<дистрибутив>/…`. Готовому образу - задать в `.env`; compose из исходников, запущенный из WSL, передаёт его сам |
 | `LT_MAX_SESSIONS` | сколько сессий браузера держать одновременно, по умолчанию 8 |
 | `LT_SESSION_IDLE_MS` | через сколько простоя закрывать сессию, по умолчанию 30 минут |
 | `LT_SESSION_MAX_AGE_MS` | предельный возраст сессии, по умолчанию час |
