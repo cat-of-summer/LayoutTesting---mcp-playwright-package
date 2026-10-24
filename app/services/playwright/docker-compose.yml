@@ -24,6 +24,9 @@ services:
     env_file: .env
     environment:
       - MCP_PORT=${MCP_PORT:-8931}
+      # Имя дистрибутива, если compose запущен из WSL: стенд называет путь выгрузки и из Windows
+      # (//wsl.localhost/<дистрибутив>/…). Отдельное имя, чтобы пустое значение не перебило .env.
+      - LT_WSL_DISTRO=${WSL_DISTRO_NAME:-}
       - PLAYWRIGHT_MODE=${PLAYWRIGHT_MODE:-mcp}
     networks:
       - network
