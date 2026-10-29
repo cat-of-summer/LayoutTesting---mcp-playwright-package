@@ -945,10 +945,21 @@ export function compareGeometry(design, page, { tolerance = 2 } = {}) {
 const truncatedNote = (found, limit) =>
   `Показано ${limit} из ${found}. Остальные не проверены — повторите с limit: ${found}, прежде чем считать сверку законченной.`;
 
-/** Попиксельно: рендер узла против снимка страницы, обрезанных по общей области. */
-async function comparePixels({ figmaRef, page, selector, dir, name, threshold, client, editor }) {
+/**
+ * Рендер узла в 1x: готовая картинка, если её передали, иначе выгрузка из Figma.
+ *
+ * Готовая картинка — экспорт кнопкой Export из интерфейса Figma, когда ни редактор, ни REST
+ * рендер не отдают: файл открыт на просмотр, а месяц запросов к файлам выбран.
+ */
+async function designRender({ figmaRef, client, editor, designImage }) {
+  if (designImage) return { image: { path: designImage } };
   const render = await exportRender([figmaRef], { client, editor, scale: 1 });
-  const design = render.renders[0];
+  return render.renders[0];
+}
+
+/** Попиксельно: рендер узла против снимка страницы, обрезанных по общей области. */
+async function comparePixels({ figmaRef, page, selector, dir, name, threshold, client, editor, designImage = null }) {
+  const design = await designRender({ figmaRef, client, editor, designImage });
   if (!design?.image) return { error: design?.error || 'макет не отрисовался' };
 
   const shot = await takeScreenshot(page, { runId: path.basename(dir), name: `${name}-page`, selector, fullPage: !selector });
@@ -995,6 +1006,7 @@ export async function compareWithDesign({
   client,
   editor,
   widenedBy = 0,
+  designImage = null,
 }) {
   const runId = newRunId('figma-compare');
   const dir = await runDir(runId);
@@ -1131,14 +1143,27 @@ export async function compareWithDesign({
   }
 
   if (mode !== 'semantic') {
-    out.pixel = await comparePixels({ figmaRef, page, selector, dir, name, threshold, client, editor });
+    out.pixel = await comparePixels({ figmaRef, page, selector, dir, name, threshold, client, editor, designImage });
   }
 
   if (sections) {
-    out.sections = await compareSections({ figmaRef, snapshot, rootId, page, selector, dir, name, threshold, client, editor, design, probed });
+    out.sections = await compareSections({ figmaRef, snapshot, rootId, page, selector, dir, name, threshold, client, editor, design, probed, designImage });
   }
 
   return out;
+}
+
+/**
+ * Сверка с готовой картинкой макета, когда снимка узла нет и снять его нечем.
+ *
+ * Без снимка нет ни текстов, ни геометрии узлов — только пиксели кадра целиком. Это меньше, чем
+ * semantic и sections, но больше, чем «скриншоты на глаз», которыми сверку делали в отзыве.
+ */
+export async function compareWithImage({ designImage, page, selector = null, threshold = 0.1, label = 'design' }) {
+  const runId = newRunId('figma-compare');
+  const dir = await runDir(runId);
+  const name = slug(label) || 'design';
+  return { runId, pixel: await comparePixels({ page, selector, dir, name, threshold, designImage }) };
 }
 
 
@@ -1350,9 +1375,8 @@ async function compareSeams({ frame, shifts, lift, meta, image, page, pageOrigin
  * взятым с поправкой на сдвиг её же текстов: накопленное смещение секцию не трогает, а внутри
  * неё разница — настоящая.
  */
-async function compareSections({ figmaRef, snapshot, rootId, page, selector, dir, name, threshold, client, editor, design, probed }) {
-  const render = await exportRender([figmaRef], { client, editor, scale: 1 });
-  const image = render.renders[0];
+async function compareSections({ figmaRef, snapshot, rootId, page, selector, dir, name, threshold, client, editor, design, probed, designImage = null }) {
+  const image = await designRender({ figmaRef, client, editor, designImage });
   if (!image?.image) return { error: image?.error || 'макет не отрисовался' };
 
   const meta = await sharp(image.image.path).metadata();

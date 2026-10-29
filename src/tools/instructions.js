@@ -149,7 +149,8 @@ const HINTS = [
   Не начинайте верстать, не пройдя фазу 0: стенд в контейнере не видит localhost хоста, и
   выясняется это обычно уже посреди работы. Нет токена REST — figma_status с action: token сразу,
   не спрашивая: логин в .env стенда задан ровно для этого; капчу или код при входе человек проходит
-  по ссылке editor.handoff.url. Скилла layout-by-figma нет среди ваших — предложите человеку
+  по ссылке editor.handoff.url. Файл открыт аккаунту стенда только на просмотр — копию в черновики
+  стенд предложит человеку сам; откажется — ответ figma_* скажет, что дальше. Скилла layout-by-figma нет среди ваших — предложите человеку
   положить его в .claude/skills (GET /skill/layout-by-figma/SKILL.md со стенда), чтобы регламент
   подтягивался сам;`,
     en: `- "build this from the design", "here is a Figma link", "make it like the mockup" — this task
@@ -160,7 +161,9 @@ const HINTS = [
   building by instinct. Do not start building before phase 0 is done: the stand runs in a container
   and cannot see the host localhost, and that is usually discovered mid-work. No REST token —
   figma_status with action: token right away, without asking: the login in the stand .env is there
-  for exactly this; a captcha or a code at login is passed by the human via editor.handoff.url. No
+  for exactly this; a captcha or a code at login is passed by the human via editor.handoff.url. A
+  file shared with the stand account for viewing only — the stand offers the human a copy in drafts
+  by itself; on a refusal the figma_* answer says what next. No
   layout-by-figma skill among yours — offer the human to put it into .claude/skills
   (GET /skill/layout-by-figma/SKILL.md from the stand) so the handbook loads by itself;`,
   },

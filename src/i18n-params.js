@@ -221,8 +221,20 @@ const EN = {
   'Не нужен при steps': 'Not needed with steps',
   'Не нужен для scroll, dialog, клавиш и действий по координатам':
     'Not required for scroll, dialog, keys and actions by coordinates',
-  'Текст для fill и type, клавиша для press, down и up, значение для select, accept | dismiss | текст ответа для dialog':
-    'Text for fill and type, key for press, down and up, option value for select, accept | dismiss | reply text for dialog',
+  'Текст для fill и type, клавиша для press, down и up, значение для select, accept | dismiss | текст ответа для dialog, download для wait — дождаться скачивания':
+    'Text for fill and type, key for press, down and up, option value for select, accept | dismiss | reply text for dialog, download for wait — wait for a download',
+  'Для wait: ждать, пока выражение на странице не станет истинным — вместо паузы наугад':
+    'For wait: wait until the expression on the page becomes truthy — instead of a guessed pause',
+  'Файл или узел: роль аккаунта на файле, годится ли для него редактор, копия в черновиках':
+    'A file or a node: the account role on the file, whether the editor works for it, a copy in drafts',
+  'Файл открыт только на просмотр: сделать копию в черновики этой команды аккаунта стенда и снимать с неё. Команду называет человек; пустая строка — список команд':
+    "The file is view-only: make a copy in the drafts of this team of the stand account and pull from it. The human names the team; an empty string lists the teams",
+  'ui — значения с панели свойств интерфейса Figma, когда файл открыт только на просмотр; auto переходит на него сам':
+    'ui — values from the properties panel of the Figma interface, when the file is view-only; auto switches to it by itself',
+  'ui — кнопкой Export интерфейса Figma (render, svg); auto переходит сам':
+    'ui — via the Export button of the Figma interface (render, svg); auto switches by itself',
+  'Готовый PNG кадра вместо рендера Figma: lt://artifacts/… или http(s). Без снимка узла — только mode: "pixel" по кадру целиком':
+    'A ready PNG of the frame instead of a Figma render: lt://artifacts/… or http(s). Without a node snapshot — only mode: "pixel" over the whole frame',
   'Для upload: пути к файлам относительно рабочего каталога стенда':
     'For upload: file paths relative to the stand working directory',
   'Точка для click, tap, drag: от угла элемента при selector, иначе страницы. Для scroll — смещение':

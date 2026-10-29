@@ -29,6 +29,7 @@ import crypto from 'node:crypto';
 import { DIRS } from '../constants.js';
 import { round } from './css.js';
 import { getRestClient } from './rest.js';
+import { readCopy } from './copies.js';
 import { groupRefs, parseFigmaRef, refOf } from './url.js';
 
 /**
@@ -565,13 +566,17 @@ async function syncFile({ fileKey, nodeIds, wholeFile }, ctx) {
    */
   const tokenOk = client.usable ? await client.usable() : true;
   const restOk = channel !== 'editor' && tokenOk;
-  const editorOk = channel !== 'rest' && Boolean(editor) && (await editor.usable());
+  const editorOk = channel !== 'rest' && Boolean(editor) && (await editor.usable(fileKey));
+  /* Причина отказа редактора — по этому файлу: «только просмотр» и «вход не удался» лечатся по-разному. */
+  const editorWhy = async () => (editor?.why ? await editor.why(fileKey) : null) || 'figma_status покажет причину и что с ней делать.';
   if (channel === 'editor' && !editorOk) {
-    throw new Error('Канал редактора недоступен: figma_status покажет причину и что с ней делать.');
+    throw new Error(`Канал редактора недоступен: ${await editorWhy()}`);
   }
   if (!restOk && !editorOk) {
     throw new Error(
-      'Figma недоступна: нет ни токена REST (FIGMA_TOKEN), ни входа в редактор (FIGMA_EMAIL и FIGMA_PASSWORD или сохранённое состояние). Подробности — figma_status.',
+      editor && channel !== 'rest'
+        ? `Figma недоступна: токена REST нет, а канал редактора для файла не годится. ${await editorWhy()}`
+        : 'Figma недоступна: нет ни токена REST (FIGMA_TOKEN), ни входа в редактор (FIGMA_EMAIL и FIGMA_PASSWORD или сохранённое состояние). Подробности — figma_status.',
     );
   }
   const wantCss = css && editorOk;
@@ -694,7 +699,15 @@ async function syncFile({ fileKey, nodeIds, wholeFile }, ctx) {
       }
     }
     if (!fetched) {
-      const res = await client.fileNodes(fileKey, missing);
+      let res;
+      try {
+        res = await client.fileNodes(fileKey, missing);
+      } catch (err) {
+        /* Причина отказа редактора иначе терялась: агент видел только отказ REST и шёл в редактор снова. */
+        const why = out.editorFallback || (!editorOk && channel !== 'rest' && editor?.why ? await editor.why(fileKey) : null);
+        if (why && !err.message.includes(why)) err.message = `${err.message} Канал редактора: ${why}`;
+        throw err;
+      }
       spent.tier1 += 1;
       meta.name = res.name ?? meta.name;
       meta.lastModified = res.lastModified ?? meta.lastModified;
@@ -704,6 +717,20 @@ async function syncFile({ fileKey, nodeIds, wholeFile }, ctx) {
     noteVersion(fetched.version);
     meta.checkedAt = stamp();
     out.channel = fetched.channel;
+    if (fetched.channel === 'editor') {
+      /* Снято с копии в черновиках: дизайнер правит оригинал, и копия отстаёт молча. */
+      const copy = await readCopy(fileKey, { cacheDir });
+      if (copy) {
+        const stale = Boolean(copy.sourceVersion && meta.version && !isLocal(meta.version) && copy.sourceVersion !== meta.version);
+        out.copy = strip({
+          key: copy.copyKey,
+          stale: stale || undefined,
+          note: stale
+            ? `Снято с копии ${copy.copyKey}, а оригинал с тех пор изменился (версия ${copy.sourceVersion} → ${meta.version}). Свежая копия — figma_sync с duplicate: "<команда>".`
+            : `Снято с копии ${copy.copyKey} в черновиках аккаунта стенда: оригинал открыт только на просмотр.`,
+        });
+      }
+    }
 
     for (const id of missing) {
       const entry = fetched.entries[id];

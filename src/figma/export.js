@@ -95,8 +95,9 @@ export async function sliceByChildren(file, dir, base, snapshot, node, scale) {
  * viaEditor получает управление первым и возвращает true, если справился. Ошибка редактора
  * записывается в state.fallback и не мешает REST; если REST недоступен, она поднимается как есть.
  */
-async function withChannels({ editor, client, state }, viaEditor, viaRest) {
-  if (editor && (await editor.usable())) {
+async function withChannels({ editor, client, state, fileKey = null }, viaEditor, viaRest) {
+  let skipped = null;
+  if (editor && (await editor.usable(fileKey))) {
     try {
       await viaEditor();
       state.channel = 'editor';
@@ -105,8 +106,17 @@ async function withChannels({ editor, client, state }, viaEditor, viaRest) {
       if (!(await client.usable?.()) && client.usable) throw err;
       state.fallback = err.message;
     }
+  } else if (editor?.why) {
+    skipped = await editor.why(fileKey);
   }
-  await viaRest();
+  try {
+    await viaRest();
+  } catch (err) {
+    /* Отказ REST без причины отказа редактора отправлял агента в редактор снова. */
+    const why = state.fallback || skipped;
+    if (why && !err.message.includes(why)) err.message = `${err.message} Канал редактора: ${why}`;
+    throw err;
+  }
   state.channel = 'rest';
 }
 
@@ -218,7 +228,7 @@ export async function exportRender(refs, { client = getRestClient(), cacheDir = 
 
     if (missing.length) {
       await withChannels(
-        { editor, client, state },
+        { editor, client, state, fileKey: group.fileKey },
         async () => {
           const res = await editor.render(
             group.fileKey,
@@ -512,7 +522,7 @@ export async function exportSvg(refs, { client = getRestClient(), cacheDir = DIR
     const sources = {};
     if (geometry === 'fill') {
       await withChannels(
-        { editor, client, state },
+        { editor, client, state, fileKey: group.fileKey },
         async () => {
           const res = await editor.geometry(group.fileKey, group.nodeIds);
           for (const id of group.nodeIds) {
@@ -532,7 +542,7 @@ export async function exportSvg(refs, { client = getRestClient(), cacheDir = DIR
         },
       );
     } else await withChannels(
-      { editor, client, state },
+      { editor, client, state, fileKey: group.fileKey },
       async () => {
         const res = await editor.render(group.fileKey, group.nodeIds.map((id) => ({ id, format: 'svg' })));
         for (const id of group.nodeIds) sources[id] = res[id]?.svg ? { svg: res[id].svg } : { error: res[id]?.error };
@@ -727,7 +737,7 @@ export async function exportImages(refs, { client = getRestClient(), cacheDir = 
     const errors = {};
     if (needed.length) {
       await withChannels(
-        { editor, client, state },
+        { editor, client, state, fileKey: group.fileKey },
         async () => {
           const res = await editor.images(group.fileKey, needed);
           for (const ref of needed) {

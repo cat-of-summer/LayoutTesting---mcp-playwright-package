@@ -4,6 +4,7 @@ import { CONFIG } from '../config.js';
 import { contextOptions, hostResolverRules, normalizeProfile, profileKey } from './profile.js';
 import { applyProfileToPage, applyThrottle, stabilize } from './stabilize.js';
 import { reapplyInjections } from './inject.js';
+import { installDownloads } from './downloads.js';
 import { blockedHostHint, isErrorPage, navigationErrorHint, probeHint, probeServer, responseFacts, sameDocument } from './response.js';
 import { t } from '../i18n.js';
 
@@ -411,6 +412,7 @@ export async function createSession(profileInput = {}, { owned = null, keepAlive
    */
   context.on('close', () => forget(session, 'contextClosed'));
   attachCollectors(page, session);
+  await installDownloads(page, session);
   sessions.set(id, session);
   startSweeper();
   return session;

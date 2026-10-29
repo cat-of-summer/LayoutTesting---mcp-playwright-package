@@ -20,6 +20,12 @@
  *
  * Одна вкладка на процесс, операции идут строго по очереди: Plugin API одного редактора не
  * рассчитан на параллельные обходы, а вторая вкладка — это ещё сотни мегабайт.
+ *
+ * Состояние два уровня. Общее (status) — вход в аккаунт: ready значит «залогинен», и только.
+ * По файлу (files) — открывается ли именно этот файл: файл, открытый аккаунту только на
+ * просмотр, редактор показывает без Plugin API, и window.figma в нём не появится никогда.
+ * Раньше такой файл минуту ждал window.figma, падал с timeout, а figma_status после login
+ * снова показывал ready — агент повторял тот же вызов, не видя причины.
  */
 import fs from 'node:fs/promises';
 import { FIGMA } from '../constants.js';
@@ -28,6 +34,9 @@ import { exportState, statePath } from '../browser/storage.js';
 import { closeHandoff, handoffOpen, handoffStatus, openHandoff } from '../browser/handoff.js';
 import { TOKEN_SCOPES } from './api.js';
 import { loginConfigured, redact, registerTokenIssuer } from './auth.js';
+import { readCopy, writeCopy } from './copies.js';
+import { waitForDownload } from '../browser/downloads.js';
+import { PANEL_SNAPSHOT } from './ui.js';
 
 /* Без обычной строки десктопного Chrome CloudFront отвечает headless-браузеру 403 ещё до Figma. */
 export const DESKTOP_UA =
@@ -42,6 +51,12 @@ const HANDOFF = 'figma-login';
 
 /** Сколько не повторять вход после сбоя: иначе каждый вызов в режиме auto ждал бы минуту таймаута. */
 const COOLDOWN_MS = 5 * 60 * 1000;
+
+/**
+ * Сколько помнить, что файл открыт только на просмотр или не открыт вовсе. Права выдаёт человек,
+ * и через полчаса проверить снова дешевле, чем заставлять его звать figma_status с refresh.
+ */
+const ACCESS_TTL_MS = 30 * 60 * 1000;
 
 export class EditorUnavailable extends Error {
   constructor(message, state = 'error') {
@@ -68,6 +83,72 @@ let queue = Promise.resolve();
 /** Сколько операций с файлом ждут или идут: по нему отказывают сверх FIGMA.editorQueueMax. */
 let pending = 0;
 let status = { state: 'idle' };
+/** Состояние по файлу: ключ оригинала → { state: ready | view_only | no_access | error, at, reason }. */
+const files = new Map();
+/**
+ * Доступ аккаунта к файлу по REST ({ role: owner | editor | viewer, version }) — дешёвый запрос
+ * tier 3, после которого файл на просмотр не открывается минуту впустую. Подключает
+ * src/figma/access.js: редактор о REST не знает.
+ */
+let accessProbe = null;
+
+export function registerAccessProbe(fn) {
+  accessProbe = fn;
+}
+
+/**
+ * Кто выбирает команду для копии, когда файл оказался на просмотр посреди работы: (fileKey,
+ * команды) → имя команды или { declined: причина }. Подключает src/figma/access.js — там
+ * FIGMA_DUPLICATE_TEAM и вопрос человеку формой клиента.
+ */
+let copyChooser = null;
+
+export function registerCopyChooser(fn) {
+  copyChooser = fn;
+}
+
+/** Файлы, от копии которых отказались: второй раз за полдня с тем же вопросом не приходить. */
+const declined = new Map();
+const DECLINE_TTL_MS = 6 * 60 * 60 * 1000;
+const obtaining = new Map();
+
+/**
+ * Неявная копия: инструмент наткнулся на файл на просмотр — стенд делает копию в черновики и
+ * продолжает вызов, а агенту остаётся одна строка «снято с копии». Отзыв, ради которого это
+ * есть: агент на таком файле тратил вызовы на отказы и засорял контекст чужими для задачи
+ * подробностями. true — копия есть и годится.
+ */
+async function obtainCopy(fileKey) {
+  if (!copyChooser || FIGMA.editor === 'off') return false;
+  if (await readCopy(fileKey)) return true;
+  if (fresh(declined.get(fileKey), DECLINE_TTL_MS)) return false;
+  if (!obtaining.has(fileKey)) {
+    const job = (async () => {
+      try {
+        const access = accessProbe ? await accessProbe(fileKey).catch(() => null) : null;
+        const res = await editorDuplicate(fileKey, { choose: (teams) => copyChooser(fileKey, teams), sourceVersion: access?.version ?? null });
+        return res.needed ? Boolean(res.copy) : true;
+      } catch (err) {
+        declined.set(fileKey, { at: new Date().toISOString(), reason: redact(err.message) });
+        return false;
+      } finally {
+        obtaining.delete(fileKey);
+      }
+    })();
+    obtaining.set(fileKey, job);
+  }
+  return obtaining.get(fileKey);
+}
+
+/** Операция с файлом, которая переживает «только просмотр»: копия — и повтор того же вызова. */
+async function withCopy(fileKey, run) {
+  try {
+    return await run();
+  } catch (err) {
+    if (err?.state !== 'view_only' || !(await obtainCopy(fileKey))) throw err;
+    return run();
+  }
+}
 
 function setStatus(state, reason = null) {
   status = { state, at: new Date().toISOString(), ...(reason ? { reason: redact(reason) } : {}) };
@@ -77,6 +158,29 @@ function fail(state, reason) {
   setStatus(state, reason);
   return new EditorUnavailable(reason, state);
 }
+
+function setFile(fileKey, state, reason = null) {
+  files.set(fileKey, { state, at: new Date().toISOString(), ...(reason ? { reason: redact(reason) } : {}) });
+}
+
+/** Отказ по одному файлу: вход в аккаунт исправен, общее состояние не трогается. */
+function failFile(fileKey, state, reason) {
+  setFile(fileKey, state, reason);
+  return new EditorUnavailable(reason, state);
+}
+
+/** Что делать с файлом на просмотр — одним текстом для ошибки, figma_status и подсказок. */
+export function viewOnlyReason(fileKey, by = 'editor') {
+  const how = by === 'rest' ? 'роль viewer по /v1/files/:key/meta' : 'в редакторе вместо инструментов кнопка «Ask to edit»';
+  return (
+    `Аккаунту стенда файл ${fileKey} открыт только на просмотр (${how}): Plugin API в этом режиме нет, повторы не помогут. ` +
+    'Выходы: edit-доступ от владельца файла; копия в черновики — figma_sync с duplicate: "<команда>", команду называет человек ' +
+    '(сам стенд копирует, если задан FIGMA_DUPLICATE_TEAM или клиент умеет спрашивать человека формой); иначе — канал ui: ' +
+    'figma_inspect и figma_export с channel: "ui" снимают значения с панели свойств и выгружают кнопкой Export.'
+  );
+}
+
+const fresh = (entry, ms) => entry && Date.now() - Date.parse(entry.at) < ms;
 
 function exclusive(fn) {
   const job = queue.then(fn, fn);
@@ -102,6 +206,7 @@ async function closeEditor(reason = 'closed') {
   current = null;
   await closeSession(session.id, reason).catch(() => {});
   if (status.state === 'ready') setStatus('idle');
+  for (const [key, entry] of files) if (entry.state === 'ready') files.delete(key);
   return true;
 }
 
@@ -120,13 +225,71 @@ async function ensureSession() {
  * только добавит подозрений у Figma. Ошибки и блокировку CloudFront стоит перепробовать, но не
  * на каждом вызове.
  */
-export async function editorUsable() {
+/**
+ * copy: false — только ответить, не делая копию: так спрашивают figma_status и подсказки, им
+ * незачем заводить файл в чужом аккаунте ради ответа на вопрос.
+ */
+export async function editorUsable(fileKey = null, { copy = true } = {}) {
   if (FIGMA.editor === 'off') return false;
   if (status.state === 'needs_human' || status.state === 'needs_login') return false;
-  if ((status.state === 'error' || status.state === 'blocked') && Date.now() - Date.parse(status.at) < COOLDOWN_MS) {
+  if ((status.state === 'error' || status.state === 'blocked') && fresh(status, COOLDOWN_MS)) {
     return false;
   }
-  return loginConfigured() || (await stateExists());
+  if (!(loginConfigured() || (await stateExists()))) return false;
+  return fileKey ? fileUsable(fileKey, { copy }) : true;
+}
+
+/**
+ * Годится ли канал для этого файла. Есть копия в черновиках — годится: открывается она. Нет —
+ * сначала роль по REST, если есть токен: viewer значит, что Plugin API не будет, и тогда, если
+ * можно, делается копия.
+ */
+async function fileUsable(fileKey, { copy: mayCopy = true } = {}) {
+  const copy = await readCopy(fileKey);
+  if (copy) {
+    const entry = files.get(fileKey);
+    return !(entry?.state === 'error' && fresh(entry, COOLDOWN_MS));
+  }
+  if (accessProbe) {
+    const role = (await accessProbe(fileKey).catch(() => null))?.role;
+    if (role === 'viewer') setFile(fileKey, 'view_only', viewOnlyReason(fileKey, 'rest'));
+    else if (role && ['view_only', 'no_access'].includes(files.get(fileKey)?.state)) files.delete(fileKey);
+  }
+  const entry = files.get(fileKey);
+  if (!entry) return true;
+  if (entry.state === 'view_only' && fresh(entry, ACCESS_TTL_MS)) return mayCopy ? obtainCopy(fileKey) : false;
+  if (entry.state === 'view_only' || entry.state === 'no_access') return !fresh(entry, ACCESS_TTL_MS);
+  if (entry.state === 'error') return !fresh(entry, COOLDOWN_MS);
+  return true;
+}
+
+/** Почему канал не годится для файла: причина по файлу, иначе общая. null — годится. */
+export async function editorWhy(fileKey = null) {
+  if (await editorUsable(fileKey, { copy: false })) return null;
+  if (FIGMA.editor === 'off') return 'Канал редактора выключен: FIGMA_EDITOR=off.';
+  const entry = fileKey ? files.get(fileKey) : null;
+  const refused = fileKey ? declined.get(fileKey) : null;
+  /* После отказа от копии варианты из viewOnlyReason уже пройдены: короче и без совета, который
+     только что отклонили. */
+  if (refused && entry?.state === 'view_only') {
+    return `Аккаунту стенда файл ${fileKey} открыт только на просмотр, Plugin API нет; копия в черновики не сделана: ${refused.reason}`;
+  }
+  if (entry?.reason && entry.state !== 'ready') return entry.reason;
+  if (status.reason) return status.reason;
+  if (!loginConfigured() && !(await stateExists())) return 'Входа в редактор нет: FIGMA_EMAIL и FIGMA_PASSWORD не заданы, сохранённого входа нет.';
+  return `Канал редактора в состоянии ${status.state}: figma_status покажет причину.`;
+}
+
+/** Состояние канала по одному файлу — для figma_status с figma и для подсказок. */
+export async function editorFileStatus(fileKey) {
+  const entry = files.get(fileKey);
+  const copy = await readCopy(fileKey);
+  return {
+    state: entry?.state ?? 'unknown',
+    ...(entry?.at ? { at: entry.at } : {}),
+    ...(entry?.reason ? { reason: entry.reason } : {}),
+    ...(copy ? { copy } : {}),
+  };
 }
 
 export async function editorStatus() {
@@ -134,10 +297,12 @@ export async function editorStatus() {
     mode: FIGMA.editor,
     configured: FIGMA.editor !== 'off' && (loginConfigured() || (await stateExists())),
     login: loginConfigured() ? 'env' : (await stateExists()) ? 'saved' : null,
-    state: editorStateName(),
+    storageState: editorStateName(),
+    /* state — про вход в аккаунт. Открывается ли конкретный файл, видно в files. */
     ...status,
     open: Boolean(current),
     ...(current?.fileKey ? { file: current.fileKey } : {}),
+    ...(files.size ? { files: Object.fromEntries(files) } : {}),
     ...(handoffStatus(HANDOFF) ? { handoff: handoffStatus(HANDOFF) } : {}),
   };
 }
@@ -284,8 +449,15 @@ async function login(page, { otp } = {}) {
   throw fail('error', `Вход в Figma не завершился за 45 с. ${manual}`);
 }
 
-/** Что стоит на странице файла: готовый редактор, анонимный просмотр, страница входа или отказ. */
-async function fileOutcome(page, timeout = 60_000) {
+/**
+ * Что стоит на странице файла: готовый редактор, режим просмотра, анонимный просмотр, страница
+ * входа или отказ.
+ *
+ * Режим просмотра узнаётся по кнопке «Ask to edit» на панели инструментов (проверено на живом
+ * файле 2026-10-29): Plugin API в нём нет, и ждать window.figma дальше бессмысленно. Кнопок
+ * с этим текстом несколько, видимая одна — поэтому textContent, а не innerText.
+ */
+export async function fileOutcome(page, timeout = 60_000) {
   const handle = await page
     .waitForFunction(
       () => {
@@ -296,6 +468,9 @@ async function fileOutcome(page, timeout = 60_000) {
         if (/could not be satisfied/i.test(document.title)) return 'blocked';
         if (/sign up to (comment|edit)|log in to (view|edit|comment)/i.test(text)) return 'anonymous';
         if (/(don'?t|do not) have (access|permission)|request access/i.test(text)) return 'no-access';
+        for (const button of document.querySelectorAll('button')) {
+          if (/^(ask to edit|request edit access)$/i.test((button.textContent || '').trim())) return 'view';
+        }
         return false;
       },
       null,
@@ -305,19 +480,23 @@ async function fileOutcome(page, timeout = 60_000) {
   return handle ? handle.jsonValue() : 'timeout';
 }
 
+/** Открыть файл в редакторе. Если у файла есть копия в черновиках, открывается она. */
 async function openFile(fileKey) {
   await ensureSession();
   const page = current.session.page;
-  if (current.fileKey === fileKey && (await page.evaluate(() => typeof window.figma !== 'undefined').catch(() => false))) {
+  const copy = await readCopy(fileKey);
+  const target = copy?.copyKey ?? fileKey;
+  if (current.fileKey === target && (await page.evaluate(() => typeof window.figma !== 'undefined').catch(() => false))) {
     return page;
   }
 
   for (let attempt = 0; attempt < 2; attempt += 1) {
-    await page.goto(fileUrl(fileKey), { waitUntil: 'domcontentloaded', timeout: 60_000 });
+    await page.goto(fileUrl(target), { waitUntil: 'domcontentloaded', timeout: 60_000 });
     const outcome = await fileOutcome(page);
     if (outcome === 'ready') {
-      current.fileKey = fileKey;
+      current.fileKey = target;
       setStatus('ready');
+      setFile(fileKey, 'ready');
       return page;
     }
     if ((outcome === 'login' || outcome === 'anonymous') && attempt === 0) {
@@ -326,8 +505,16 @@ async function openFile(fileKey) {
     }
     if (outcome === 'blocked') throw fail('blocked', 'CloudFront отклонил браузер стенда (403) ещё до Figma.');
     if (outcome === 'webgl') throw fail('error', 'Редактор Figma сообщил, что WebGL недоступен: канал работает только в chromium стенда.');
-    if (outcome === 'no-access') throw fail('error', `Аккаунту в редакторе не открыт файл ${fileKey}.`);
-    throw fail('error', `Редактор не отдал window.figma для файла ${fileKey} (${outcome}).`);
+    if (copy && (outcome === 'view' || outcome === 'no-access')) {
+      throw failFile(
+        fileKey,
+        'error',
+        `Копия ${copy.copyKey} файла ${fileKey} больше не открывается на редактирование (${outcome}): её удалили или перенесли. figma_sync с duplicate: "<команда>" сделает новую.`,
+      );
+    }
+    if (outcome === 'view') throw failFile(fileKey, 'view_only', viewOnlyReason(fileKey));
+    if (outcome === 'no-access') throw failFile(fileKey, 'no_access', `Аккаунту стенда не открыт файл ${fileKey}: доступ выдаёт владелец файла.`);
+    throw failFile(fileKey, 'error', `Редактор не отдал window.figma для файла ${target} (${outcome}).`);
   }
   throw fail('needs_login', 'После входа Figma всё равно открыла файл без аккаунта.');
 }
@@ -653,22 +840,300 @@ async function inFile(fileKey, fn, arg) {
       if (err instanceof EditorUnavailable) throw err;
       if (err.code === 'timeout') {
         await closeEditor('timeout');
-        throw fail(
+        throw failFile(
+          fileKey,
           'error',
           `Plugin API в редакторе не ответил за ${Math.round(FIGMA.editorJobMs / 1000)} с: вкладка закрыта, следующий вызов откроет файл заново.`,
         );
       }
-      throw fail('error', `Plugin API в редакторе отказал: ${err.message}`);
+      throw failFile(fileKey, 'error', `Plugin API в редакторе отказал: ${err.message}`);
     }
   });
 }
 
-export const editorDump = (fileKey, ids, { css = false } = {}) => inFile(fileKey, DUMP, { ids, withCss: css });
-export const editorRender = (fileKey, items) => inFile(fileKey, RENDER, items);
-export const editorGeometry = (fileKey, ids) => inFile(fileKey, GEOMETRY, ids);
-export const editorImages = (fileKey, refs) => inFile(fileKey, IMAGES, refs);
-export const editorPages = (fileKey) => inFile(fileKey, PAGES, null);
-export const editorFind = (fileKey, { query, limit = 30 }) => inFile(fileKey, FIND, { query, limit });
+export const editorDump = (fileKey, ids, { css = false } = {}) => withCopy(fileKey, () => inFile(fileKey, DUMP, { ids, withCss: css }));
+export const editorRender = (fileKey, items) => withCopy(fileKey, () => inFile(fileKey, RENDER, items));
+export const editorGeometry = (fileKey, ids) => withCopy(fileKey, () => inFile(fileKey, GEOMETRY, ids));
+export const editorImages = (fileKey, refs) => withCopy(fileKey, () => inFile(fileKey, IMAGES, refs));
+export const editorPages = (fileKey) => withCopy(fileKey, () => inFile(fileKey, PAGES, null));
+export const editorFind = (fileKey, { query, limit = 30 }) => withCopy(fileKey, () => inFile(fileKey, FIND, { query, limit }));
+
+/*
+ * Канал ui: значения с панели свойств, когда Plugin API нет (файл на просмотр, копии нет).
+ *
+ * Узел выбирается адресом с node-id, дети — клавишей Enter (Figma выделяет детей выбранного) и
+ * чтением выделенных строк Layers: дерево там — ARIA treegrid, id узла стоит в data-testid строки,
+ * aria-expanded говорит, есть ли у узла дети. Следующий узел выбирается кликом по его строке:
+ * перезагрузка файла стоит 10–20 с, клик — доли секунды.
+ */
+
+/** Ждать, пока панель покажет выбранный узел — а не страницу, не мультивыбор и не пустоту. */
+async function waitPanel(page, name = null, timeout = 45_000) {
+  await page.waitForFunction(
+    (wanted) => {
+      const panel = document.querySelector('[data-testid=properties-panel]');
+      if (!panel) return false;
+      const lines = panel.innerText.split('\n').map((line) => line.trim()).filter(Boolean);
+      const zoom = lines.findIndex((line) => /^\d+%$/.test(line));
+      const head = zoom < 0 ? [] : lines.slice(zoom + 1, zoom + 3);
+      if (!head.length || head[0] === 'Page' || /^\d+ Selected$/.test(head[0])) return false;
+      return wanted ? head.includes(wanted) : true;
+    },
+    name,
+    { timeout, polling: 250 },
+  );
+}
+
+/** Выделенные строки Layers: { id, name, parent } — после Enter это дети выбранного узла. */
+const SELECTED_ROWS = () =>
+  [...document.querySelectorAll('[role=row][aria-selected=true]')]
+    .map((row) => {
+      const cell = row.querySelector('[data-testid$="-layers-panel-row"]');
+      if (!cell) return null;
+      return {
+        id: cell.getAttribute('data-testid').replace(/-layers-panel-row$/, ''),
+        name: cell.innerText.replace(/\n/g, ' ').trim(),
+        parent: row.hasAttribute('aria-expanded'),
+      };
+    })
+    .filter(Boolean);
+
+async function openUi(page, fileKey, nodeId) {
+  for (let attempt = 0; attempt < 2; attempt += 1) {
+    await page.goto(`${fileUrl(fileKey)}?node-id=${encodeURIComponent(nodeId.replace(/:/g, '-'))}`, { waitUntil: 'domcontentloaded', timeout: 60_000 });
+    const outcome = await fileOutcome(page);
+    if ((outcome === 'login' || outcome === 'anonymous') && attempt === 0) {
+      await login(page);
+      continue;
+    }
+    if (outcome === 'ready') {
+      throw new EditorUnavailable(`Файл ${fileKey} открыт аккаунту на редактирование: канал ui не нужен — channel: "auto" снимет узел через Plugin API.`, 'ready');
+    }
+    if (outcome !== 'view') throw new EditorUnavailable(`Файл ${fileKey} не открылся в интерфейсе Figma (${outcome}).`);
+    break;
+  }
+  try {
+    await waitPanel(page);
+  } catch {
+    throw new EditorUnavailable(`Панель свойств Figma не показала узел ${nodeId}: id неверный, узел скрыт или интерфейс Figma изменился.`);
+  }
+}
+
+/** Выбрать узел кликом по строке Layers; строки нет в списке — открыть файл на узле заново. */
+async function selectUi(page, fileKey, item) {
+  const row = page.locator(`[data-testid="${item.id}-layers-panel-row"]`).first();
+  if (await row.count()) {
+    await row.click({ timeout: 5000 }).catch(() => {});
+    try {
+      await page.waitForFunction(
+        (id) => {
+          const selected = [...document.querySelectorAll('[role=row][aria-selected=true] [data-testid$="-layers-panel-row"]')];
+          return selected.length === 1 && selected[0].getAttribute('data-testid') === `${id}-layers-panel-row`;
+        },
+        item.id,
+        { timeout: 5000, polling: 100 },
+      );
+      await waitPanel(page, item.name, 10_000);
+      return;
+    } catch {
+      /* Клик не выбрал строку — ниже открываем по адресу. */
+    }
+  }
+  await openUi(page, fileKey, item.id);
+}
+
+/**
+ * Узел и, с depth, его потомки с панели свойств: [{ id, depth, parent, snapshot }]. Сырые
+ * снимки разбирает src/figma/ui.js — здесь только браузер.
+ */
+export function editorUiInspect(fileKey, nodeId, { depth = 0, maxNodes = 25 } = {}) {
+  return admitted(async () => {
+    if (FIGMA.editor === 'off') throw new EditorUnavailable('Канал редактора выключен: FIGMA_EDITOR=off.', 'off');
+    await ensureSession();
+    const page = current.session.page;
+    current.fileKey = null;
+    scheduleIdle();
+    await openUi(page, fileKey, nodeId);
+
+    const out = [{ id: nodeId, depth: 0, parent: null, snapshot: await page.evaluate(PANEL_SNAPSHOT) }];
+    const queue = [{ id: nodeId, name: null, depth: 0 }];
+    let truncated = false;
+    while (queue.length && depth > 0) {
+      const item = queue.shift();
+      if (item.depth >= depth) continue;
+      if (item.name) await selectUi(page, fileKey, item);
+      await page.keyboard.press('Enter');
+      await page.waitForTimeout(400);
+      const kids = (await page.evaluate(SELECTED_ROWS)).filter((kid) => kid.id !== item.id);
+      if (!kids.length) continue;
+      for (const kid of kids) {
+        if (out.length >= maxNodes) {
+          truncated = true;
+          break;
+        }
+        await selectUi(page, fileKey, kid);
+        out.push({ id: kid.id, name: kid.name, depth: item.depth + 1, parent: item.id, snapshot: await page.evaluate(PANEL_SNAPSHOT) });
+        if (kid.parent) queue.push({ ...kid, depth: item.depth + 1 });
+      }
+      if (truncated) break;
+    }
+    scheduleIdle();
+    return { nodes: out, truncated };
+  });
+}
+
+/**
+ * Выгрузка узла кнопкой Export панели в режиме просмотра. Figma рисует файл несколько секунд и
+ * отдаёт его ссылкой на blob — его ловит перехват скачиваний сессии (browser/downloads.js).
+ */
+export function editorUiExport(fileKey, nodeId, { scale = 1, format = 'PNG' } = {}) {
+  return admitted(async () => {
+    if (FIGMA.editor === 'off') throw new EditorUnavailable('Канал редактора выключен: FIGMA_EDITOR=off.', 'off');
+    await ensureSession();
+    const page = current.session.page;
+    current.fileKey = null;
+    await openUi(page, fileKey, nodeId);
+    const panel = page.locator('[data-testid=properties-panel]');
+    const add = panel.locator('[aria-label="Add export settings"]');
+    if (!(await panel.getByRole('button', { name: /^Export\s+\S/ }).count()) && (await add.count())) await add.first().click({ timeout: 5000 });
+
+    const scaleInput = panel.locator('input[aria-label^="Export constraints"]').first();
+    await scaleInput.waitFor({ timeout: 10_000 });
+    await scaleInput.fill(`${scale}x`);
+    await scaleInput.press('Enter');
+    const type = panel.locator('[role=combobox][data-tooltip="Export file type"]').first();
+    if ((await type.count()) && (await type.innerText()).trim().toUpperCase() !== format) {
+      await type.click({ timeout: 5000 });
+      await page.locator(`[role=option][data-fpl-select-value="${format}"]`).first().click({ timeout: 5000 });
+    }
+
+    const button = panel.getByRole('button', { name: /^Export\s+\S/ }).first();
+    if (!(await button.count())) throw new EditorUnavailable('В панели нет кнопки Export: владелец запретил экспорт зрителям или интерфейс Figma изменился.');
+    await button.click({ timeout: 10_000 });
+    const file = await waitForDownload(current.session, 120_000).catch((err) => {
+      throw new EditorUnavailable(`Figma не отдала файл экспорта: ${err.message}`);
+    });
+    scheduleIdle();
+    return file;
+  });
+}
+
+/*
+ * Копия файла в черновики аккаунта стенда.
+ *
+ * Путь проверен на живом интерфейсе 2026-10-29: кнопка меню рядом с именем файла (aria-label
+ * «Edit file menu») → пункт «Duplicate to your drafts» → диалог «Where do you want your
+ * duplicate?» со списком команд аккаунта. Новая вкладка с копией стенду не видна, зато ключ
+ * копии приходит в ответе POST /api/multiplayer/<ключ>/copy (meta.key). id узлов в копии те же,
+ * что в оригинале: ссылки и снимки остаются под ключом оригинала.
+ *
+ * Команду выбирает человек: копия появляется в черновиках этой команды и видна её участникам.
+ * Без team вызов отказывает со списком команд, а не берёт первую попавшуюся.
+ */
+const COPY_DIALOG = /where do you want your duplicate/i;
+
+export function editorDuplicate(fileKey, { team = null, sourceVersion = null, choose = null } = {}) {
+  return admitted(async () => {
+    if (FIGMA.editor === 'off') throw new EditorUnavailable('Канал редактора выключен: FIGMA_EDITOR=off.', 'off');
+    await ensureSession();
+    const page = current.session.page;
+    current.fileKey = null;
+
+    let outcome = null;
+    for (let attempt = 0; attempt < 2; attempt += 1) {
+      await page.goto(fileUrl(fileKey), { waitUntil: 'domcontentloaded', timeout: 60_000 });
+      outcome = await fileOutcome(page);
+      if ((outcome === 'login' || outcome === 'anonymous') && attempt === 0) {
+        await login(page);
+        continue;
+      }
+      break;
+    }
+    if (outcome === 'ready') {
+      current.fileKey = fileKey;
+      setFile(fileKey, 'ready');
+      return { needed: false, note: `Файл ${fileKey} и так открыт аккаунту стенда на редактирование: копия не нужна.` };
+    }
+    if (outcome === 'no-access') throw failFile(fileKey, 'no_access', `Аккаунту стенда не открыт файл ${fileKey}: копию сделать не из чего.`);
+    if (outcome !== 'view') throw new EditorUnavailable(`Файл ${fileKey} не открылся в редакторе (${outcome}): копию сделать не из чего.`);
+
+    await page.locator('button[aria-label="Edit file menu"]').filter({ visible: true }).first().click({ timeout: 15_000 });
+    /* Подстрокой, а не /^…$/: hasText сверяется с textContent, а в нём у пункта меню есть и
+       невидимый текст — точная регулярка не находила пункт, который на экране есть. */
+    const menu = page.locator('[role="menuitem"]');
+    const opened = await menu.first().waitFor({ timeout: 10_000 }).then(() => true, () => false);
+    if (!opened) throw new EditorUnavailable(`Меню файла ${fileKey} в редакторе не открылось: интерфейс Figma изменился.`);
+    const item = menu.filter({ hasText: 'Duplicate to your drafts' }).first();
+    const present = (await item.count()) > 0;
+    if (!present || (await item.getAttribute('aria-disabled')) === 'true') {
+      await page.keyboard.press('Escape').catch(() => {});
+      throw new EditorUnavailable(
+        `Владелец файла ${fileKey} запретил копирование: пункта «Duplicate to your drafts» нет или он неактивен. Остаётся edit-доступ от владельца или канал ui: figma_inspect и figma_export с channel: "ui".`,
+        'copy_forbidden',
+      );
+    }
+
+    const copied = page.waitForResponse(
+      (res) => res.request().method() === 'POST' && res.url().includes(`/api/multiplayer/${fileKey}/copy`),
+      { timeout: 90_000 },
+    );
+    copied.catch(() => {});
+    await item.click();
+
+    const dialog = page.locator('[role="dialog"]', { hasText: COPY_DIALOG }).last();
+    if (await dialog.waitFor({ timeout: 5000 }).then(() => true, () => false)) {
+      /* Имя команды бывает и «1»: подстрочный поиск по тексту кнопки попал бы не туда, поэтому
+         кнопка берётся по номеру среди всех кнопок диалога. */
+      const rows = (await dialog.locator('button').allInnerTexts()).map((text, at) => ({ name: text.trim(), at }));
+      const named = rows.filter((row) => row.name && !/^cancel$/i.test(row.name));
+      const teams = named.map((row) => row.name);
+      /* Неявная копия: команду называет FIGMA_DUPLICATE_TEAM или человек в форме, пока диалог
+         Figma открыт. Отказ человека — не ошибка интерфейса, а решение: так и говорится. */
+      let refusal = null;
+      if (!team && choose) {
+        const picked = await choose(teams);
+        if (typeof picked === 'string') team = picked;
+        else refusal = picked?.declined ?? null;
+      }
+      const wanted = String(team || '').trim().toLowerCase();
+      const chosen = wanted ? named.find((row) => row.name.toLowerCase() === wanted) : null;
+      if (!chosen) {
+        await page.keyboard.press('Escape').catch(() => {});
+        throw Object.assign(
+          new EditorUnavailable(
+            refusal
+              ? refusal
+              : `${team ? `Команды «${team}» у аккаунта стенда нет.` : 'Нужна команда: копия появится в её черновиках, и это решает человек.'} ` +
+                  `Команды аккаунта: ${teams.join(', ')}. Повторите figma_sync с duplicate: "<имя команды>".`,
+            'needs_team',
+          ),
+          { teams },
+        );
+      }
+      await dialog.locator('button').nth(chosen.at).click({ timeout: 5000 });
+    }
+
+    let meta;
+    try {
+      meta = (await (await copied).json())?.meta;
+    } catch (err) {
+      throw new EditorUnavailable(`Figma не подтвердила копию файла ${fileKey}: ${err.message}`);
+    }
+    if (!meta?.key) throw new EditorUnavailable(`Figma не вернула ключ копии файла ${fileKey}: интерфейс копирования изменился.`);
+
+    const copy = {
+      copyKey: meta.key,
+      name: meta.name ?? null,
+      ...(team ? { team } : {}),
+      at: new Date().toISOString(),
+      ...(sourceVersion ? { sourceVersion: String(sourceVersion) } : {}),
+    };
+    await writeCopy(fileKey, copy);
+    files.delete(fileKey);
+    scheduleIdle();
+    return { needed: true, copy };
+  });
+}
 
 /**
  * Войти заново или дозавершить вход кодом.
@@ -852,6 +1317,11 @@ registerTokenIssuer(async ({ previous }) => {
 /** То, что нужно снимку и выгрузке, одним объектом: там канал подменяется в тестах. */
 export const editorChannel = {
   usable: editorUsable,
+  why: editorWhy,
+  fileStatus: editorFileStatus,
+  duplicate: editorDuplicate,
+  uiInspect: editorUiInspect,
+  uiExport: editorUiExport,
   dump: editorDump,
   render: editorRender,
   geometry: editorGeometry,

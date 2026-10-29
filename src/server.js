@@ -13,6 +13,7 @@ import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { ensureDirs } from './artifacts.js';
 import { loadProfiles } from './browser/profiles.js';
 import { installProtocolPatches } from './protocol.js';
+import { bindRequests } from './request.js';
 import { buildInstructions } from './tools/instructions.js';
 import { resolveSelection } from './tools/groups.js';
 import { checkForUpdate, currentImageTag, updateNotice } from './update.js';
@@ -101,6 +102,8 @@ export async function createServer({ selection = resolveSelection('all') } = {})
     },
     { instructions: [buildInstructions(selection.groups), ...notices].join('\n\n') },
   );
+  /* До регистрации: обработчики, которым нужно спросить человека, находят свой сервер по контексту. */
+  bindRequests(server);
 
   if (on('session')) registerSession(server);
   if (on('observe')) registerObserve(server);

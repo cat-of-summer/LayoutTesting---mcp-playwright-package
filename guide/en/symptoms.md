@@ -7,6 +7,11 @@ A quick-choice table: what you came with and what to look at it with.
 | Symptom | What to look with |
 |---|---|
 | I do not know which frames to build | `figma_structure` with `depth: 1` and `figma_export` with `kind: "render"` |
+| The editor answers timeout while `editor.state` is ready | `figma_status` with `figma`: `file.editor.state` is the state for this file, `view_only` - the file is shared for viewing only |
+| The file is view-only | the stand makes a copy in drafts itself on the first `figma_*` (a form for the human or `FIGMA_DUPLICATE_TEAM`); a refusal or a client without forms - a question to the human: edit access or `figma_sync` with `duplicate: "<team>"`; otherwise the ui channel: `figma_inspect` and `figma_export` with `channel: "ui"` |
+| "The monthly limit of the View/Collab seat is spent", `rest.tier1.remaining: 0` | REST is silent until next month: the editor for the file, a copy in drafts or the ui channel; `FIGMA_SEAT=full` if the seat is actually Full |
+| `copy.stale` in the answers | the designer edited the original after copying: `figma_sync` with `duplicate` again |
+| Nothing to compare with: no node snapshot | `figma_compare` with `image` - a PNG exported from Figma, `mode: "pixel"` only |
 | More than a hundred frames in the file | `figma_sync` without a node-id, with `page` and `offset` |
 | I do not know where the node from the task sits or who its parent is | `path` in the `figma_inspect` and `figma_sync` answers |
 | The frame has no header, footer, modal — but a gap for them | search the file: `figma_sync` without a node-id, `figma_components`; ask the human afterwards |
@@ -56,3 +61,6 @@ A quick-choice table: what you came with and what to look at it with.
 | Is the animation honest | the same tool: `timing.smooth` and `durationMs` |
 | What is wrong with this page at all | `audit` — the cheapest first step |
 | Did I break something that used to work | `visual_baselines` → `visual_compare` |
+| A form with a behavioural captcha (swipe, slider) does not pass from the stand | as intended: the stand browser shows up as automation (webdriver, software rendering). Check the form with the site's test switch for the captcha, the swipe itself is done by a human |
+| The "Download" button worked but there is no file | `downloads` in the `browser_act` answer; to wait for it - `wait` with `value: "download"` |
+| Waiting for loading with a guessed pause | `wait` with `expression`: a condition on the page instead of seconds |

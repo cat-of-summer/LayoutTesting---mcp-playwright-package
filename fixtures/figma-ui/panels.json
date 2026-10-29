@@ -1,0 +1,117 @@
+{
+  "_about": "Снимки панели свойств Figma в режиме просмотра (PANEL_SNAPSHOT из src/figma/ui.js), сняты с живого файла 2026-10-29. Эталон значений — Plugin API на копии того же файла.",
+  "frame-autolayout": {
+    "headings": ["Layout", "Colors"],
+    "lines": ["100%", "Frame 3", "Layout", "Flow", "Vertical", "Width", "Hug (434px)", "Height", "Hug (229px)", "Top", "398px", "Left", "503px", "Radius", "border radius/br-24px", "Padding", "padding/p-32px", "Gap", "padding/p-20px", "Colors", "Color format", "Hex", "bg/white/primary", "#FFFFFF", "Export"],
+    "pairs": [
+      { "label": "Flow: Vertical" },
+      { "label": "Width: Hug (434px)" },
+      { "label": "Height: Hug (229px)" },
+      { "label": "Top: 398px" },
+      { "label": "Left: 503px" },
+      { "label": "Radius: border radius/br-24px", "resolved": "24px" },
+      { "label": "Padding: padding/p-32px", "resolved": "32px" },
+      { "label": "Gap: padding/p-20px", "resolved": "20px" }
+    ]
+  },
+  "text": {
+    "headings": [],
+    "lines": ["100%", "Text", "Подтвердите, что вы не робот", "Layout", "Width", "368px", "Height", "31px", "Content", "Подтвердите, что вы не робот", "Typography", "Name", "paragraphs/24 bold", "Font", "Inter", "Weight", "700", "Style", "Bold", "Size", "24px", "Line height", "130%", "Letter spacing", "0%", "Colors", "Color format", "Hex", "text/black/primary", "#060709", "Export"],
+    "pairs": [
+      { "label": "Width: 368px" },
+      { "label": "Height: 31px" },
+      { "label": "Name: paragraphs/24 bold" },
+      { "label": "Font: Inter" },
+      { "label": "Weight: 700" },
+      { "label": "Style: Bold" },
+      { "label": "Size: 24px" },
+      { "label": "Line height: 130%" },
+      { "label": "Letter spacing: 0%" }
+    ]
+  },
+  "frame-border": {
+    "headings": [],
+    "lines": ["100%", "Frame 1", "Layout", "Flow", "Horizontal", "Width", "Fixed (60px)", "Height", "Hug (40px)", "Radius", "border radius/br-10px", "Border", "3px", "Padding", "8px", "Gap", "8px", "Colors", "Color format", "Hex", "#FF496C", "Borders", "Color format", "Hex", "3px", "All sides", "#FF496C", "20%", "Outer alignment", "Export"],
+    "pairs": [
+      { "label": "Flow: Horizontal" },
+      { "label": "Width: Fixed (60px)" },
+      { "label": "Height: Hug (40px)" },
+      { "label": "Radius: border radius/br-10px", "resolved": "10px" },
+      { "label": "Border: 3px" },
+      { "label": "Padding: 8px" },
+      { "label": "Gap: 8px" }
+    ]
+  },
+  "image": {
+    "headings": [],
+    "lines": ["62%", "8164 1", "Image", "8164.png", "Layout", "Width", "1,584px", "Height", "1,057px", "Top", "-17px", "Left", "-72px", "Export"],
+    "pairs": [{ "label": "Width: 1,584px" }, { "label": "Height: 1,057px" }, { "label": "Top: -17px" }, { "label": "Left: -72px" }]
+  },
+  "component-shadows": {
+    "headings": ["Component properties", "Layout", "Colors", "Borders", "Shadows and blurs"],
+    "lines": ["100%", "dropdown", "Component properties", "Size", "L", "Preset", "Text", "Layout", "Flow", "Vertical", "Width", "Fixed (320px)", "Height", "Hug (404px)", "Top", "32px", "Left", "32px", "Radius", "border radius/br-12px", "Border", "1px", "Padding", "padding/p-8px", "Gap", "padding/p-4px", "Colors", "Color format", "Hex", "bg/white/primary", "#FFFFFF", "Borders", "Color format", "Hex", "1px", "All sides", "stroke/gray/quaternary", "#D1D4D9", "Inner alignment", "Shadows and blurs", "Color format", "Hex", "shadow/dropdown", "X", "0", "Y", "3", "Blur", "6", "Spread", "0", "Behind transparent areas", "True", "#000000", "5%", "shadow/dropdown", "X", "0", "Y", "11", "Blur", "11", "Spread", "0", "#000000", "4%", "1 more", "Export"],
+    "pairs": [
+      { "label": "Size: L" },
+      { "label": "Preset: Text" },
+      { "label": "Flow: Vertical" },
+      { "label": "Width: Fixed (320px)" },
+      { "label": "Height: Hug (404px)" },
+      { "label": "Top: 32px" },
+      { "label": "Left: 32px" },
+      { "label": "Radius: border radius/br-12px", "resolved": "12px" },
+      { "label": "Border: 1px" },
+      { "label": "Padding: padding/p-8px", "resolved": "8px" },
+      { "label": "Gap: padding/p-4px", "resolved": "4px" },
+      { "label": "Drop shadow—X: 0" },
+      { "label": "Drop shadow—Y: 3" },
+      { "label": "Drop shadow—Blur: 6" },
+      { "label": "Drop shadow—Spread: 0" },
+      { "label": "Drop shadow—Behind transparent areas: True" },
+      { "label": "Drop shadow—X: 0" },
+      { "label": "Drop shadow—Y: 11" },
+      { "label": "Drop shadow—Blur: 11" },
+      { "label": "Drop shadow—Spread: 0" }
+    ]
+  },
+  "padding-sides": {
+    "headings": ["Layout", "Colors"],
+    "lines": ["50%", "label/section title ui-kit", "Layout", "Flow", "Horizontal", "Width", "Fill (1,992px)", "Height", "Hug (176px)", "Radius", "border radius/br-0px", "Justify", "space-between", "Padding", "Top", "padding/p-48px", "Right", "padding/p-124px", "Bottom", "padding/p-48px", "Left", "padding/p-124px", "Colors", "Color format", "Hex", "blue/900", "#000325", "Export"],
+    "pairs": [
+      { "label": "Flow: Horizontal" },
+      { "label": "Width: Fill (1,992px)" },
+      { "label": "Height: Hug (176px)" },
+      { "label": "Radius: border radius/br-0px", "resolved": "undefined" },
+      { "label": "Justify: space-between" },
+      { "label": "Padding—Top: padding/p-48px", "resolved": "48px" },
+      { "label": "Padding—Right: padding/p-124px", "resolved": "124px" },
+      { "label": "Padding—Bottom: padding/p-48px", "resolved": "48px" },
+      { "label": "Padding—Left: padding/p-124px", "resolved": "124px" }
+    ]
+  },
+  "opacity-blend-blur": {
+    "headings": ["Layout", "Colors", "Shadows and blurs"],
+    "lines": ["57%", "Rectangle", "Layout", "Width", "1,473px", "Height", "1,047px", "Top", "-15px", "Left", "-171px", "Opacity", "50%", "Blend", "Hard light", "Colors", "Color format", "Hex", "#2A3336", "Shadows and blurs", "Color format", "Hex", "Layer blur", "Blur", "133.85", "Export"],
+    "pairs": [
+      { "label": "Width: 1,473px" },
+      { "label": "Height: 1,047px" },
+      { "label": "Top: -15px" },
+      { "label": "Left: -171px" },
+      { "label": "Opacity: 50%" },
+      { "label": "Blend: Hard light" },
+      { "label": "Layer blur—Blur: 133.85" }
+    ]
+  },
+  "inner-shadow": {
+    "headings": ["Layout", "Colors", "Shadows and blurs"],
+    "lines": ["95%", "1", "Layout", "Width", "1,041px", "Height", "404px", "Radius", "border radius/br-32px", "Colors", "Color format", "Hex", "bg/gray/pentad", "#F3F5F8", "Shadows and blurs", "Color format", "Hex", "Inner shadow", "X", "0", "Y", "1", "Blur", "0", "Spread", "0", "#FFFFFF", "8%", "Export"],
+    "pairs": [
+      { "label": "Width: 1,041px" },
+      { "label": "Height: 404px" },
+      { "label": "Radius: border radius/br-32px", "resolved": "32px" },
+      { "label": "Inner shadow—X: 0" },
+      { "label": "Inner shadow—Y: 1" },
+      { "label": "Inner shadow—Blur: 0" },
+      { "label": "Inner shadow—Spread: 0" }
+    ]
+  }
+}

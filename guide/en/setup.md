@@ -7,7 +7,7 @@ The stand, reaching the project, Figma access, two sessions and the project's ow
 ENTRY: the design frame links and the project path are known.
 STEPS:
   1. stand_info — version, exposed groups, guide.available: true (otherwise tell the human).
-  2. figma_status — editor.state and rest.configured; rest: false → action: token yourself, no question; editor.state: needs_human → the editor.handoff.url link to the human; issuing failed → ask the human.
+  2. figma_status with figma: <frame link> - editor.state, rest.configured, file.editor.state, rest.tier1; rest: false → action: token yourself, no question; editor.state: needs_human → the editor.handoff.url link to the human; issuing failed → ask the human; file.editor.state: view_only → the stand makes a copy in drafts itself on the first figma_* (the team from FIGMA_DUPLICATE_TEAM or the human picks it in a form); a refusal or a client without forms → ask the human before the markup: edit access, a team for duplicate, or work by hand.
   3. dev server on 0.0.0.0 → browser_goto http://host.docker.internal:<port> answers 200.
   4. browser_open a second time with animations: "allow" — the live session; both with keepAlive: true, kept to the end.
   5. README, CLAUDE.md, bundler config — how assets are wired, what the CSS framework does to p and h1..h6; a dictionary of its utilities: tap area, icons, visibility.
@@ -15,9 +15,9 @@ STEPS:
 ## 0.1 The stand and access
 
 ```
-stand_info              → version, exposed tool groups, viewport presets, guide
-help(topic: "figma")    → the entry point of the handbook
-figma_status            → are the editor channel and REST alive
+stand_info                      → version, exposed tool groups, viewport presets, guide
+help(topic: "figma")            → the entry point of the handbook
+figma_status with figma: <frame> → are the editor channel and REST alive, and does this file open in the editor
 ```
 
 `stand_info.guide.available: false` means the image was built without the handbook. That is a
@@ -32,6 +32,32 @@ asked for a captcha, a 2FA code or an email confirmation (`editor.state: needs_h
 passes the check personally, the stand saves the login; then `action: token` again. Not issued for
 another reason → a question to the human. A missing token is a blocker for phase 2, not a skip: on one landing page the comments were
 never read, and the hover of three blocks was invented instead of taken from a comment.
+
+**A login to the editor is not access to the file yet.** `editor.state: ready` only says the stand
+is logged in. Whether the design itself opens in the editor is in `file` of the `figma_status`
+answer with `figma`. `file.editor.state: view_only` means the file is shared with the stand account
+for viewing only: Figma gives no Plugin API in that mode, and the editor channel will not work for
+the file however many times it is retried. REST on a View seat is twenty file requests a month
+across all projects (`rest.tier1`) - one or two tasks. If that is spent too, no `figma_*` works at
+all. The ways out, most useful first:
+
+1. edit access for the stand account from the file owner - then everything works;
+2. a copy in the drafts of a team of the stand account, if the owner allowed copying. The first
+   `figma_*` that goes into the file makes it itself: the team comes from `FIGMA_DUPLICATE_TEAM` in
+   the stand .env, and without it the human picks one in a client form - the agent does nothing,
+   the answer keeps `copy` with a "pulled from the copy" note. A client without forms or a refusal
+   by the human - an explicit `figma_sync` with `duplicate: "<team>"` after asking the human
+   (`duplicate: ""` returns the list of teams). The designer edits the original, not the copy:
+   `copy.stale` in the answers means it is time to copy again;
+3. neither - the ui channel: `figma_inspect` and `figma_export` with `channel: "ui"` read values
+   from the properties panel of the Figma interface and export with the Export button, the
+   comparison is `figma_compare` with `image` (a PNG from `figma_export`). `channel: "auto"` switches
+   to ui by itself. The other `figma_*` work on a snapshot and are unavailable without one: build the
+   structure from the `figma_inspect` tree with `depth`.
+
+Choosing between them is a question to the human before the markup, not a discovery in the middle
+of the work: in the feedback this section was written for, three calls went into an editor
+`timeout` before the cause was found on a screenshot.
 
 ## 0.2 Reaching the project from the stand
 
@@ -85,6 +111,7 @@ Read `README.md`, `CLAUDE.md`, the bundler config. Find out:
 
 ## Gate
 
-The project page opens through `browser_goto`; REST and the Figma editor are available or their
-absence is agreed with the human; the working and the live sessions are open with `keepAlive: true`; it is known where
-assets go and how they are wired in.
+The project page opens through `browser_goto`; the design can be pulled by at least one channel -
+the editor for this file (`file.editor.usable`), a copy in drafts or REST with requests left - or
+working through the ui channel (only `figma_inspect` and `figma_export`) is agreed with the human; the working and the live
+sessions are open with `keepAlive: true`; it is known where assets go and how they are wired in.

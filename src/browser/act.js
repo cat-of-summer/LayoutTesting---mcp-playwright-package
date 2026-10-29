@@ -7,6 +7,75 @@
  */
 import { stat } from 'node:fs/promises';
 import { resolveInRoot } from '../paths.js';
+import { waitForDownload } from './downloads.js';
+
+/**
+ * Ждать, пока выражение на странице станет истинным. Как у eval: сначала выражение, на
+ * синтаксической ошибке — тело функции с return.
+ *
+ * Таймаут переводится в свою ошибку: общий разбор таймаутов говорит о селекторах, а селектора
+ * здесь нет.
+ */
+async function waitForCondition(page, expression, timeout) {
+  const options = { polling: 250, ...(timeout === undefined ? {} : { timeout }) };
+  const attempt = (source) => page.waitForFunction(source, null, options);
+  try {
+    try {
+      await attempt(`(${expression})`);
+    } catch (err) {
+      if (!/SyntaxError|Unexpected token|Illegal return/i.test(err?.message || '')) throw err;
+      await attempt(`(() => { ${expression} })()`);
+    }
+  } catch (err) {
+    if (!isTimeout(err)) throw err;
+    const ms = /Timeout (\d+)ms/.exec(err.message)?.[1] ?? '?';
+    throw new Error(
+      `wait: условие ${expression} не стало истинным за ${ms} мс. Проверьте его в eval на текущей странице; тело функции должно возвращать значение через return.`,
+    );
+  }
+}
+
+/**
+ * Элемент по селектору: первый видимый из совпадений, если первый по DOM скрыт.
+ *
+ * У Figma кнопка «Ask to edit» есть в трёх экземплярах панели инструментов, и видим только
+ * второй: .first() брал скрытый, и клик падал с «есть в DOM, но не виден», хотя кнопка на
+ * экране. Нет видимых совпадений — остаётся первое, и ошибка остаётся той же, что и была.
+ */
+async function pick(page, selector) {
+  const all = page.locator(selector);
+  const first = all.first();
+  if ((await all.count().catch(() => 0)) < 2 || (await first.isVisible().catch(() => true))) return first;
+  const visible = all.filter({ visible: true });
+  return (await visible.count().catch(() => 0)) ? visible.first() : first;
+}
+
+const BBOX_NOTE =
+  'Playwright счёл элемент невидимым, но в центре его рамки на экране он сам: клик ушёл мышью по координатам центра. Если эффекта нет — это не тот элемент; смотрите page_snapshot.';
+
+/**
+ * Клик по центру рамки, когда Playwright считает элемент невидимым, а на экране он есть.
+ *
+ * Только если в точке центра document.elementFromPoint отдаёт сам элемент или его потомка: иначе
+ * клик ушёл бы в то, что элемент перекрывает, — это та ошибка, о которой должен сказать отказ.
+ */
+async function clickByBox(page, target, err) {
+  if (!/element is not visible|not visible/i.test(err.message || '')) return null;
+  const point = await target
+    .evaluate((el) => {
+      const r = el.getBoundingClientRect();
+      if (r.width < 1 || r.height < 1) return null;
+      const x = r.left + r.width / 2;
+      const y = r.top + r.height / 2;
+      if (x < 0 || y < 0 || x > innerWidth || y > innerHeight) return null;
+      const hit = document.elementFromPoint(x, y);
+      return hit && (hit === el || el.contains(hit)) ? { x: Math.round(x), y: Math.round(y) } : null;
+    }, null, { timeout: 2000 })
+    .catch(() => null);
+  if (!point) return null;
+  await page.mouse.click(point.x, point.y);
+  return point;
+}
 
 /**
  * Действия шагов states и form_audit. Отдельно от полного списка: их схемы платят за каждое
@@ -94,7 +163,7 @@ export async function perform(session, step = {}) {
   }
 }
 
-async function run(session, { action, selector, value, files, x, y, to, duration, timeout, force } = {}) {
+async function run(session, { action, selector, value, files, x, y, to, duration, timeout, force, expression } = {}) {
   const { page } = session;
   const wait = timeout === undefined ? {} : { timeout };
 
@@ -112,7 +181,7 @@ async function run(session, { action, selector, value, files, x, y, to, duration
     return { action, dialogPolicy: session.dialogPolicy };
   }
 
-  const target = selector ? page.locator(selector).first() : null;
+  const target = selector ? await pick(page, selector) : null;
   const pressed = { ...wait, ...(force ? { force: true } : {}) };
 
   switch (action) {
@@ -140,6 +209,17 @@ async function run(session, { action, selector, value, files, x, y, to, duration
       return { action, key: value };
     }
     case 'wait': {
+      /* Условие страницы: «пока в Layers не появятся строки», «пока не уйдёт спиннер». Раньше
+         вместо него ставили паузу наугад — двенадцать секунд на каждое открытие Figma. */
+      if (expression) {
+        const started = Date.now();
+        await waitForCondition(page, expression, wait.timeout);
+        return { action, expression, ms: Date.now() - started };
+      }
+      if (value === 'download') {
+        const file = await waitForDownload(session, timeout ?? 30_000);
+        return { action, download: file.name };
+      }
       if (target) {
         await target.waitFor({ state: 'visible', ...wait });
         return { action, selector };
@@ -147,7 +227,11 @@ async function run(session, { action, selector, value, files, x, y, to, duration
       /* В шагах states и form_audit поля duration нет, и пауза «подождать, пока доедет
          анимация» пишется числом в value. */
       const ms = duration || (/^\d+$/.test(String(value ?? '').trim()) ? Number(value) : 0);
-      if (!ms) throw new Error('Для wait нужен selector — дождаться элемента — или пауза в мс: duration или число в value.');
+      if (!ms) {
+        throw new Error(
+          'Для wait нужен selector — дождаться элемента, expression — дождаться условия, value: "download" — дождаться скачивания, или пауза в мс: duration или число в value.',
+        );
+      }
       await page.waitForTimeout(ms);
       return { action, ms };
     }
@@ -163,7 +247,13 @@ async function run(session, { action, selector, value, files, x, y, to, duration
       /* x и y при селекторе — точка внутри элемента от его левого верхнего угла: кнопка
          «Начать» нарисована на canvas, и другого способа попасть по ней нет. */
       const position = hasPoint(x, y) ? { position: { x: x ?? 0, y: y ?? 0 } } : {};
-      await target.click({ ...pressed, ...position });
+      try {
+        await target.click({ ...pressed, ...position });
+      } catch (err) {
+        const fallback = isTimeout(err) && !position.position ? await clickByBox(page, target, err) : null;
+        if (!fallback) throw err;
+        return { action, selector, at: fallback, fallback: 'bbox', note: BBOX_NOTE };
+      }
       return { action, selector, ...(position.position ? { at: position.position } : {}) };
     }
     case 'tap':

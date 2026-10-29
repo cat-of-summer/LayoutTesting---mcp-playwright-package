@@ -10,6 +10,8 @@
  * про вход и токены не знает ничего, кроме того, что показывает figma_status.
  */
 import fs from 'node:fs/promises';
+import path from 'node:path';
+import sharp from 'sharp';
 import { z } from 'zod';
 import { d } from '../i18n-params.js';
 import { t } from '../i18n.js';
@@ -21,6 +23,8 @@ import { inlineImage } from '../checks/visual.js';
 import { checkFigmaApi } from '../figma/api-check.js';
 import { issueTokenNow, lastTokenIssue, resolveToken } from '../figma/auth.js';
 import { editorChannel, editorLogin, editorLogout, editorStatus } from '../figma/editor.js';
+import { channelAdvice, fileAccess } from '../figma/access.js';
+import { MISSING as UI_MISSING, parsePanel } from '../figma/ui.js';
 import { exportImages, exportRender, exportSvg } from '../figma/export.js';
 import { cssItems, outlineLines, textItems, unresolvedOf, usedVariables } from '../figma/inspect.js';
 import { assetInventory } from '../figma/assets.js';
@@ -49,7 +53,9 @@ import {
   readCachedComments,
 } from '../figma/analyze/comments.js';
 import { blockingOf, describeBehavior, uiKitTarget } from '../figma/analyze/behavior.js';
-import { compareWithDesign, probePage, scrollbarGutter } from '../figma/compare.js';
+import { compareWithDesign, compareWithImage, probePage, scrollbarGutter } from '../figma/compare.js';
+import { newRunId, runDir } from '../artifacts.js';
+import { loadSource } from '../media/source.js';
 import { alignHints, measurePairs, measureSpacing, pageBoxes } from '../figma/spacing.js';
 import { gotoAndSettle, sessionAt, withSession } from '../browser/pool.js';
 
@@ -72,6 +78,92 @@ async function cachedFiles() {
   } catch {
     return 0;
   }
+}
+
+/**
+ * Предупреждение о малом остатке запросов к файлам — в ответ инструмента, который их только что
+ * потратил. Без трат молчит: при работающем редакторе остаток REST никого не касается.
+ */
+async function restBudgetNote(client, requests) {
+  if (!requests?.tier1 || !client.tier1Note) return {};
+  const note = await client.tier1Note().catch(() => null);
+  return note ? { restBudget: note } : {};
+}
+
+/**
+ * Почему снимать узел остаётся только с панели интерфейса Figma: файл на просмотр, копии нет.
+ * null — канал ui тут не к месту, отказ надо показать как есть.
+ */
+async function uiFallbackReason(fileKey, { exporting = false } = {}) {
+  const status = await editorChannel.fileStatus(fileKey).catch(() => null);
+  if (status?.state !== 'view_only' || status.copy) return null;
+  return `Файл открыт аккаунту только на просмотр, копии в черновиках нет, REST узел не отдал: ${exporting ? 'выгружено кнопкой Export интерфейса Figma' : 'значения сняты с панели свойств интерфейса Figma'} (канал ui).`;
+}
+
+/** Узел и потомки с панели свойств — figma_inspect с channel: "ui" или как запасной путь. */
+async function runUiInspect(figma, { depth = 1, limit = 25, why = null } = {}) {
+  const { fileKey, nodeId } = parseFigmaRef(figma);
+  if (!nodeId) throw new Error('Каналу ui нужна ссылка на узел, с node-id: файл целиком он не обходит.');
+  const res = await editorChannel.uiInspect(fileKey, nodeId, { depth, maxNodes: limit });
+  const nodes = res.nodes.map((item) =>
+    strip({
+      ref: refOf(fileKey, item.id),
+      depth: item.depth,
+      parent: item.parent ? refOf(fileKey, item.parent) : undefined,
+      ...parsePanel(item.snapshot),
+    }),
+  );
+  return {
+    source: 'ui',
+    ...(why ? { why } : {}),
+    nodes,
+    ...(res.truncated ? { truncated: `Показаны первые ${limit} узлов: глубже — figma_inspect с channel: "ui" по ссылке нужного потомка.` } : {}),
+    missing: UI_MISSING,
+  };
+}
+
+/** Рендеры с кнопки Export панели — figma_export с channel: "ui" или как запасной путь. */
+async function runUiExport(refs, { kind = 'render', scale = 1, why = null } = {}) {
+  const format = kind === 'svg' ? 'SVG' : 'PNG';
+  const renders = [];
+  for (const figma of refs) {
+    const { fileKey, nodeId } = parseFigmaRef(figma);
+    if (!nodeId) {
+      renders.push({ ref: figma, error: 'Каналу ui нужна ссылка на узел, с node-id.' });
+      continue;
+    }
+    try {
+      const file = await editorChannel.uiExport(fileKey, nodeId, { scale: kind === 'svg' ? 1 : scale, format });
+      const meta = format === 'PNG' ? await sharp(file.path).metadata().catch(() => null) : null;
+      renders.push(
+        strip({
+          ref: refOf(fileKey, nodeId),
+          file: { name: file.name, bytes: file.bytes, path: file.path, uri: file.uri, url: file.url },
+          ...(meta ? { width: meta.width, height: meta.height, scale } : {}),
+        }),
+      );
+    } catch (err) {
+      renders.push({ ref: refOf(fileKey, nodeId), error: err.message });
+    }
+  }
+  return { channel: 'ui', ...(why ? { why } : {}), renders };
+}
+
+/**
+ * Копии файлов в черновики перед снятием — figma_sync с duplicate.
+ *
+ * Версия оригинала запоминается в копии: по ней снимок потом говорит, что копия отстала. Её
+ * знает только REST (/meta, tier 3); без токена копия просто не проверяется на свежесть.
+ */
+async function duplicateFiles(refs, team) {
+  const keys = [...new Set(refs.map((ref) => parseFigmaRef(ref).fileKey))];
+  const out = {};
+  for (const fileKey of keys) {
+    const access = await fileAccess(fileKey, { refresh: true });
+    const res = await editorChannel.duplicate(fileKey, { team: team.trim() || null, sourceVersion: access?.version ?? null });
+    out[fileKey] = res.needed ? { copy: res.copy.copyKey, name: res.copy.name, team: res.copy.team } : { note: res.note };
+  }
+  return out;
 }
 
 const refsSchema = z
@@ -344,9 +436,23 @@ const withProject = async (project) => (project && (project.url || project.css |
  * Сверка страницы с кадром — тело figma_compare. Вынесено, чтобы его же вызывал page_ready:
  * готовность догоняет недостающую посекционную сверку сама, а не советует её.
  */
-export async function runFigmaCompare({ figma, sessionId, url, selector, mode = 'both', sections = false, tolerance, threshold, limit }) {
+export async function runFigmaCompare({ figma, sessionId, url, selector, mode = 'both', sections = false, tolerance, threshold, limit, image }) {
   const client = getRestClient();
-  const { snapshot, node, fileKey } = await ensureNode(figma, { client, editor: editorChannel });
+  let found;
+  try {
+    found = await ensureNode(figma, { client, editor: editorChannel });
+  } catch (err) {
+    if (!image) throw err;
+    if (mode !== 'pixel' || sections) {
+      throw new Error(
+        `${err.message} С image без снимка узла доступна только попиксельная сверка кадра целиком: mode: "pixel" без sections — тексты и геометрию сверять не с чем.`,
+      );
+    }
+    return compareImageOnly({ image, sessionId, url, selector, threshold, snapshotError: err.message });
+  }
+  const { snapshot, node, fileKey } = found;
+  const designImage = image ? await designImageFile(image, node.box?.w) : null;
+  const imageNote = designImage ? { source: 'image', ...(designImage.note ? { imageNote: designImage.note } : {}) } : {};
   const ref = refOf(fileKey, node.id);
   const options = {
     figmaRef: ref,
@@ -360,6 +466,7 @@ export async function runFigmaCompare({ figma, sessionId, url, selector, mode = 
     ...(tolerance ? { tolerance } : {}),
     ...(threshold ? { threshold } : {}),
     ...(limit ? { limit } : {}),
+    ...(designImage ? { designImage: designImage.path } : {}),
   };
   /* Предупреждать о ширине окна имеет смысл только для экрана: карточку сверяют в любом окне. */
   const frameWidth = screenReason({ type: node.type, size: `${node.box?.w}x${node.box?.h}` }) ? null : Math.round(node.box.w);
@@ -378,7 +485,7 @@ export async function runFigmaCompare({ figma, sessionId, url, selector, mode = 
   if (sessionId) {
     const { session, navigation } = await sessionAt(sessionId, url);
     const { page } = session;
-    return { ...withCoverage(await compareWithDesign({ ...options, page }), page), ...(navigation ? { navigation } : {}) };
+    return { ...withCoverage(await compareWithDesign({ ...options, page }), page), ...(navigation ? { navigation } : {}), ...imageNote };
   }
   if (!url) throw new Error('Нужен sessionId открытой сессии или url страницы.');
 
@@ -394,7 +501,45 @@ export async function runFigmaCompare({ figma, sessionId, url, selector, mode = 
       await session.page.waitForTimeout(150);
     }
     const result = await compareWithDesign({ ...options, page: session.page, widenedBy: gutter });
-    return { ...withCoverage(result, session.page, gutter), navigation };
+    return { ...withCoverage(result, session.page, gutter), navigation, ...imageNote };
+  });
+}
+
+/**
+ * Готовая картинка макета файлом для сверки: из артефактов или по http(s).
+ *
+ * Экспорт из Figma бывает в 2x и 3x, а сверка идёт в CSS-пикселях: картинка приводится к ширине
+ * узла, если она известна по снимку. Без снимка ширину взять неоткуда — картинка берётся как есть.
+ */
+async function designImageFile(image, width = null) {
+  const source = await loadSource(image);
+  const dir = await runDir(newRunId('figma-image'));
+  const file = path.join(dir, 'design.png');
+  const scaled = width && Math.abs(source.meta.width - width) > 1;
+  if (scaled) await sharp(source.buffer).resize({ width: Math.round(width) }).png().toFile(file);
+  else await sharp(source.buffer).png().toFile(file);
+  return {
+    path: file,
+    ...(scaled ? { note: `Картинка ${source.meta.width}px приведена к ширине узла ${Math.round(width)}px.` } : {}),
+  };
+}
+
+/** Сверка без снимка узла: только пиксели кадра целиком против готовой картинки. */
+async function compareImageOnly({ image, sessionId, url, selector, threshold, snapshotError }) {
+  const designImage = await designImageFile(image);
+  const note =
+    'Снимка узла нет, поэтому сверка только попиксельная, по кадру целиком: тексты, отступы и краска по узлам не сверялись. ' +
+    `Картинка берётся в 1x — экспорт в 2x сравнится с удвоенным кадром. Почему нет снимка: ${snapshotError}`;
+  const run = async (page) => ({ ...(await compareWithImage({ designImage: designImage.path, page, selector, threshold: threshold ?? 0.1 })), source: 'image', note });
+  if (sessionId) {
+    const { session, navigation } = await sessionAt(sessionId, url);
+    return { ...(await run(session.page)), ...(navigation ? { navigation } : {}) };
+  }
+  if (!url) throw new Error('Нужен sessionId открытой сессии или url страницы.');
+  const { width } = await sharp(designImage.path).metadata();
+  return withSession({ viewport: `${Math.max(320, width)}x900` }, async (session) => {
+    const navigation = await gotoAndSettle(session, url);
+    return { ...(await run(session.page)), navigation };
   });
 }
 
@@ -596,16 +741,24 @@ export async function runFigmaFind({ figma, query, deep = false, limit = 30 }) {
   let results = null;
   let source = null;
   let fallback = null;
-  if (await editorChannel.usable()) {
+  if (await editorChannel.usable(fileKey)) {
     try {
       results = await editorChannel.find(fileKey, { query, limit });
       source = 'editor: все страницы файла';
     } catch (err) {
       fallback = err.message;
     }
+  } else if (editorChannel.why) {
+    fallback = await editorChannel.why(fileKey);
   }
   if (!results && deep) {
-    const res = await client.file(fileKey);
+    let res;
+    try {
+      res = await client.file(fileKey);
+    } catch (err) {
+      if (fallback && !err.message.includes(fallback)) err.message = `${err.message} Канал редактора: ${fallback}`;
+      throw err;
+    }
     results = searchRestDocument(res.document, query, { components: res.components, componentSets: res.componentSets });
     source = 'rest: файл целиком';
   }
@@ -645,14 +798,26 @@ export async function runFigmaFind({ figma, query, deep = false, limit = 30 }) {
       ? { order: 'сначала определения (набор, вариант, компонент), затем экземпляры, свёрнутые по главному компоненту, затем остальное' }
       : {}),
     ...(fallback ? { editorFallback: fallback } : {}),
-    ...(roots !== null
-      ? {
-          note: results.length
-            ? 'Искалось только по снятому. Остальные страницы файла — через канал редактора или deep: true.'
-            : 'В снятом не нашлось. Канал редактора ищет по всем страницам; без него — deep: true: весь файл одним запросом REST, на больших файлах это дорого.',
-        }
-      : {}),
+    ...(roots !== null ? { note: await findNote(fileKey, { found: results.length > 0, editorFailed: Boolean(fallback), client }) } : {}),
   };
+}
+
+/**
+ * Что сказать, когда искали только по снимкам. Совет зависит от того, что реально доступно:
+ * deep: true при исчерпанном REST и «канал редактора» при лежащем редакторе отправляли агента
+ * в заведомый отказ.
+ */
+async function findNote(fileKey, { found, editorFailed, client }) {
+  const head = found ? 'Искалось только по снятому.' : 'В снятом не нашлось.';
+  const tier1 = client.tier1Note ? await client.tier1Note().catch(() => null) : null;
+  const restOk = (await client.usable?.()) !== false && !(tier1 && (tier1.remaining === 0 || tier1.blockedUntil));
+  const ways = [];
+  if (!editorFailed) ways.push('канал редактора ищет по всем страницам');
+  if (restOk) ways.push('deep: true — весь файл одним запросом REST, на больших файлах это дорого');
+  if (ways.length) return `${head} Остальное: ${ways.join('; ')}.`;
+  /* Совет «снимите кадры через figma_sync» здесь был бы ложным: снять их сейчас тоже нечем. */
+  const advice = await channelAdvice(fileKey);
+  return `${head} Искать по всему файлу сейчас нечем. ${advice || 'Ни редактор, ни REST не доступны.'}`;
 }
 
 /** Поведение по прототипу — тело figma_behavior; page_ready берёт из него blocking. */
@@ -713,10 +878,14 @@ export function register(server) {
     {
       title: t({ ru: 'Доступ к Figma', en: 'Figma access' }),
       description: t({
-        ru: 'Доступ к Figma: работает ли токен REST и сколько осталось лимита, вошёл ли стенд в редактор, не отстала ли версия API. Секретов не показывает. Первый шаг, если figma_* отказывают. Нет токена — action: token, человека не спрашивая; капчу или код при входе проходит человек по ссылке editor.handoff.url.',
-        en: 'Figma access: whether the REST token works and how much of the limit is left, whether the stand is logged into the editor, whether the API version fell behind. Never reveals secrets. The first step when figma_* fail. No token — action: token without asking the human; a captcha or a code at login is passed by the human through the editor.handoff.url link.',
+        ru: 'Доступ к Figma: работает ли токен REST и сколько осталось лимита, вошёл ли стенд в редактор, не отстала ли версия API; с figma — роль аккаунта на файле и годится ли для него редактор. Секретов не показывает. Первый шаг, если figma_* отказывают. Нет токена — action: token, человека не спрашивая; капчу или код при входе проходит человек по ссылке editor.handoff.url.',
+        en: 'Figma access: whether the REST token works and how much of the limit is left, whether the stand is logged into the editor, whether the API version fell behind; with figma — the account role on the file and whether the editor works for it. Never reveals secrets. The first step when figma_* fail. No token — action: token without asking the human; a captcha or a code at login is passed by the human through the editor.handoff.url link.',
       }),
       inputSchema: {
+        figma: z
+          .string()
+          .optional()
+          .describe(d('Файл или узел: роль аккаунта на файле, годится ли для него редактор, копия в черновиках')),
         action: z
           .enum(['check', 'login', 'logout', 'token'])
           .optional()
@@ -725,7 +894,7 @@ export function register(server) {
         refresh: z.boolean().optional().describe(d('Заново спросить Figma, а не взять проверку из кэша на 10 минут')),
       },
     },
-    async ({ action = 'check', otp, refresh = false }) => {
+    async ({ action = 'check', otp, refresh = false, figma }) => {
       let loginError = null;
       let tokenError = null;
       if (action === 'login') {
@@ -795,10 +964,37 @@ export function register(server) {
       if (lastTokenIssue()) rest.lastIssue = lastTokenIssue();
       if (tokenError) rest.tokenError = tokenError;
       rest.budget = await client.budget();
+      /* rest.ok — это /v1/me, tier 3. Запросы к файлам (tier 1) могут быть исчерпаны при ok: true. */
+      const tier1 = auth.token ? await client.tier1Note() : null;
+      if (tier1) {
+        rest.tier1 = tier1;
+        if (!rest.hint && (tier1.remaining === 0 || tier1.blockedUntil)) {
+          rest.hint = `${tier1.note} Узлы, рендеры и поиск по файлу через REST до тех пор не работают; комментарии и история (другой tier) — работают.`;
+        }
+      }
+
+      /*
+       * Файл отдельно от аккаунта: «вошёл в редактор» и «файл открывается в редакторе» — разные
+       * вещи. Файл на просмотр выглядел как ready, пока следующий figma_sync не падал по timeout.
+       */
+      let file = null;
+      if (figma) {
+        const { fileKey } = parseFigmaRef(figma);
+        const access = await fileAccess(fileKey, { refresh });
+        const usable = await editorChannel.usable(fileKey, { copy: false });
+        file = {
+          key: fileKey,
+          ...(access ? { role: access.role, linkAccess: access.linkAccess, ...(access.name ? { name: access.name } : {}) } : {}),
+          editor: { usable, ...(await editorChannel.fileStatus(fileKey)) },
+        };
+        const advice = await channelAdvice(fileKey);
+        if (advice) file.advice = advice;
+      }
 
       return json({
         rest,
         editor,
+        ...(file ? { file } : {}),
         api: await checkFigmaApi(),
         cache: { files: await cachedFiles() },
       });
@@ -823,10 +1019,17 @@ export function register(server) {
         css: z.boolean().optional().describe(d('Добавить CSS, который считает сама Figma. Только канал редактора, около 13 мс на узел')),
         page: z.string().optional().describe(d('Ссылка без node-id: кадры одной страницы по имени или id')),
         offset: z.number().optional().describe(d('С page: с какого кадра продолжить')),
+        duplicate: z
+          .string()
+          .optional()
+          .describe(
+            d('Файл открыт только на просмотр: сделать копию в черновики этой команды аккаунта стенда и снимать с неё. Команду называет человек; пустая строка — список команд'),
+          ),
       },
     },
-    async ({ figma, refresh = false, channel = 'auto', css = false, page, offset = 0 }) => {
+    async ({ figma, refresh = false, channel = 'auto', css = false, page, offset = 0, duplicate }) => {
       const client = getRestClient();
+      const copies = duplicate === undefined ? null : await duplicateFiles(figma, duplicate);
       const result = await syncFigma(figma, { refresh, client, editor: editorChannel, channel, css, page, offset });
       rememberScreens(result);
       /*
@@ -839,8 +1042,10 @@ export function register(server) {
        */
       return json({
         ...result,
+        ...(copies ? { duplicated: copies } : {}),
         ...suggestWidths(result),
         budget: (await client.budget()).tiers,
+        ...(await restBudgetNote(client, result.requests)),
         guide: t({
           ru: 'Порядок работы по макету — help(guide: "index"), дальше по одной фазе; каждая называет следующую. Разведка кадров — фаза 1, help(guide: "frames").',
           en: 'The order of work on a design is help(guide: "index"), then one phase at a time; each names the next. Reading the frames is phase 1, help(guide: "frames").',
@@ -867,10 +1072,24 @@ export function register(server) {
         hidden: z.boolean().optional().describe(d('Показывать скрытые слои')),
         limit: z.number().optional().describe(d('По умолчанию 200 строк outline, 60 узлов css или 100 текстов')),
         offset: z.number().optional().describe(d('С какой записи продолжить: значение из подсказки note')),
+        channel: z
+          .enum(['auto', 'ui'])
+          .optional()
+          .describe(d('ui — значения с панели свойств интерфейса Figma, когда файл открыт только на просмотр; auto переходит на него сам')),
       },
     },
-    async ({ figma, mode = 'outline', depth, hidden = false, limit, offset = 0 }) => {
-      const { snapshot, node, fileKey, requests } = await ensureNode(figma, { client: getRestClient(), editor: editorChannel });
+    async ({ figma, mode = 'outline', depth, hidden = false, limit, offset = 0, channel = 'auto' }) => {
+      if (channel === 'ui') return json(await runUiInspect(figma, { depth: depth ?? 1, limit: limit ?? 25 }));
+      let found;
+      try {
+        found = await ensureNode(figma, { client: getRestClient(), editor: editorChannel });
+      } catch (err) {
+        /* Снимок не снять ничем, а панель интерфейса открыта: лучше её значения, чем отказ. */
+        const why = await uiFallbackReason(parseFigmaRef(figma).fileKey);
+        if (!why) throw err;
+        return json(await runUiInspect(figma, { depth: Math.min(depth ?? 1, 2), limit: limit ?? 25, why }));
+      }
+      const { snapshot, node, fileKey, requests } = found;
       const head = {
         ref: refOf(fileKey, node.id),
         ...pathOf(snapshot, node.id),
@@ -920,8 +1139,8 @@ export function register(server) {
     {
       title: t({ ru: 'Спецификация блока', en: 'Block specification' }),
       description: t({
-        ru: 'Всё про узел одним вызовом: дерево слоёв с раскладкой и краской, стили, полные тексты и список ассетов с тем, что каждому нужно — svg, картинка или рендер. Заменяет связку figma_inspect в трёх режимах и снимает вопрос «что отсюда скачивать». Запросов в Figma не тратит: считает по снимку.',
-        en: 'Everything about a node in one call: the layer tree with layout and paint, styles, full texts, and the asset list with what each one needs — svg, image or render. Replaces the figma_inspect trio and settles the question of what to export from here. Spends no Figma requests: it reads the snapshot.',
+        ru: 'Всё про узел одним вызовом: дерево слоёв с раскладкой и краской, стили, полные тексты и список ассетов с тем, что каждому нужно — svg, картинка или рендер. Заменяет связку figma_inspect в трёх режимах и снимает вопрос «что отсюда скачивать». Считает по снимку: в Figma идёт, только если узла в снимке ещё нет.',
+        en: 'Everything about a node in one call: the layer tree with layout and paint, styles, full texts, and the asset list with what each one needs — svg, image or render. Replaces the figma_inspect trio and settles the question of what to export from here. Reads the snapshot: it calls Figma only when the node is not in the snapshot yet.',
       }),
       inputSchema: {
         figma: z.string().describe(d('Узел: ссылка figma.com или запись ключ:id')),
@@ -1247,6 +1466,12 @@ export function register(server) {
         tolerance: z.number().optional().describe(d('Допуск смещения в пикселях. По умолчанию 2')),
         threshold: z.number().optional().describe(d('Допустимое расхождение в процентах пикселей')),
         limit: z.number().optional().describe(d('Сколько строк или записей показать')),
+        image: z
+          .string()
+          .optional()
+          .describe(
+            d('Готовый PNG кадра вместо рендера Figma: lt://artifacts/… или http(s). Без снимка узла — только mode: "pixel" по кадру целиком'),
+          ),
       },
     },
     async (args) => json(await runFigmaCompare(args)),
@@ -1548,8 +1773,8 @@ export function register(server) {
     {
       title: t({ ru: 'Выгрузка из макета', en: 'Export from the design' }),
       description: t({
-        ru: 'Файлы из макета в артефакты с постоянными ссылками: render — PNG узла, высокие кадры режутся на читаемые части, страница Figma — плиткой; svg — иконки с currentColor или контур заливки; image — растровые заливки, кадрированные как в макете.',
-        en: 'Files from the design into artifacts with permanent links: render — a PNG of a node, tall frames cut into readable parts, a Figma page as tiles; svg — icons with currentColor or a fill outline; image — raster fills cropped as in the design.',
+        ru: 'Файлы из макета в артефакты с постоянными ссылками: render — PNG узла, высокие кадры режутся на читаемые части, страница Figma — плиткой; svg — иконки с currentColor или контур заливки; image — растровые заливки, кадрированные как в макете. Файл открыт только на просмотр — выгрузка кнопкой Export интерфейса Figma.',
+        en: 'Files from the design into artifacts with permanent links: render — a PNG of a node, tall frames cut into readable parts, a Figma page as tiles; svg — icons with currentColor or a fill outline; image — raster fills cropped as in the design. A view-only file is exported with the Export button of the Figma interface.',
       }),
       inputSchema: {
         figma: refsSchema,
@@ -1577,15 +1802,35 @@ export function register(server) {
           .optional()
           .describe(d('Для svg: fill — контур заливки без обводки')),
         dropBackground: z.boolean().optional().describe(d('Для svg трейса растра: убрать светлую подложку кадра')),
+        channel: z
+          .enum(['auto', 'ui'])
+          .optional()
+          .describe(d('ui — кнопкой Export интерфейса Figma (render, svg); auto переходит сам')),
       },
     },
-    async ({ figma, kind = 'render', scale, clip, inline = false, parts = 'auto', geometry = 'render', dropBackground = false }) => {
+    async ({ figma, kind = 'render', scale, clip, inline = false, parts = 'auto', geometry = 'render', dropBackground = false, channel = 'auto' }) => {
+      if (channel === 'ui') {
+        if (kind === 'image') throw new Error('Канал ui выгружает только render и svg: исходники заливок кнопка Export не отдаёт.');
+        return json(await runUiExport(figma, { kind, scale: scale ?? 1 }));
+      }
       const options = { client: getRestClient(), editor: editorChannel };
-      if (kind === 'svg') return json(await exportSvg(figma, { ...options, geometry, dropBackground }));
-      if (kind === 'image') return json(await exportImages(figma, { ...options, scales: scale ? [scale] : [1, 2] }));
+      const withBudget = async (res) => ({ ...res, ...(await restBudgetNote(options.client, res.requests)) });
+      /* Рендер не снять ничем, а файл открыт на просмотр — выгрузка той же кнопкой Export, что у человека. */
+      const viaUi = async (run) => {
+        try {
+          return await run();
+        } catch (err) {
+          const why = kind !== 'image' && !clip ? await uiFallbackReason(parseFigmaRef(figma[0]).fileKey, { exporting: true }) : null;
+          if (!why) throw err;
+          return runUiExport(figma, { kind, scale: scale ?? 1, why });
+        }
+      };
+      if (kind === 'svg') return json(await viaUi(async () => withBudget(await exportSvg(figma, { ...options, geometry, dropBackground }))));
+      if (kind === 'image') return json(await withBudget(await exportImages(figma, { ...options, scales: scale ? [scale] : [1, 2] })));
 
       if (clip && figma.length !== 1) throw new Error('clip относится к одному узлу: передайте ровно одну ссылку.');
-      const result = await exportRender(figma, { ...options, scale, clip, parts });
+      const result = await viaUi(async () => withBudget(await exportRender(figma, { ...options, scale, clip, parts })));
+      if (result.channel === 'ui') return json(result);
       const content = [{ type: 'text', text: JSON.stringify(result) }, ...linkBlocks(result)];
       if (inline) {
         /* Не больше трёх картинок: части высокого кадра по отдельности читаются, а десяток разом

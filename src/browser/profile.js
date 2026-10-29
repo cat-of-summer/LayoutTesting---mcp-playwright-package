@@ -207,6 +207,8 @@ export function contextOptions(profile) {
     ...(p.hasTouch ? { hasTouch: true } : {}),
     ...(p.isMobile ? { isMobile: true } : {}),
     ignoreHTTPSErrors: true,
+    /* Скачивания ловит browser/downloads.js и кладёт в артефакты; без этого флага их нет вовсе. */
+    acceptDownloads: true,
     ...(p.httpCredentials ? { httpCredentials: p.httpCredentials } : {}),
     ...(p.extraHTTPHeaders ? { extraHTTPHeaders: p.extraHTTPHeaders } : {}),
     ...(p.storageState ? { storageState: p.storageState } : {}),

@@ -58,6 +58,16 @@ export const RATE_LIMITS = {
   low: { perMinute: { 2: 5, 3: 10 }, tier1PerMonth: 20 },
 };
 
+/** Тип места из FIGMA_SEAT → тип лимита Figma; неизвестное значение — null. */
+export function seatLimitType(seat) {
+  if (seat === 'view' || seat === 'collab') return 'low';
+  if (seat === 'full' || seat === 'dev') return 'high';
+  return null;
+}
+
+/** С какого остатка месячного лимита tier 1 предупреждать заранее. */
+export const LOW_BUDGET = 5;
+
 export function endpointPath(name, params = {}) {
   const spec = ENDPOINTS[name];
   if (!spec) throw new Error(`Неизвестный эндпоинт Figma: ${name}`);

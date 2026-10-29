@@ -6,8 +6,10 @@
  *
  *   - каждый запрос записывается в окно своего tier до отправки, так что минутный лимит
  *     соблюдается без единого 429;
- *   - тип места и тариф запоминаются из заголовков ответа — у места View/Collab запросы к файлам
- *     считаются в месяц, и продолжать тратить их вслепую нельзя;
+ *   - тип места и тариф запоминаются из заголовков ответа 429 — других ответов с ними Figma не
+ *     шлёт (проверено 2026-10-29 на /v1/me и /meta). Пока тип неизвестен, запросы к файлам
+ *     считаются по месту View, двадцать в месяц: на нём стенд однажды потратил 58 запросов,
+ *     прежде чем узнал, что место не Full. FIGMA_SEAT задаёт тип сразу;
  *   - после 429 время до повтора сохраняется, и следующий вызов отказывает сразу, не тратя
  *     попытку на заведомый отказ;
  *   - учёт лежит в state/figma/limits.json и переживает перезапуск стенда.
@@ -18,7 +20,7 @@
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import { DIRS, FIGMA } from '../constants.js';
-import { ENDPOINTS, RATE_LIMITS, endpointPath } from './api.js';
+import { ENDPOINTS, LOW_BUDGET, RATE_LIMITS, endpointPath, seatLimitType } from './api.js';
 import { redact, resolveToken } from './auth.js';
 
 const MINUTE = 60_000;
@@ -36,6 +38,17 @@ export class FigmaApiError extends Error {
 const EDITOR_HINT =
   'Узлы и рендеры можно снять через канал редактора, у него лимита нет: figma_status покажет, доступен ли он.';
 
+/*
+ * Что посоветовать, когда REST отказал по лимиту. Совет зависит от состояния редактора для
+ * этого файла, а клиент REST о редакторе не знает: провайдер подключает src/figma/access.js.
+ * Шаблонный совет «возьмите редактор» отправлял агента в канал, который уже лежал в error.
+ */
+let hintProvider = null;
+
+export function setRestHint(fn) {
+  hintProvider = fn;
+}
+
 export function createRestClient({
   fetchImpl = (...args) => globalThis.fetch(...args),
   token = resolveToken,
@@ -44,8 +57,20 @@ export function createRestClient({
   sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
   maxWaitMs = FIGMA.maxWaitMs,
   apiBase = FIGMA.apiBase,
+  seat = FIGMA.seat,
+  hint = null,
 } = {}) {
   let budget = null;
+
+  async function advice(ctx) {
+    const provider = hint ?? hintProvider;
+    if (!provider) return EDITOR_HINT;
+    try {
+      return (await provider(ctx)) || '';
+    } catch {
+      return EDITOR_HINT;
+    }
+  }
 
   async function load() {
     if (budget) return budget;
@@ -71,14 +96,25 @@ export function createRestClient({
 
   const monthKey = (ms) => new Date(ms).toISOString().slice(0, 7);
 
-  /* Пока тип места неизвестен, считаем по минимальному тарифу места Full: это строже любого
-     другого места Full и не мешает, если место на деле View — месячный счёт ведётся всё равно. */
+  /** Тип лимита: сказанный Figma в 429, иначе заданный FIGMA_SEAT, иначе неизвестен (null). */
+  const limitType = () => budget.rateLimitType ?? seatLimitType(seat);
+
+  /* Пока тип места неизвестен, действует строжайшее из обоих: минутный лимит места Full на
+     Starter, минутный и месячный лимиты места View. */
   function perMinute(tier) {
-    if (budget.rateLimitType === 'low') return tier === 1 ? null : RATE_LIMITS.low.perMinute[tier];
-    return (RATE_LIMITS.high[budget.planTier] ?? RATE_LIMITS.high.starter)[tier];
+    const type = limitType();
+    const high = (RATE_LIMITS.high[budget.planTier] ?? RATE_LIMITS.high.starter)[tier];
+    if (type === 'high') return high;
+    const low = tier === 1 ? null : RATE_LIMITS.low.perMinute[tier];
+    if (type === 'low') return low;
+    return low ? Math.min(low, high) : high;
   }
 
-  async function acquire(tier, endpoint) {
+  /** Месячный потолок tier 1: у места View/Collab и пока тип неизвестен. */
+  const perMonth = () => (limitType() === 'high' ? null : RATE_LIMITS.low.tier1PerMonth);
+  const usedThisMonth = (at, tier = 1) => budget.month[monthKey(at)]?.[tier] ?? 0;
+
+  async function acquire(tier, endpoint, fileKey = null) {
     await load();
     let at = now();
 
@@ -87,7 +123,7 @@ export function createRestClient({
       const wait = blocked - at;
       if (wait > maxWaitMs) {
         throw new FigmaApiError(
-          `Figma уже отказала по лимиту tier ${tier}; повтор не раньше ${budget.blockedUntil[tier]}. ${EDITOR_HINT}`,
+          `Figma уже отказала по лимиту tier ${tier}; повтор не раньше ${budget.blockedUntil[tier]}. ${await advice({ fileKey, tier })}`,
           { status: 429, endpoint, retryAfter: Math.ceil(wait / 1000) },
         );
       }
@@ -95,14 +131,13 @@ export function createRestClient({
       at = now();
     }
 
-    if (tier === 1 && budget.rateLimitType === 'low') {
-      const used = budget.month[monthKey(at)]?.[1] ?? 0;
-      if (used >= RATE_LIMITS.low.tier1PerMonth) {
-        throw new FigmaApiError(
-          `Месячный лимит места View/Collab исчерпан: ${used} из ${RATE_LIMITS.low.tier1PerMonth} запросов к файлам и рендерам. ${EDITOR_HINT}`,
-          { status: 429, endpoint },
-        );
-      }
+    const cap = tier === 1 ? perMonth() : null;
+    if (cap && usedThisMonth(at) >= cap) {
+      const used = usedThisMonth(at);
+      const why = limitType()
+        ? `Месячный лимит места View/Collab исчерпан: ${used} из ${cap} запросов к файлам и рендерам.`
+        : `Тип места Figma неизвестен (Figma называет его только в отказе 429), поэтому запросы к файлам и рендерам считаются как у места View: ${used} из ${cap} за месяц. Если у аккаунта место Full или Dev, FIGMA_SEAT=full в .env стенда снимает этот потолок.`;
+      throw new FigmaApiError(`${why} ${await advice({ fileKey, tier })}`, { status: 429, endpoint });
     }
 
     const limit = perMinute(tier);
@@ -175,7 +210,7 @@ export function createRestClient({
       url.searchParams.set(key, Array.isArray(value) ? value.join(',') : String(value));
     }
 
-    await acquire(spec.tier, name);
+    await acquire(spec.tier, name, params.key ?? null);
     let res;
     try {
       res = await fetchImpl(url, { headers: { 'X-Figma-Token': auth.token }, signal: AbortSignal.timeout(90_000) });
@@ -195,7 +230,7 @@ export function createRestClient({
       }
       const low = budget.rateLimitType === 'low' ? ' Место View/Collab: лимит на файлы и рендеры месячный.' : '';
       throw new FigmaApiError(
-        `Figma отказала по лимиту на ${name} (tier ${spec.tier}): повтор через ${retryAfter} с.${low} ${EDITOR_HINT}`,
+        `Figma отказала по лимиту на ${name} (tier ${spec.tier}): повтор через ${retryAfter} с.${low} ${await advice({ fileKey: params.key ?? null, tier: spec.tier })}`,
         { status: 429, endpoint: name, retryAfter },
       );
     }
@@ -219,19 +254,49 @@ export function createRestClient({
     const tiers = {};
     for (const tier of [1, 2, 3]) {
       const blocked = Date.parse(budget.blockedUntil[tier] || '') || 0;
+      const cap = tier === 1 ? perMonth() : null;
       tiers[tier] = {
         lastMinute: (budget.calls[tier] ?? []).filter((ts) => at - ts < MINUTE).length,
         perMinute: perMinute(tier),
-        thisMonth: budget.month[monthKey(at)]?.[tier] ?? 0,
-        ...(tier === 1 && budget.rateLimitType === 'low' ? { perMonth: RATE_LIMITS.low.tier1PerMonth } : {}),
+        thisMonth: usedThisMonth(at, tier),
+        ...(cap ? { perMonth: cap, remaining: Math.max(0, cap - usedThisMonth(at, tier)) } : {}),
         ...(blocked > at ? { blockedUntil: budget.blockedUntil[tier] } : {}),
       };
     }
+    const type = limitType();
     return {
-      rateLimitType: budget.rateLimitType ?? null,
+      rateLimitType: type ?? null,
+      ...(budget.rateLimitType
+        ? {}
+        : type
+          ? { source: 'FIGMA_SEAT' }
+          : { assumed: 'View: Figma называет тип места только в отказе 429; FIGMA_SEAT в .env стенда задаёт его заранее' }),
       planTier: budget.planTier ?? null,
       tiers,
       ...(budget.last429 ? { last429: budget.last429 } : {}),
+    };
+  }
+
+  /**
+   * Остаток запросов к файлам, когда о нём стоит сказать: он мал, исчерпан или tier 1 закрыт до
+   * времени. null — говорить не о чем.
+   */
+  async function tier1Note() {
+    await load();
+    const at = now();
+    const blocked = Date.parse(budget.blockedUntil[1] || '') || 0;
+    const cap = perMonth();
+    const remaining = cap ? Math.max(0, cap - usedThisMonth(at)) : null;
+    if (blocked > at) {
+      return { remaining, blockedUntil: budget.blockedUntil[1], note: `Запросы к файлам и рендерам закрыты до ${budget.blockedUntil[1]}.` };
+    }
+    if (remaining === null || remaining > LOW_BUDGET) return null;
+    return {
+      remaining,
+      perMonth: cap,
+      note: remaining
+        ? `Осталось ${remaining} из ${cap} запросов к файлам и рендерам в этом месяце: каждый figma_sync, figma_export и figma_compare без кэша тратит один.`
+        : `Запросы к файлам и рендерам на этот месяц исчерпаны (${cap}).`,
     };
   }
 
@@ -270,6 +335,7 @@ export function createRestClient({
     versions: (key, { before, pageSize = 50 } = {}) =>
       request('versions', { params: { key }, query: { before, page_size: pageSize } }),
     budget: summary,
+    tier1Note,
     download,
   };
 }

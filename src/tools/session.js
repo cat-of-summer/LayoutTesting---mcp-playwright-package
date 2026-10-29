@@ -22,6 +22,7 @@ import {
 import { captureFrames } from '../browser/frames.js';
 import { ACTIONS, perform } from '../browser/act.js';
 import { MAX_STEPS, runSteps } from '../browser/batch.js';
+import { takeDownloads } from '../browser/downloads.js';
 import { diffBoxes, settleBoxes } from '../browser/boxes.js';
 import { profileKey } from '../browser/profile.js';
 import { evaluateOnPage } from '../browser/evaluate.js';
@@ -125,7 +126,11 @@ export function register(server) {
         value: z
           .string()
           .optional()
-          .describe(d('Текст для fill и type, клавиша для press, down и up, значение для select, accept | dismiss | текст ответа для dialog')),
+          .describe(d('Текст для fill и type, клавиша для press, down и up, значение для select, accept | dismiss | текст ответа для dialog, download для wait — дождаться скачивания')),
+        expression: z
+          .string()
+          .optional()
+          .describe(d('Для wait: ждать, пока выражение на странице не станет истинным — вместо паузы наугад')),
         files: z
           .array(z.string())
           .optional()
@@ -461,8 +466,11 @@ export function register(server) {
  * live reload дев-сервера, редирект, meta refresh, — и без этого поля «модалка закрыта» после
  * клика неотличимо от «клик не сработал». Поле появляется, только если переход был.
  */
-function done(session, payload) {
+async function done(session, payload) {
   const navigated = takeNavigationSince(session);
+  /* Файлы, которые страница отдала кнопкой «Скачать», — в ответе того действия, после
+     которого они появились, ссылками на артефакты. */
+  const downloads = await takeDownloads(session);
   /* Пакет, оборванный на шаге, — ошибка вызова, но с выполненными шагами в ответе: иначе
      агент повторил бы их вслепую по уже изменённой странице. */
   const failed = Boolean(payload.failed);
@@ -471,6 +479,7 @@ function done(session, payload) {
     ...payload,
     url: session.page.url(),
     ...(navigated ? { navigatedSince: navigated } : {}),
+    ...(downloads ?? {}),
   });
   return failed ? { ...result, isError: true } : result;
 }
