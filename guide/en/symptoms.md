@@ -53,6 +53,7 @@ A quick-choice table: what you came with and what to look at it with.
 | The element is invisible or covered | `element_layers` |
 | It broke on a narrow screen | `layout_stress` with the `widths` scenario |
 | Never checked between the design widths | `layout_audit` with `widths` from `figma_sync.widths.suggested` |
+| A ragged row: one block shorter than its neighbours, a card button off the line, an edge a couple of pixels off | `alignment` in the answer of `layout_audit` and `page_ready` — hints, look at each on a screenshot |
 | Hover, intro, a transition is invisible | a session with `animations: "allow"`; the intro — `browser_goto` with `frames` |
 | A style is overridden by something with `!important` that is not mine | `overriddenByStand` in `computed_styles` and `matched_rules` — a frozen session |
 | The validator complains about library conventions | `validate_html` with `ignore` — the noise goes to `ignored` |

@@ -159,6 +159,8 @@ export function summarize(results, errors = {}) {
     documentOverflow: results.layout?.issues?.documentOverflow ? true : false,
     /* Разбивка по категориям: «эвристики вёрстки: 7» не говорило, что из семи две — подпись под картинкой. */
     layoutByCategory: layoutBreakdown(results.layout),
+    /* Выпадение из ряда — подсказка посмотреть глазами: в вердикт и clean не входит. */
+    alignmentHints: results.layout?.alignment?.total ?? null,
     axeViolations: results.axe?.total ?? null,
     pa11yErrors: results.pa11y?.byType?.error ?? null,
     htmlErrors: results.html?.byType?.error ?? null,
@@ -183,6 +185,8 @@ export function summarize(results, errors = {}) {
    */
   s.clean = problems.length === 0;
   s.verdict = s.clean ? 'проблем не найдено' : problems.join('; ');
+  /* «Проблем не найдено» читают как «смотреть нечего»: подсказки называются рядом, вердикт не трогают. */
+  if (s.alignmentHints) s.lookAt = `выпадение из ряда: ${s.alignmentHints} — посмотреть глазами (results.layout.alignment)`;
   return s;
 }
 

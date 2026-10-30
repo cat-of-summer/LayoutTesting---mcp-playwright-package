@@ -1,0 +1,39 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Фикстура: почти-совпадение кромок</title>
+<!-- Колонка полей с общей левой кромкой, у третьего поля лишний margin-left: 4px.
+     Ряд плиток с общим верхом, у второй margin-top: 3px. -->
+<style>
+  *, *::before, *::after { box-sizing: border-box; }
+  body { margin: 0; font: 15px/22px system-ui, sans-serif; color: #16181d; background: #fff; }
+  main { max-width: 720px; margin: 0 auto; padding: 24px 16px; }
+  .fields { margin-bottom: 32px; }
+  .field { margin-bottom: 16px; }
+  .field label { display: block; margin-bottom: 4px; font-weight: 600; }
+  .field input { display: block; width: 100%; height: 40px; padding: 0 12px; border: 1px solid #9aa2b1; border-radius: 8px; font: inherit; }
+  .field--shifted { margin-left: 4px; }
+  .tiles { display: flex; gap: 16px; align-items: flex-start; }
+  .tile { flex: 1; height: 80px; padding: 12px; border: 1px solid #d0d5dd; border-radius: 8px; background: #f6f8fa; }
+  .tile--low { margin-top: 3px; }
+</style>
+</head>
+<body>
+<main>
+  <form class="fields" id="fields" novalidate>
+    <div class="field"><label for="f-name">Имя</label><input id="f-name" type="text"></div>
+    <div class="field"><label for="f-mail">Почта</label><input id="f-mail" type="email"></div>
+    <div class="field field--shifted" data-expect="nearMiss"><label for="f-phone">Телефон</label><input id="f-phone" type="tel"></div>
+    <div class="field"><label for="f-city">Город</label><input id="f-city" type="text"></div>
+  </form>
+  <div class="tiles" id="tiles">
+    <div class="tile">Заказы</div>
+    <div class="tile tile--low" data-expect="nearMiss">Клиенты</div>
+    <div class="tile">Склад</div>
+    <div class="tile">Отчёты</div>
+  </div>
+</main>
+</body>
+</html>

@@ -1,0 +1,32 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Фикстура: сетка карточек, одна не растянута</title>
+<!-- Сетка 3×2, ячейки тянутся на высоту ряда. У второй ячейки второго ряда align-self: start —
+     она короче соседей по ряду. -->
+<style>
+  *, *::before, *::after { box-sizing: border-box; }
+  body { margin: 0; font: 15px/22px system-ui, sans-serif; color: #16181d; background: #fff; }
+  main { max-width: 960px; margin: 0 auto; padding: 24px 16px; }
+  .grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 16px; }
+  .tile { padding: 16px; border: 1px solid #d0d5dd; border-radius: 8px; background: #fff; }
+  .tile h3 { margin: 0 0 8px; font-size: 16px; line-height: 24px; }
+  .tile p { margin: 0; }
+  .tile--start { align-self: start; }
+</style>
+</head>
+<body>
+<main>
+  <div class="grid">
+    <div class="tile"><h3>Хостинг</h3><p>Виртуальные серверы с почасовой оплатой.</p></div>
+    <div class="tile"><h3>Домены</h3><p>Регистрация и продление в зонах .ru и .com.</p></div>
+    <div class="tile"><h3>Почта</h3><p>Корпоративные ящики на своём домене.</p></div>
+    <div class="tile"><h3>Резервные копии</h3><p>Ежедневные снимки дисков с хранением тридцать дней и восстановлением в один клик из панели.</p></div>
+    <div class="tile tile--start" data-expect="rowHeight"><h3>DNS</h3><p>Быстрые записи.</p></div>
+    <div class="tile"><h3>Мониторинг</h3><p>Проверка доступности каждую минуту, уведомления в мессенджер и на почту, отчёты за месяц.</p></div>
+  </div>
+</main>
+</body>
+</html>

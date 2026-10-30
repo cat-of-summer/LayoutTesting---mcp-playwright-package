@@ -1,0 +1,280 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Фикстура: разная высота по замыслу</title>
+<!--
+  Ни одной находки здесь быть не должно: каждая секция — расхождение размеров, которое задумано
+  или глазу не видно. Если проверка находит что-то здесь, ложно срабатывает она, а не вёрстка.
+-->
+<style>
+  *, *::before, *::after { box-sizing: border-box; }
+  body { margin: 0; font: 15px/22px system-ui, sans-serif; color: #16181d; background: #fff; }
+  main { max-width: 960px; margin: 0 auto; padding: 24px 16px; }
+  section { margin-bottom: 40px; }
+  h2 { margin: 0 0 12px; font-size: 18px; }
+  p { margin: 0; }
+  .framed { padding: 16px; border: 1px solid #d0d5dd; border-radius: 8px; }
+
+  /* Текстовые колонки без рамок: низ разный, но глазу не виден. */
+  .cols { display: flex; gap: 24px; align-items: flex-start; }
+  .col { flex: 1; }
+
+  /* Тарифы по центру: средний выше по замыслу. */
+  .plans { display: flex; gap: 16px; align-items: center; }
+  .plan { flex: 1; padding: 24px 16px; border: 1px solid #d0d5dd; border-radius: 12px; }
+  .plan--featured { padding: 48px 16px; border-color: #1a4fd6; }
+
+  /* Masonry на колонках CSS: все высоты разные. */
+  .masonry { columns: 3; column-gap: 16px; }
+  .brick { break-inside: avoid; margin-bottom: 16px; border: 1px solid #d0d5dd; border-radius: 8px; background: #f6f8fa; }
+
+  /* Сетка с ячейкой на две строки. */
+  .bento { display: grid; grid-template-columns: repeat(3, 1fr); grid-auto-rows: 100px; gap: 16px; }
+  .cell { border: 1px solid #d0d5dd; border-radius: 8px; padding: 12px; }
+  .cell--tall { grid-row: span 2; }
+
+  /* Тулбар: кнопки разного размера по центру. */
+  .toolbar { display: flex; align-items: center; gap: 8px; }
+  .btn { display: inline-flex; align-items: center; height: 32px; padding: 0 12px; border: 1px solid #d0d5dd; border-radius: 6px; background: #f6f8fa; font: inherit; }
+  .btn--sm { height: 28px; padding: 0 8px; }
+  .toolbar select { height: 32px; font: inherit; }
+
+  /* Неполная последняя строка флекса с переносом. */
+  .wrap { display: flex; flex-wrap: wrap; gap: 16px; }
+  .wrap .framed { width: calc((100% - 32px) / 3); height: 100px; }
+
+  /* Вертикальный список карточек: высота от контента законна. */
+  .list { display: flex; flex-direction: column; gap: 12px; }
+
+  /* Карточки с прижатыми кнопками: все на одной линии. */
+  .cards { display: grid; grid-template-columns: repeat(3, 1fr); gap: 24px; }
+  .card { display: flex; flex-direction: column; padding: 20px; border: 1px solid #d0d5dd; border-radius: 12px; }
+  .card h3 { margin: 0 0 8px; font-size: 18px; line-height: 26px; }
+  .card p { margin: 0 0 16px; }
+  .card .more { display: inline-flex; align-self: flex-start; height: 40px; align-items: center; padding: 0 16px; border-radius: 8px; background: #1a4fd6; color: #fff; text-decoration: none; }
+  .cards--pinned .more { margin-top: auto; }
+
+  /* Товары: картинки разной высоты, цена прижата у всех. */
+  .goods { display: grid; grid-template-columns: repeat(3, 1fr); gap: 24px; }
+  .good { display: flex; flex-direction: column; border: 1px solid #d0d5dd; border-radius: 12px; overflow: hidden; }
+  .good-pic { display: block; width: 100%; background: #dfe8ff; }
+  .good-name { margin: 12px 16px 8px; font-size: 16px; }
+  .good-price { margin: auto 16px 16px; font-weight: 700; }
+
+  /* Цифры: подписи разной длины, ряд растянут. */
+  .stats { display: flex; gap: 16px; }
+  .stat { flex: 1; padding: 16px; border-radius: 8px; background: #f6f8fa; }
+
+  /* Подвал: колонки ссылок разной длины, без рамок. */
+  .footer { display: flex; gap: 32px; align-items: flex-start; }
+  .footer-col ul { margin: 0; padding: 0; list-style: none; }
+
+  /* Чипы с иконкой и без, перенос строк. */
+  .chips { display: flex; flex-wrap: wrap; gap: 8px; }
+  .chip { display: inline-flex; align-items: center; gap: 4px; height: 28px; padding: 0 10px; border: 1px solid #d0d5dd; border-radius: 14px; }
+
+  /* Субпиксельный шум: высоты расходятся меньше чем на два пикселя. */
+  .noise { display: flex; gap: 16px; align-items: flex-start; }
+  .noise .framed { flex: 1; }
+
+  /* Вкладки: у активной нижняя граница, у остальных рамки нет. */
+  .tabs { display: flex; gap: 4px; align-items: flex-start; }
+  .tab { padding: 8px 12px; border: 0; background: none; font: inherit; }
+  .tab--active { border-bottom: 2px solid #1a4fd6; }
+
+  /* Выделенная карточка увеличена transform: симметрично, центр общий. */
+  .promo { display: flex; gap: 24px; padding: 16px 0; }
+  .promo .framed { flex: 1; height: 120px; }
+  .promo .framed--hot { transform: scale(1.05); }
+
+  /* Поля в две колонки, у одного сообщение об ошибке. */
+  .pairs { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+  .pairs input { display: block; width: 100%; height: 36px; }
+  .pairs .error { margin: 4px 0 0; color: #b42318; font-size: 13px; }
+
+  /* display: contents: обёртка прозрачна, соседи — ссылки. */
+  .menu { display: flex; gap: 8px; margin: 0; padding: 0; list-style: none; }
+  .menu li { display: contents; }
+  .menu a { display: block; padding: 8px 12px; border: 1px solid #d0d5dd; border-radius: 6px; }
+</style>
+</head>
+<body>
+<main>
+  <section id="cols">
+    <h2>Колонки текста</h2>
+    <div class="cols">
+      <div class="col"><p>Мы собираем заказы на складе в Подольске и отгружаем их в день оплаты, если она пришла до трёх часов дня.</p></div>
+      <div class="col"><p>Мы собираем заказы на складе в Подольске и отгружаем их в день оплаты, если она пришла до трёх часов дня.</p></div>
+      <div class="col"><p>Возврат — в течение двух недель.</p></div>
+    </div>
+  </section>
+
+  <section id="plans">
+    <h2>Тарифы</h2>
+    <div class="plans">
+      <div class="plan"><h3>Базовый</h3><p>990 ₽</p></div>
+      <div class="plan plan--featured"><h3>Оптимальный</h3><p>1 990 ₽</p></div>
+      <div class="plan"><h3>Максимум</h3><p>3 990 ₽</p></div>
+    </div>
+  </section>
+
+  <section id="masonry">
+    <h2>Галерея</h2>
+    <div class="masonry">
+      <div class="brick" style="height: 120px"></div>
+      <div class="brick" style="height: 210px"></div>
+      <div class="brick" style="height: 150px"></div>
+      <div class="brick" style="height: 90px"></div>
+      <div class="brick" style="height: 175px"></div>
+      <div class="brick" style="height: 133px"></div>
+      <div class="brick" style="height: 111px"></div>
+    </div>
+  </section>
+
+  <section id="bento">
+    <h2>Сетка с крупной ячейкой</h2>
+    <div class="bento">
+      <div class="cell cell--tall">Главное</div>
+      <div class="cell">Раз</div>
+      <div class="cell">Два</div>
+      <div class="cell">Три</div>
+      <div class="cell">Четыре</div>
+    </div>
+  </section>
+
+  <section id="toolbar">
+    <h2>Тулбар</h2>
+    <div class="toolbar">
+      <button type="button" class="btn">Сохранить</button>
+      <button type="button" class="btn btn--sm">Ещё</button>
+      <button type="button" class="btn">Отменить</button>
+      <select><option>Все</option><option>Мои</option></select>
+    </div>
+  </section>
+
+  <section id="wrap">
+    <h2>Перенос</h2>
+    <div class="wrap">
+      <div class="framed">1</div><div class="framed">2</div><div class="framed">3</div>
+      <div class="framed">4</div><div class="framed">5</div>
+    </div>
+  </section>
+
+  <section id="list">
+    <h2>Лента</h2>
+    <div class="list">
+      <article class="framed"><h3>Обновление 2.4</h3><p>Новый редактор.</p></article>
+      <article class="framed"><h3>Обновление 2.3</h3><p>Импорт из CSV, экспорт в XLSX, фильтры по датам и сохранённые представления для каждой таблицы.</p></article>
+      <article class="framed"><h3>Обновление 2.2</h3><p>Исправления.</p></article>
+    </div>
+  </section>
+
+  <section id="pinned">
+    <h2>Карточки с прижатыми кнопками</h2>
+    <div class="cards cards--pinned">
+      <article class="card"><h3>Старт</h3><p>Для одного сайта.</p><a class="more" href="#a">Подробнее</a></article>
+      <article class="card"><h3>Бизнес</h3><p>Для команды: несколько сайтов, общий доступ, резервные копии каждый день и приоритетная поддержка.</p><a class="more" href="#b">Подробнее</a></article>
+      <article class="card"><h3>Агентство</h3><p>Для студий: клиентские проекты.</p><a class="more" href="#c">Подробнее</a></article>
+    </div>
+  </section>
+
+  <section id="flow">
+    <h2>Карточки без прижатия: кнопки идут за текстом</h2>
+    <div class="cards">
+      <article class="card"><h3>Старт</h3><p>Для одного сайта.</p><a class="more" href="#d">Подробнее</a></article>
+      <article class="card"><h3>Бизнес</h3><p>Для одного сайта.</p><a class="more" href="#e">Подробнее</a></article>
+      <article class="card"><h3>Агентство</h3><p>Для студий: клиентские проекты в одной панели, отчёты и счета каждому клиенту отдельно.</p><a class="more" href="#f">Подробнее</a></article>
+    </div>
+  </section>
+
+  <section id="goods">
+    <h2>Товары</h2>
+    <div class="goods">
+      <article class="good"><div class="good-pic" style="height: 160px"></div><h3 class="good-name">Кружка</h3><p class="good-price">490 ₽</p></article>
+      <article class="good"><div class="good-pic" style="height: 160px"></div><h3 class="good-name">Футболка с длинным названием в две строки</h3><p class="good-price">1 290 ₽</p></article>
+      <article class="good"><div class="good-pic" style="height: 220px"></div><h3 class="good-name">Плакат</h3><p class="good-price">790 ₽</p></article>
+    </div>
+  </section>
+
+  <section id="stats">
+    <h2>Цифры</h2>
+    <div class="stats">
+      <div class="stat"><b>12</b><p>лет на рынке</p></div>
+      <div class="stat"><b>4 000</b><p>клиентов в сорока городах России и Казахстана</p></div>
+      <div class="stat"><b>24/7</b><p>поддержка</p></div>
+    </div>
+  </section>
+
+  <section id="footer">
+    <h2>Подвал</h2>
+    <div class="footer">
+      <div class="footer-col"><b>Компания</b><ul><li>О нас</li><li>Вакансии</li><li>Блог</li><li>Контакты</li></ul></div>
+      <div class="footer-col"><b>Помощь</b><ul><li>Доставка</li><li>Возврат</li></ul></div>
+      <div class="footer-col"><b>Документы</b><ul><li>Оферта</li><li>Политика</li><li>Реквизиты</li></ul></div>
+    </div>
+  </section>
+
+  <section id="chips">
+    <h2>Чипы</h2>
+    <div class="chips">
+      <span class="chip">Новинки</span>
+      <span class="chip"><svg width="12" height="12" viewBox="0 0 12 12" aria-hidden="true"><circle cx="6" cy="6" r="5"/></svg>Скидки</span>
+      <span class="chip">Подарки</span>
+      <span class="chip">Для дома</span>
+      <span class="chip"><svg width="12" height="12" viewBox="0 0 12 12" aria-hidden="true"><circle cx="6" cy="6" r="5"/></svg>Хиты</span>
+    </div>
+  </section>
+
+  <section id="noise">
+    <h2>Шум</h2>
+    <div class="noise">
+      <div class="framed" style="height: 84px"></div>
+      <div class="framed" style="height: 84px"></div>
+      <div class="framed" style="height: 84px"></div>
+      <div class="framed" style="height: 85.6px"></div>
+    </div>
+  </section>
+
+  <section id="tabs">
+    <h2>Вкладки</h2>
+    <div class="tabs">
+      <button type="button" class="tab tab--active">Обзор</button>
+      <button type="button" class="tab">Отзывы</button>
+      <button type="button" class="tab">Вопросы</button>
+      <button type="button" class="tab">Доставка</button>
+    </div>
+  </section>
+
+  <section id="promo">
+    <h2>Акции</h2>
+    <div class="promo">
+      <div class="framed">Скидка 10%</div>
+      <div class="framed framed--hot">Скидка 30%</div>
+      <div class="framed">Скидка 15%</div>
+    </div>
+  </section>
+
+  <section id="pairs">
+    <h2>Поля в две колонки</h2>
+    <form class="pairs" novalidate>
+      <div class="pair-field"><label>Имя<input type="text"></label></div>
+      <div class="pair-field"><label>Почта<input type="email"></label><p class="error">Неверный адрес</p></div>
+      <div class="pair-field"><label>Телефон<input type="tel"></label></div>
+      <div class="pair-field"><label>Город<input type="text"></label></div>
+    </form>
+  </section>
+
+  <section id="menu">
+    <h2>Меню</h2>
+    <ul class="menu">
+      <li><a href="#m1">Главная</a></li>
+      <li><a href="#m2">Каталог</a></li>
+      <li><a href="#m3">Оплата</a></li>
+      <li><a href="#m4">Контакты</a></li>
+    </ul>
+  </section>
+</main>
+</body>
+</html>

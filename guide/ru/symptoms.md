@@ -53,6 +53,7 @@
 | Элемента не видно, чем-то накрыт | `element_layers` |
 | Поехало на узком экране | `layout_stress` со сценарием `widths` |
 | Между макетными ширинами не проверял | `layout_audit` с `widths` из `figma_sync.widths.suggested` |
+| Ряд рваный: один блок короче соседей, кнопка карточки не на линии, кромка съехала на пару пикселей | `alignment` в ответе `layout_audit` и `page_ready` — подсказки, каждую смотреть на скриншоте |
 | Hover, intro, переход не видно | сессия с `animations: "allow"`; intro — `browser_goto` с `frames` |
 | Стиль перебит чем-то с `!important`, не моим | `overriddenByStand` в `computed_styles` и `matched_rules` — замороженная сессия |
 | Валидатор ругается на соглашения библиотек | `validate_html` с `ignore` — шум отдельно в `ignored` |

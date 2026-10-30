@@ -1,0 +1,43 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Фикстура: кнопка третьей карточки не прижата к низу</title>
+<!-- Три карточки одной высоты (grid тянет). У двух кнопка прижата к низу margin-top: auto,
+     у третьей — нет: она стоит сразу под текстом, выше линии кнопок соседей. -->
+<style>
+  *, *::before, *::after { box-sizing: border-box; }
+  body { margin: 0; font: 15px/22px system-ui, sans-serif; color: #16181d; background: #fff; }
+  main { max-width: 960px; margin: 0 auto; padding: 24px 16px; }
+  .cards { display: grid; grid-template-columns: repeat(3, 1fr); gap: 24px; }
+  .card { display: flex; flex-direction: column; padding: 20px; border: 1px solid #d0d5dd; border-radius: 12px; }
+  .card-title { margin: 0 0 8px; font-size: 18px; line-height: 26px; }
+  .card-text { margin: 0 0 16px; }
+  .btn { display: inline-flex; align-items: center; height: 40px; padding: 0 16px; border-radius: 8px; background: #1a4fd6; color: #fff; text-decoration: none; }
+  .card .btn { margin-top: auto; align-self: flex-start; }
+  .card--plain .btn { margin-top: 0; }
+</style>
+</head>
+<body>
+<main>
+  <div class="cards">
+    <article class="card">
+      <h3 class="card-title">Старт</h3>
+      <p class="card-text">Для одного сайта.</p>
+      <a class="btn" href="#start">Подробнее</a>
+    </article>
+    <article class="card">
+      <h3 class="card-title">Бизнес</h3>
+      <p class="card-text">Для команды: несколько сайтов, общий доступ, резервные копии каждый день и приоритетная поддержка в рабочее время.</p>
+      <a class="btn" href="#business">Подробнее</a>
+    </article>
+    <article class="card card--plain">
+      <h3 class="card-title">Агентство</h3>
+      <p class="card-text">Для студий: клиентские проекты в одной панели.</p>
+      <a class="btn" href="#agency" data-expect="innerAlign">Подробнее</a>
+    </article>
+  </div>
+</main>
+</body>
+</html>

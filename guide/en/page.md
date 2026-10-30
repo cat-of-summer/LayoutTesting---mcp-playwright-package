@@ -8,7 +8,7 @@ ENTRY: every block passed the phase 10 gate in both frames.
 STEPS:
   1. audit — a summary of every check.
   2. figma_compare(page frame) — per frame: semantic and sections: true; coverage without gaps and without notCompared.
-  3. layout_audit(widths: from figma_sync.widths.suggested, states: modals and menus) — scroll, overlaps, clipping, tap targets at every width and in every state.
+  3. layout_audit(widths: from figma_sync.widths.suggested, states: modals and menus) — scroll, overlaps, clipping, tap targets at every width and in every state; alignment — blocks off their neighbours' line — looked at on a screenshot.
   4. interaction_audit in the live session; browser_goto with frames — the intro animation.
   5. a11y_axe + a11y_pa11y; validate_html (ignore — only for library conventions).
   6. page_ready(url, frames: every frame of the page) — runs what 2–4 missed by itself; the "done" report — only with ready: true.
@@ -99,4 +99,5 @@ human. The agent has no right to change brand colors.
 `page_ready` for the page answered `ready: true`. Zero findings in `documentOverflow`, `overlaps`, `clippedText`, `brokenImages`,
 `imagesWithoutDimensions`, `tinyTargets` at every width and in every state (`states`); an empty
 `silent` from `interaction_audit`; `form_audit` with no findings; `coverage` of `figma_compare`
-for every frame without gaps and without `notCompared`; the intro looked at frame by frame. Everything else with a justification.
+for every frame without gaps and without `notCompared`; the intro looked at frame by frame; every `alignment` hint
+of `page_ready` looked at on a screenshot — fixed or named in the report as intended. Everything else with a justification.

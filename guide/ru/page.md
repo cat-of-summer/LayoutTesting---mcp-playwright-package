@@ -8,7 +8,7 @@
 ШАГИ:
   1. audit — сводка по всем проверкам.
   2. figma_compare(кадр страницы) — на каждый кадр: semantic и sections: true; coverage без пробелов и без notCompared.
-  3. layout_audit(widths: из figma_sync.widths.suggested, states: модалки и меню) — скролл, наложения, обрезки, тач-таргеты на каждой ширине и в каждом состоянии.
+  3. layout_audit(widths: из figma_sync.widths.suggested, states: модалки и меню) — скролл, наложения, обрезки, тач-таргеты на каждой ширине и в каждом состоянии; alignment — блоки, выпавшие из линии соседей, — просмотреть на скриншоте.
   4. interaction_audit в живой сессии; browser_goto с frames — стартовая анимация.
   5. a11y_axe + a11y_pa11y; validate_html (ignore — только для соглашений библиотек).
   6. page_ready(url, frames: все кадры страницы) — сам догоняет пропущенное из 2–4; отчёт «готово» — только при ready: true.
@@ -93,4 +93,5 @@ CSS — в поле `css`, новые атрибуты платформы (`popo
 `page_ready` по странице ответил `ready: true`. Ноль находок по `documentOverflow`, `overlaps`, `clippedText`, `brokenImages`,
 `imagesWithoutDimensions`, `tinyTargets` на каждой ширине и в каждом состоянии (`states`); пустой
 `silent` у `interaction_audit`; `form_audit` без находок; `coverage` у `figma_compare` каждого
-кадра без пробелов и без `notCompared`; intro просмотрен по кадрам. Остальное — с обоснованием.
+кадра без пробелов и без `notCompared`; intro просмотрен по кадрам; каждая подсказка `alignment` у
+`page_ready` просмотрена на скриншоте — поправлена или названа в отчёте как задуманная. Остальное — с обоснованием.

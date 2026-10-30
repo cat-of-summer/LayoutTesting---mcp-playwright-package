@@ -63,11 +63,13 @@ const HINTS = [
   {
     groups: ['layout'],
     ru: `- «поехала вёрстка», «съехал блок», «горизонтальный скролл», «текст обрезан», «элементы
-  наложились», «не видно кнопку», «стиль не применяется» — layout_audit, затем element_layers,
-  matched_rules, computed_styles для разбора конкретного элемента;`,
+  наложились», «не видно кнопку», «стиль не применяется», «ряд рваный» — layout_audit, затем
+  element_layers, matched_rules, computed_styles для разбора конкретного элемента; его alignment
+  — блоки, выпавшие из линии соседей: смотреть на скриншоте;`,
     en: `- "layout is broken", "element is misplaced", "horizontal scroll", "text is cut off", "elements
-  overlap", "button is invisible", "my CSS is not applied" — layout_audit first, then
-  element_layers, matched_rules, computed_styles to dig into one element;`,
+  overlap", "button is invisible", "my CSS is not applied", "the row is ragged" — layout_audit first,
+  then element_layers, matched_rules, computed_styles to dig into one element; its alignment lists
+  blocks off their neighbours' line: check them on a screenshot;`,
   },
   {
     groups: ['composite'],

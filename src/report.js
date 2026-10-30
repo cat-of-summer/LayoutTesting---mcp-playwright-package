@@ -44,6 +44,7 @@ function metricRows(cell) {
   const s = cell.summary;
   const rows = [
     ['эвристики вёрстки', s.layoutIssues],
+    ['выпадение из ряда (глазами)', s.alignmentHints],
     ['горизонтальный скролл', s.documentOverflow ? 'да' : null],
     ['axe', s.axeViolations],
     ['HTML-ошибки', s.htmlErrors],

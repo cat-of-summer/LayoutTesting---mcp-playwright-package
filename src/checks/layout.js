@@ -2,6 +2,7 @@
  * Эвристики вёрстки: то, что видно глазом на скриншоте, но здесь возвращается
  * текстом с селекторами — агенту дешевле читать и сразу понятно, что чинить.
  */
+import { alignmentAudit } from './alignment.js';
 
 function collectLayoutIssues(options) {
   const { minTarget, contrastRatio, maxItems: shownMax, categories, include, exclude, frozen, inkMargin = 8, overlapIgnore = null, outsideTotal: OUTSIDE_TOTAL = [] } = options;
@@ -1493,6 +1494,7 @@ export const AUDIT_CATEGORIES = [
   'contentOverflow',
   'controlOverlaps',
   'deadZIndex',
+  'alignment',
 ];
 
 /*
@@ -1502,11 +1504,19 @@ export const AUDIT_CATEGORIES = [
  */
 export const OUTSIDE_TOTAL = ['boxOverflowClipped', 'contentOverflowFree', 'tinyTargetsExempt'];
 
+/*
+ * Выпадение из ряда — подсказка посмотреть глазами, а не дефект: в total, счётчики категорий и
+ * блокеры page_ready оно не входит. Отдельным полем, потому что вердикт по нему выносит агент
+ * по скриншоту: рваный ряд бывает и задуман.
+ */
+const ALIGNMENT_NOTE =
+  'Подсказки, а не дефекты: однотипные блоки, выпавшие из линии, на которой стоят их соседи. В total и блокеры page_ready не входят. Каждую посмотрите на скриншоте (screenshot с selector из group.parent) и либо поправьте, либо оставьте, если так задумано.';
+
 export async function layoutAudit(
   page,
-  { minTarget = 24, contrastRatio = 4.5, maxItems = 50, categories = null, include = null, exclude = null, frozen = false, inkMargin = 8, overlapIgnore = null } = {},
+  { minTarget = 24, contrastRatio = 4.5, maxItems = 50, categories = null, include = null, exclude = null, frozen = false, inkMargin = 8, overlapIgnore = null, alignment = true } = {},
 ) {
-  return page.evaluate(collectLayoutIssues, {
+  const report = await page.evaluate(collectLayoutIssues, {
     minTarget,
     contrastRatio,
     maxItems,
@@ -1518,6 +1528,13 @@ export async function layoutAudit(
     overlapIgnore,
     outsideTotal: OUTSIDE_TOTAL,
   });
+  /* Узкий прогон по своим категориям (формы, стресс) выравнивание не просит и за него не платит. */
+  if (!alignment || (categories?.length && !categories.includes('alignment'))) return report;
+  const found = await alignmentAudit(page, { include, exclude, maxItems: Math.min(maxItems, 20) });
+  report.alignment = found.total
+    ? { total: found.total, counts: Object.fromEntries(Object.entries(found.counts).filter(([, n]) => n)), findings: found.findings, note: ALIGNMENT_NOTE }
+    : { total: 0 };
+  return report;
 }
 
 /** Дамп вычисленных стилей — «почему этот блок не там, где я жду». */
@@ -1620,6 +1637,13 @@ export const widthSummary = (report) => ({
   ...(report.warning ? { warning: report.warning } : {}),
   top: topIssues(report),
   ...(report.motion ? { motion: report.motion } : {}),
+  ...(report.alignment?.total ? { alignment: alignmentSummary(report.alignment) } : {}),
+});
+
+/* Выжимка подсказок выравнивания для сводки по ширинам: первые три без текста подсказки. */
+export const alignmentSummary = (alignment) => ({
+  total: alignment.total,
+  top: alignment.findings.slice(0, 3).map((f) => ({ kind: f.kind, selector: f.selector, edge: f.edge, delta: f.delta, line: `${f.line.on} из ${f.line.of}` })),
 });
 
 export async function layoutAuditAcrossWidths(page, widths, options = {}) {
@@ -1640,10 +1664,11 @@ export async function layoutAuditAcrossWidths(page, widths, options = {}) {
     await settle();
   }
   worst.sort((a, b) => b.total - a.total);
+  const hinted = Object.values(byWidth).some((summary) => summary.alignment);
   return {
     widths: Object.keys(byWidth).map(Number),
     byWidth,
     worst: worst.slice(0, 3),
-    note: 'По каждой ширине — счётчики и первые находки; полный список по одной ширине — обычный layout_audit в сессии нужной ширины. Окно возвращено к исходному размеру.',
+    note: `По каждой ширине — счётчики и первые находки; полный список по одной ширине — обычный layout_audit в сессии нужной ширины. Окно возвращено к исходному размеру.${hinted ? ` alignment — ${ALIGNMENT_NOTE[0].toLowerCase()}${ALIGNMENT_NOTE.slice(1)}` : ''}`,
   };
 }

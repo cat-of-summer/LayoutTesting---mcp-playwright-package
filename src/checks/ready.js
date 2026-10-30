@@ -100,6 +100,33 @@ export function layoutBlockers(result) {
   return out;
 }
 
+/**
+ * Подсказки выравнивания из ответа layout_audit любой формы — не блокеры. Блок, выпавший из ряда,
+ * бывает задуман, и вердикт выносит агент по скриншоту; но «ready: true» без них читается как
+ * «смотреть нечего». Один и тот же элемент на нескольких ширинах — одна запись с перечнем мест.
+ */
+export function alignmentHints(result) {
+  if (!result) return [];
+  const found = new Map();
+  const add = (alignment, where) => {
+    for (const item of alignment?.top || alignment?.findings || []) {
+      const key = `${item.kind} ${item.selector}`;
+      const known = found.get(key);
+      if (known) known.where.push(where);
+      else found.set(key, { kind: item.kind, selector: item.selector, edge: item.edge, delta: item.delta, where: [where] });
+    }
+  };
+  const walk = (report, label) => {
+    if (!report) return;
+    if (report.byWidth) for (const [width, summary] of Object.entries(report.byWidth)) add(summary.alignment, `${label}, ${width}px`);
+    else if (report.base) walk(report.base, label);
+    else add(report.alignment, label);
+    for (const [name, state] of Object.entries(report.states || {})) walk(state, `состояние «${name}»`);
+  };
+  walk(result, 'страница');
+  return [...found.values()];
+}
+
 /** Мёртвые кнопки и ховеры без видимого изменения. */
 export function interactionBlockers(result) {
   if (!result) return [];
@@ -227,6 +254,7 @@ export async function pageReady(session, { url, frames = [], widths, states, max
     ran.push('layout_audit');
   } else reused.push({ check: 'layout_audit', at: layout.at });
   blockers.push(...layoutBlockers(layout.result));
+  const lookAt = alignmentHints(layout.result);
 
   /* Цвета состояний против палитры макета: только когда есть кадры. */
   const warnings = [];
@@ -262,6 +290,15 @@ export async function pageReady(session, { url, frames = [], widths, states, max
     ran,
     ...(reused.length ? { reused } : {}),
     ...(warnings.length ? { warnings: warnings.slice(0, 10) } : {}),
+    ...(lookAt.length
+      ? {
+          alignment: {
+            hints: lookAt.slice(0, 10),
+            ...(lookAt.length > 10 ? { hintsTotal: lookAt.length } : {}),
+            note: 'Не блокеры: однотипные блоки, выпавшие из линии соседей. Посмотрите каждый на скриншоте до отчёта — поправьте или назовите в отчёте как задуманное. Подробности и подсказки — layout_audit на этой ширине.',
+          },
+        }
+      : {}),
     ...(frames.length
       ? {}
       : { framesNote: 'Кадры не переданы: сверка с макетом не проверялась. Для страницы по макету передайте frames — ссылки на кадры всех ширин.' }),

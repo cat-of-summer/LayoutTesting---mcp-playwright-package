@@ -1,0 +1,187 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Фикстура: ряд свойств, четвёртый блок короче</title>
+<!--
+  Разметка формы свойств блока (Astro + стили в духе Primer), сокращена до одного ряда.
+  .prop-line — флекс с align-items: flex-start: у трёх блоков с подписью и полем общий низ,
+  блок «Скрывать при поиске» (tristate без подписи) короче — ряд рваный.
+  ?fixed — тот же ряд с align-items: stretch: находок быть не должно.
+-->
+<script>if (location.search.includes('fixed')) document.documentElement.classList.add('fixed');</script>
+<style>
+  *, *::before, *::after { box-sizing: border-box; }
+  body { margin: 0; font: 14px/20px system-ui, sans-serif; color: #1f2328; background: #fff; }
+  main { max-width: 1200px; margin: 0 auto; padding: 24px 16px; }
+  .prop-line { display: flex; flex-wrap: wrap; gap: 16px; align-items: flex-start; margin-bottom: 16px; }
+  .fixed .prop-line { align-items: stretch; }
+  .Box { flex: 1 1 200px; min-width: 0; border: 1px solid #d1d9e0; border-radius: 6px; background: #fff; }
+  .Box-header { display: flex; align-items: center; gap: 8px; padding: 8px 16px; background: #f6f8fa; border-bottom: 1px solid #d1d9e0; border-radius: 6px 6px 0 0; }
+  .Box-title { flex: 1; margin: 0; font-size: 14px; line-height: 20px; font-weight: 600; }
+  .Box-body { padding: 16px; }
+  .Box-footer { padding: 8px 16px; border-top: 1px solid #d1d9e0; }
+  .Label { padding: 0 6px; border: 1px solid #d1d9e0; border-radius: 10px; font-size: 12px; }
+  .prop-row { margin: 0; padding: 0; border: 0; min-width: 0; }
+  .field { display: flex; align-items: flex-end; gap: 8px; }
+  .field label { flex: 1; display: flex; flex-direction: column; gap: 4px; min-width: 0; }
+  .field label > span, .field-caption { display: block; font-size: 12px; line-height: 16px; font-weight: 600; }
+  .field-stack { display: flex; flex-direction: column; gap: 4px; }
+  .form-control { display: block; width: 100%; height: 32px; padding: 0 8px; border: 1px solid #d1d9e0; border-radius: 6px; font: inherit; background: #fff; }
+  .tags { display: flex; align-items: center; gap: 4px; }
+  .tags-input { flex: 1; min-width: 0; height: 28px; padding: 0; border: 0; outline: 0; font: inherit; }
+  .tags-suggest { margin: 0; padding: 0; list-style: none; }
+  .btn { display: inline-flex; align-items: center; justify-content: center; gap: 4px; height: 32px; padding: 0 12px; border: 1px solid #d1d9e0; border-radius: 6px; background: #f6f8fa; font: inherit; cursor: pointer; }
+  .btn--sm { height: 28px; padding: 0 8px; }
+  .btn--icon { width: 32px; padding: 0; }
+  .btn--sm.btn--icon { width: 28px; }
+  .btn--invisible { border-color: transparent; background: transparent; }
+  .btn--primary { background: #1f883d; border-color: #1f883d; color: #fff; }
+  .tristate { display: inline-flex; align-items: center; gap: 8px; height: 24px; padding: 0; border: 0; background: none; font: inherit; cursor: pointer; }
+  .tristate-box { display: inline-flex; width: 16px; height: 16px; border: 1px solid #59636e; border-radius: 4px; }
+  .tristate-check { visibility: hidden; }
+  .octicon { flex: none; }
+  .dropdown { margin-bottom: 16px; }
+  .dropdown-menu { margin: 4px 0 0; padding: 4px 0; list-style: none; border: 1px solid #d1d9e0; border-radius: 6px; width: 240px; }
+  .dropdown-item { display: flex; width: 100%; padding: 6px 12px; border: 0; background: none; font: inherit; text-align: left; }
+  .flex-auto { flex: auto; }
+  .page-toolbar { display: flex; gap: 8px; }
+  .free { margin-top: 32px; }
+  .blankslate { padding: 32px; text-align: center; color: #59636e; }
+</style>
+</head>
+<body>
+<main>
+<form novalidate>
+  <div class="prop-line">
+    <div class="Box" data-prop="name">
+      <div class="Box-header">
+        <h2 class="Box-title">Имя</h2>
+        <span class="Label" style="display: none;">список</span>
+        <button type="button" class="btn btn--invisible btn--sm" style="display: none;">Убрать</button>
+      </div>
+      <div class="Box-body prop-items">
+        <div class="prop-item prop-item--single" role="group">
+          <div class="prop-item-actions" style="display: none;"></div>
+          <div class="prop-node"><div class="prop-node-body">
+            <fieldset class="prop-row">
+              <div class="prop-cell prop-cell--string">
+                <div class="field">
+                  <label><span>Имя</span><input type="text" class="form-control" maxlength="200" autocomplete="off"></label>
+                  <button type="button" class="btn btn--icon" aria-label="Скопировать значение" title="Скопировать"><svg viewBox="0 0 16 16" width="16" height="16" aria-hidden="true" class="octicon"><rect x="3" y="3" width="10" height="10" fill="none" stroke="currentColor"/></svg></button>
+                </div>
+              </div>
+            </fieldset>
+          </div></div>
+          <div class="prop-links" style="display: none;"></div>
+        </div>
+        <div class="color-fg-muted text-small" style="display: none;">Элементов нет.</div>
+      </div>
+      <div class="Box-footer" style="display: none;"></div>
+    </div><div class="Box" data-prop="kind">
+      <div class="Box-header">
+        <h2 class="Box-title">Тип блока</h2>
+        <span class="Label" style="display: none;">список</span>
+        <button type="button" class="btn btn--invisible btn--sm" style="display: none;">Убрать</button>
+      </div>
+      <div class="Box-body prop-items">
+        <div class="prop-item prop-item--single" role="group">
+          <div class="prop-item-actions" style="display: none;"></div>
+          <div class="prop-node"><div class="prop-node-body">
+            <fieldset class="prop-row">
+              <div class="prop-cell prop-cell--enum">
+                <div class="field">
+                  <label><span>Тип блока</span>
+                    <select class="form-control"><option value="">—</option><option>По умолчанию</option><option selected>Группа</option><option>Проект</option><option>Сервер</option><option>Сайт</option></select>
+                  </label>
+                  <button type="button" class="btn btn--icon" aria-label="Скопировать значение" title="Скопировать"><svg viewBox="0 0 16 16" width="16" height="16" aria-hidden="true" class="octicon"><rect x="3" y="3" width="10" height="10" fill="none" stroke="currentColor"/></svg></button>
+                </div>
+              </div>
+            </fieldset>
+          </div></div>
+          <div class="prop-links" style="display: none;"></div>
+        </div>
+        <div class="color-fg-muted text-small" style="display: none;">Элементов нет.</div>
+      </div>
+      <div class="Box-footer" style="display: none;"></div>
+    </div><div class="Box" data-prop="keywords">
+      <div class="Box-header">
+        <h2 class="Box-title">Ключевые слова</h2>
+        <span class="Label" style="display: none;">список</span>
+        <button type="button" class="btn btn--invisible btn--sm" style="display: none;">Убрать</button>
+      </div>
+      <div class="Box-body prop-items">
+        <div class="prop-item prop-item--single" role="group">
+          <div class="prop-item-actions" style="display: none;"></div>
+          <div class="prop-node"><div class="prop-node-body">
+            <fieldset class="prop-row">
+              <div class="prop-cell prop-cell--tags">
+                <div class="field-stack">
+                  <span class="field-caption">Ключевые слова</span>
+                  <div class="tags-wrap">
+                    <div class="tags form-control">
+                      <input class="tags-input" type="text" placeholder="Слово или имя блока для связи" aria-label="Ключевые слова" autocomplete="off">
+                      <button type="button" class="btn btn--invisible btn--icon btn--sm tags-tree" aria-label="Связанные блоки"><svg viewBox="0 0 16 16" width="16" height="16" aria-hidden="true" class="octicon"><circle cx="8" cy="8" r="5" fill="none" stroke="currentColor"/></svg></button>
+                    </div>
+                    <ul class="tags-suggest" role="listbox" aria-label="Связать с блоком" style="display: none;"><li>↑↓ — выбрать блок</li></ul>
+                  </div>
+                </div>
+              </div>
+            </fieldset>
+          </div></div>
+          <div class="prop-links" style="display: none;"></div>
+        </div>
+        <div class="color-fg-muted text-small" style="display: none;">Элементов нет.</div>
+      </div>
+      <div class="Box-footer" style="display: none;"></div>
+    </div><div class="Box" data-prop="search_hidden" data-expect="rowHeight">
+      <div class="Box-header">
+        <h2 class="Box-title">Скрывать при поиске</h2>
+        <span class="Label" style="display: none;">список</span>
+        <button type="button" class="btn btn--invisible btn--sm" style="display: none;">Убрать</button>
+      </div>
+      <div class="Box-body prop-items">
+        <div class="prop-item prop-item--single" role="group">
+          <div class="prop-item-actions" style="display: none;"></div>
+          <div class="prop-node"><div class="prop-node-body">
+            <fieldset class="prop-row">
+              <div class="prop-cell prop-cell--enum">
+                <div class="tristate-field">
+                  <button type="button" role="checkbox" class="tristate tristate--off" aria-checked="false" aria-label="Скрывать при поиске">
+                    <span class="tristate-box" aria-hidden="true"><svg viewBox="0 0 16 16" width="16" height="16" aria-hidden="true" class="octicon tristate-check"><path d="M3 8l3 3 7-7" fill="none" stroke="currentColor"/></svg></span>
+                    <span class="tristate-text">Нет</span>
+                  </button>
+                </div>
+              </div>
+            </fieldset>
+          </div></div>
+          <div class="prop-links" style="display: none;"></div>
+        </div>
+        <div class="color-fg-muted text-small" style="display: none;">Элементов нет.</div>
+      </div>
+      <div class="Box-footer" style="display: none;"></div>
+    </div>
+  </div>
+  <div class="prop-hidden color-fg-muted text-small" style="display: none;">Не подходят типу блока и скрыты.</div>
+  <details class="dropdown">
+    <summary class="btn">Добавить свойство</summary>
+    <ul class="dropdown-menu" role="menu" aria-label="Свойства словаря">
+      <li role="none"><button type="button" class="dropdown-item" role="menuitem"><span class="flex-auto">Заметка</span></button></li>
+    </ul>
+  </details>
+  <div class="page-toolbar">
+    <button type="submit" class="btn btn--primary" disabled>Сохранить свойства</button>
+    <button type="button" class="btn btn--invisible" style="display: none;">Отменить изменения</button>
+  </div>
+</form>
+<div class="Box free">
+  <div class="Box-header">
+    <h2 class="Box-title">Произвольные свойства</h2>
+    <button type="button" class="btn btn--sm">Добавить</button>
+  </div>
+  <div class="blankslate"><p>Произвольных свойств нет.</p></div>
+</div>
+</main>
+</body>
+</html>

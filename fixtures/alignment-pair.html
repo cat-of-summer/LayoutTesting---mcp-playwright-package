@@ -1,0 +1,27 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Фикстура: пара карточек разной высоты</title>
+<!-- Две однотипные карточки рядом, align-items: flex-start, текст разной длины. Кто из двух
+     неправ, не сказать — ожидается слабая подсказка на короткую. -->
+<style>
+  *, *::before, *::after { box-sizing: border-box; }
+  body { margin: 0; font: 15px/22px system-ui, sans-serif; color: #16181d; background: #fff; }
+  main { max-width: 960px; margin: 0 auto; padding: 24px 16px; }
+  .pair { display: flex; gap: 24px; align-items: flex-start; }
+  .card { flex: 1; padding: 20px; border: 1px solid #d0d5dd; border-radius: 12px; }
+  .card h3 { margin: 0 0 8px; font-size: 18px; line-height: 26px; }
+  .card p { margin: 0; }
+</style>
+</head>
+<body>
+<main>
+  <div class="pair">
+    <section class="card"><h3>Доставка</h3><p>Курьером по городу в день заказа, в пункты выдачи — за два-три дня, почтой — по всей стране с отслеживанием посылки.</p></section>
+    <section class="card" data-expect="unevenPair"><h3>Оплата</h3><p>Картой на сайте.</p></section>
+  </div>
+</main>
+</body>
+</html>
