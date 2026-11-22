@@ -39,39 +39,39 @@ export const ORDER = [
   'index',
   'setup',
   'frames',
-  'inventory',
+  'sections',
+  'comments',
   'system',
-  'assets',
-  'fonts',
-  'content',
-  'questions',
-  'motion',
+  'behavior',
+  'spec',
   'shell',
+  'features',
   'block',
   'page',
   'project',
   'rules',
   'symptoms',
+  'team',
+  'economy',
 ];
 
 /**
  * Фазы в порядке прохождения — та часть ORDER, которая образует цепочку.
  *
- * index, rules и symptoms в неё не входят: первый объясняет устройство, два других — справочные
- * и читаются в любой момент. Нумеровать их наравне с фазами значило бы обещать, что их тоже надо
+ * index, rules, symptoms, team и economy в неё не входят: первый объясняет устройство, остальные —
+ * справочные и читаются в любой момент. Нумеровать их наравне с фазами значило бы обещать, что их тоже надо
  * пройти по очереди.
  */
 export const PHASES = [
   'setup',
   'frames',
-  'inventory',
+  'sections',
+  'comments',
   'system',
-  'assets',
-  'fonts',
-  'content',
-  'questions',
-  'motion',
+  'behavior',
+  'spec',
   'shell',
+  'features',
   'block',
   'page',
   'project',

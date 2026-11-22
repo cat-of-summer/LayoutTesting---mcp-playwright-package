@@ -65,3 +65,16 @@ A quick-choice table: what you came with and what to look at it with.
 | A form with a behavioural captcha (swipe, slider) does not pass from the stand | as intended: the stand browser shows up as automation (webdriver, software rendering). Check the form with the site's test switch for the captcha, the swipe itself is done by a human |
 | The "Download" button worked but there is no file | `downloads` in the `browser_act` answer; to wait for it - `wait` with `value: "download"` |
 | Waiting for loading with a guessed pause | `wait` with `expression`: a condition on the page instead of seconds |
+
+## Rest, motion, acceptance
+
+| Symptom | Tool |
+|---|---|
+| A button cannot be pressed, something lies on top | `layout_audit` with `settled: true`, then `element_layers` |
+| A block rides over the header while scrolling | `layout_audit` with `settled: true`: `overPinned` |
+| Card buttons sit at different heights | `settled`: `rowChildren` |
+| Text in a button is off-center | `settled`: `glyphOffset` |
+| The header is wrong before the first scroll | `page_ready`: `hints.initialState` |
+| Unclear how an animation moves in the design | `motion_frames` |
+| The animation on the page differs from the design | `motion_frames` with `url` |
+| A Swiper or Vue warning in the console | `page_logs`: `likelyDefects` |

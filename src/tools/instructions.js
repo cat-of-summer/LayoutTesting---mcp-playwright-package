@@ -174,12 +174,16 @@ const HINTS = [
     ru: `- «совпадает ли с макетом», «сравни вёрстку с Figma» — figma_compare: тексты сопоставляются по
   содержимому, и видно, что именно съехало, а не только процент различий; «готово ли», «можно сдавать»
   — page_ready: сам догоняет пропущенные проверки и отвечает ready с блокерами; «ховер как в макете»
-  — figma_variants с sessionId; «найди в макете», «где это в UI-ките» — figma_find по тексту или имени;`,
+  — figma_variants с sessionId; «найди в макете», «где это в UI-ките» — figma_find по тексту или имени;
+  «как движется анимация в макете», «покажи по кадрам» — motion_frames: кадры плеера и числовые треки,
+  с url — сверка движения страницы;`,
     en: `- "does it match the design", "compare the build with Figma" — figma_compare: texts are matched by
   content, so it shows what actually moved rather than a percentage; "is it done", "can we hand it
   over" — page_ready: it runs the skipped checks itself and answers ready with blockers; "hover as in
   the design" — figma_variants with sessionId; "find it in the design", "where is it in the UI kit" —
-  figma_find by text or name;`,
+  figma_find by text or name;
+  "how does this animation move", "show it frame by frame" — motion_frames: player frames and numeric
+  tracks, with url it also compares the motion of the page;`,
   },
   {
     groups: ['layout'],

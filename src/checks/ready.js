@@ -17,6 +17,7 @@ import { inStatesAcrossWidths } from './states.js';
 import { runInteractions } from './interaction.js';
 import { auditForms } from './forms.js';
 import { lintLiveCss } from './css-live.js';
+import { auditSettled, initialStateDrift, likelyDefects } from './settled.js';
 
 /* Категории layout_audit, при которых страница не готова. Остальные — повод посмотреть, не блокер. */
 export const BLOCKING_CATEGORIES = [
@@ -51,13 +52,41 @@ const blocking = (category, report) => {
   return list.filter((item) => typeof item.ink === 'number' && item.ink > 0.05).length;
 };
 
+/**
+ * Списания сигналов: только поштучно, с причиной.
+ *
+ * На ТОПГАН controlOverlaps списали категорией — «это reveal», — и под ней остались перекрытая
+ * кнопка и блок поверх шапки. Поэтому ключ здесь всегда пара «проверка + конкретный селектор»:
+ * категорию целиком списать нечем, а списание, которое ни к чему не подошло, видно в ответе.
+ */
+export function waiverBook(list = []) {
+  const entries = list.map((waiver) => ({ ...waiver, used: 0 }));
+  return {
+    covers(check, selector) {
+      const hit = entries.find((entry) => entry.check === check && entry.selector === selector);
+      if (hit) hit.used += 1;
+      return Boolean(hit);
+    },
+    applied: () => entries.filter((entry) => entry.used).map(({ check, selector, reason }) => ({ check, selector, reason })),
+    unused: () => entries.filter((entry) => !entry.used).map(({ check, selector }) => ({ check, selector })),
+  };
+}
+
+const itemSelectors = (item) => [item.selector, item.a?.selector, item.b?.selector].filter(Boolean);
+
 /** Блокеры из одного отчёта layout_audit: полного или выжимки по ширине. */
-function reportBlockers(report, where) {
+function reportBlockers(report, where, book = null) {
   const out = [];
   for (const category of BLOCKING_CATEGORIES) {
-    const count = blocking(category, report);
+    let count = blocking(category, report);
     if (!count) continue;
-    const sample = (report.issues?.[category] || report.top?.filter((item) => item.category === category) || [])[0];
+    const listed = (report.issues?.[category] || report.top?.filter((item) => item.category === category) || []).filter(
+      (item) => category !== 'textOverImage' || (typeof item.ink === 'number' && item.ink > 0.05),
+    );
+    const kept = book ? listed.filter((item) => !itemSelectors(item).some((selector) => book.covers(category, selector))) : listed;
+    count -= listed.length - kept.length;
+    if (count <= 0) continue;
+    const sample = kept[0];
     out.push({
       check: 'layout_audit',
       what: `${category}: ${count}`,
@@ -72,20 +101,20 @@ function reportBlockers(report, where) {
  * Блокеры из ответа layout_audit любой формы: одна ширина, несколько ширин, состояния, состояния
  * по ширинам.
  */
-export function layoutBlockers(result) {
+export function layoutBlockers(result, book = null) {
   if (!result) return [];
   const out = [];
   const byWidth = (map, label) => {
     for (const [width, report] of Object.entries(map || {})) {
       if (report.skipped) continue;
       if (report.error) out.push({ check: 'layout_audit', what: `состояние не создано: ${report.error}`, where: `${label}, ${width}px` });
-      else out.push(...reportBlockers(report, `${label}, ${width}px`));
+      else out.push(...reportBlockers(report, `${label}, ${width}px`, book));
     }
   };
   if (result.byWidth) byWidth(result.byWidth, 'страница');
   else if (result.base?.byWidth) byWidth(result.base.byWidth, 'страница');
-  else if (result.base) out.push(...layoutBlockers(result.base));
-  else if (result.counts) out.push(...reportBlockers(result, 'страница'));
+  else if (result.base) out.push(...layoutBlockers(result.base, book));
+  else if (result.counts) out.push(...reportBlockers(result, 'страница', book));
 
   for (const [name, state] of Object.entries(result.states || {})) {
     if (state.byWidth) {
@@ -94,11 +123,75 @@ export function layoutBlockers(result) {
     } else if (state.error) {
       out.push({ check: 'layout_audit', what: state.error, where: `состояние «${name}»` });
     } else if (!state.skipped) {
-      out.push(...layoutBlockers(state).map((item) => ({ ...item, where: `состояние «${name}»` })));
+      out.push(...layoutBlockers(state, book).map((item) => ({ ...item, where: `состояние «${name}»` })));
     }
   }
   return out;
 }
+
+/** Дефекты страницы в покое: чужой элемент поверх контрола или закреплённого слоя. */
+export function settledBlockers(report, where, book = null) {
+  const session = '<сессия со страницей>';
+  const out = [];
+  for (const item of report?.controlsCovered || []) {
+    if (book?.covers('controlsCovered', item.selector)) continue;
+    out.push({
+      check: 'settled',
+      what: `контрол перекрыт после окончания анимаций: сверху ${item.by}`,
+      where: `${where}, scrollY ${item.scrollY}`,
+      selector: item.selector,
+      waiver: 'controlsCovered',
+      next: { tool: 'element_layers', args: { sessionId: session, selector: item.selector } },
+    });
+  }
+  for (const item of report?.overPinned || []) {
+    if (book?.covers('overPinned', item.selector)) continue;
+    out.push({
+      check: 'settled',
+      what: `блок лежит поверх закреплённого ${item.pinned}`,
+      where: `${where}, scrollY ${item.scrollY}`,
+      selector: item.selector,
+      waiver: 'overPinned',
+      next: { tool: 'element_layers', args: { sessionId: session, selector: item.selector } },
+    });
+  }
+  return out;
+}
+
+/** Предупреждения библиотек в консоли: Swiper Loop на ТОПГАН означал пустой слайд. */
+export function consoleBlockers(entries, book = null) {
+  return likelyDefects(entries)
+    .filter((defect) => !book?.covers('page_logs', defect.kind))
+    .map((defect) => ({
+      check: 'page_logs',
+      what: `${defect.kind}: ${defect.why}`,
+      where: defect.text,
+      selector: defect.kind,
+      waiver: 'page_logs',
+      next: { tool: 'page_logs', args: { sessionId: '<сессия со страницей>', kind: 'console' } },
+    }));
+}
+
+/** Пункты микро-ТЗ: незакрытый «- [ ]» значит, что требование не выполнено или не проверено. */
+export function checklistItems(text) {
+  const open = [];
+  let done = 0;
+  for (const line of String(text || '').split(/\r?\n/)) {
+    const match = /^\s*[-*+]\s+\[( |x|X)\]\s+(.+?)\s*$/.exec(line);
+    if (!match) continue;
+    if (match[1] === ' ') open.push(match[2]);
+    else done += 1;
+  }
+  return { open, done, total: open.length + done };
+}
+
+export const checklistBlockers = (text) =>
+  checklistItems(text).open.map((item) => ({
+    check: 'spec',
+    what: 'пункт микро-ТЗ не закрыт',
+    where: item.slice(0, 160),
+    next: { do: 'Выполните и проверьте пункт, отметьте его [x] в файле микро-ТЗ и передайте файл в checklist снова.' },
+  }));
 
 /**
  * Подсказки выравнивания из ответа layout_audit любой формы — не блокеры. Блок, выпавший из ряда,
@@ -179,7 +272,7 @@ export function cssBlockers(result) {
 }
 
 /** Порядок блокеров в ответе: сначала то, что дошло бы до дизайнера первым. */
-const ORDER = ['figma_behavior', 'figma_compare', 'interaction_audit', 'lint_css', 'layout_audit', 'form_audit'];
+const ORDER = ['spec', 'figma_behavior', 'figma_compare', 'settled', 'interaction_audit', 'lint_css', 'layout_audit', 'page_logs', 'form_audit'];
 const sortBlockers = (list) => [...list].sort((a, b) => ORDER.indexOf(a.check) - ORDER.indexOf(b.check));
 
 /** Готовый вызов, повторяющий проверку, если блокер его не назвал сам. */
@@ -198,12 +291,23 @@ function nextCall(blocker, { url, widths, frames }) {
  * frameInfo(ref) → { ref, version, width }, compareFrame(ref, session) → покрытие,
  * behaviorOf(refs) → blocking | null.
  */
-export async function pageReady(session, { url, frames = [], widths, states, maxAgeMin = 30, run = 'missing' }, deps = {}) {
+export async function pageReady(session, { url, frames = [], widths, states, maxAgeMin = 30, run = 'missing', waivers = [], checklist = null }, deps = {}) {
   const ran = [];
   const reused = [];
-  const blockers = [];
+  const blockers = [...(checklist ? checklistBlockers(checklist) : [])];
   const sectionsWorst = [];
   const reuse = (entry) => run !== 'all' && fresh(entry, maxAgeMin);
+  const book = waiverBook(waivers);
+  const logStart = session.logs.console.length;
+
+  /* Начальное состояние — на нетронутой странице: стабилизация уже прокручивает её. */
+  let initial = pageRuns(url)?.initial;
+  if (!reuse(initial)) {
+    await gotoAndSettle(session, url, { stabilizePage: false });
+    initial = recordInitial(url, await initialStateDrift(session.page).catch(() => []));
+    ran.push('initial_state');
+  } else reused.push({ check: 'initial_state', at: initial.at });
+  const initialState = initial.items;
 
   await gotoAndSettle(session, url);
 
@@ -253,8 +357,44 @@ export async function pageReady(session, { url, frames = [], widths, states, max
     layout = recordLayout(url, result, signature);
     ran.push('layout_audit');
   } else reused.push({ check: 'layout_audit', at: layout.at });
-  blockers.push(...layoutBlockers(layout.result));
+  blockers.push(...layoutBlockers(layout.result, book));
   const lookAt = alignmentHints(layout.result);
+
+  /*
+   * Проверки в покое — на макетных ширинах, а без кадров на крайних: каждая ходит по всей
+   * странице с ожиданием анимаций, и прогон по семи ширинам занял бы минуты.
+   */
+  const designWidths = infos.map((info) => info.width).filter(Boolean);
+  const settledWidths = [...new Set(designWidths.length ? designWidths : [runWidths[0], runWidths.at(-1)])];
+  const settledSignature = JSON.stringify([...settledWidths].sort((a, b) => a - b));
+  let settled = known.settled;
+  if (!(reuse(settled) && settled.signature === settledSignature)) {
+    const original = session.page.viewportSize();
+    const byWidth = {};
+    try {
+      for (const width of settledWidths) {
+        await session.page.setViewportSize({ width, height: original?.height ?? 900 });
+        await gotoAndSettle(session, url, { stabilizePage: false });
+        byWidth[width] = await auditSettled(session.page);
+      }
+    } finally {
+      if (original) await session.page.setViewportSize(original);
+    }
+    settled = recordSettled(url, byWidth, settledSignature);
+    await gotoAndSettle(session, url);
+    ran.push('settled');
+  } else reused.push({ check: 'settled', at: settled.at });
+  for (const [width, report] of Object.entries(settled.byWidth)) blockers.push(...settledBlockers(report, `${width}px`, book));
+  blockers.push(...consoleBlockers(session.logs.console.slice(logStart), book));
+
+  const firstOf = (key) => Object.entries(settled.byWidth).flatMap(([width, report]) => (report[key] || []).map((item) => ({ width: Number(width), ...item })));
+  const hints = {
+    ...(firstOf('rowChildren').length ? { rowChildren: firstOf('rowChildren').slice(0, 8) } : {}),
+    ...(firstOf('glyphOffset').length ? { glyphOffset: firstOf('glyphOffset').slice(0, 8) } : {}),
+    ...(initialState.length ? { initialState: initialState.slice(0, 6) } : {}),
+    ...(interaction.transitionIssues?.length ? { transitionIssues: interaction.transitionIssues.slice(0, 8) } : {}),
+    ...(interaction.touchHover?.length ? { touchHover: interaction.touchHover.slice(0, 8) } : {}),
+  };
 
   /* Цвета состояний против палитры макета: только когда есть кадры. */
   const warnings = [];
@@ -290,6 +430,19 @@ export async function pageReady(session, { url, frames = [], widths, states, max
     ran,
     ...(reused.length ? { reused } : {}),
     ...(warnings.length ? { warnings: warnings.slice(0, 10) } : {}),
+    ...(checklist ? { checklist: (({ open, ...counts }) => ({ ...counts, open: open.length }))(checklistItems(checklist)) } : {}),
+    ...(book.applied().length ? { waived: book.applied() } : {}),
+    ...(book.unused().length
+      ? { unusedWaivers: book.unused(), unusedWaiversNote: 'Эти списания ни к чему не подошли: сигнал ушёл или селектор другой. Уберите их.' }
+      : {}),
+    ...(Object.keys(hints).length
+      ? {
+          hints: {
+            ...hints,
+            note: 'Не блокеры, но смотреть обязательно: кнопки ряда не на одной линии, текст не по центру контрола, состояние шапки после загрузки отличается от состояния после возврата, качество переходов, hover на таче. Поправьте или назовите в отчёте как задуманное.',
+          },
+        }
+      : {}),
     ...(lookAt.length
       ? {
           alignment: {
@@ -324,6 +477,8 @@ export function recordInteraction(url, result, scope) {
     scope,
     silent: result.silent || [],
     ...(result.hoverInvisible?.length ? { hoverInvisible: result.hoverInvisible } : {}),
+    ...(result.transitionIssues?.length ? { transitionIssues: result.transitionIssues } : {}),
+    ...(result.touchHover?.length ? { touchHover: result.touchHover } : {}),
     probed: result.probed,
   };
   recordPage(url, 'interaction', entry);
@@ -333,6 +488,16 @@ export function recordInteraction(url, result, scope) {
 export function recordLayout(url, result, signature = null) {
   recordPage(url, 'layout', { signature, result });
   return { at: new Date().toISOString(), signature, result };
+}
+
+export function recordInitial(url, items) {
+  recordPage(url, 'initial', { items });
+  return { at: new Date().toISOString(), items };
+}
+
+export function recordSettled(url, byWidth, signature) {
+  recordPage(url, 'settled', { signature, byWidth });
+  return { at: new Date().toISOString(), signature, byWidth };
 }
 
 export function recordForms(url, result) {

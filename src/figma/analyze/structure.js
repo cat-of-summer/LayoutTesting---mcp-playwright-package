@@ -338,7 +338,8 @@ function arrange(snapshot, node, ctx) {
         (coverage(item.box, other.box) > 0.3 || coverage(other.box, item.box) > 0.3),
     );
     if (!under) continue;
-    const top = Math.abs(item.box.y - box.y) <= 1 && Math.abs(item.box.w - box.w) <= 1;
+    /* У страницы Figma (CANVAS) своей рамки нет: «у верхнего края» там быть не у чего. */
+    const top = !!box && Math.abs(item.box.y - box.y) <= 1 && Math.abs(item.box.w - box.w) <= 1;
     const hint = top ? 'поверх страницы у верхнего края — fixed или sticky' : `поверх ${under.id ?? 'блока'} — position: absolute`;
     layers.push({ node: item, kind: 'overlay', hint });
     ctx.notes.push({ kind: 'overlay', id: item.id ?? item.background?.id, of: node.id, note: hint });

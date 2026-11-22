@@ -29,7 +29,7 @@ import { exportImages, exportRender, exportSvg } from '../figma/export.js';
 import { cssItems, outlineLines, textItems, unresolvedOf, usedVariables } from '../figma/inspect.js';
 import { assetInventory } from '../figma/assets.js';
 import { getRestClient } from '../figma/rest.js';
-import { addRequests, childNodes, ensureNode, ensureNodes, findNode, frameIndex, pathOf, rankHits, searchCached, searchRestDocument, strip, syncFigma } from '../figma/snapshot.js';
+import { addRequests, childNodes, ensureNode, ensureNodes, findNode, frameIndex, pathOf, rankHits, searchCached, searchRestDocument, strip, syncFigma, knownSnapshots } from '../figma/snapshot.js';
 import { compareHover, diffVariants, isStateVariant, pairSiblings, pickPair, stateBase } from '../figma/variants.js';
 import { hoverStyleDiff } from '../checks/interaction.js';
 import { groupRefs, parseFigmaRef, refOf } from '../figma/url.js';
@@ -53,8 +53,10 @@ import {
   readCachedComments,
 } from '../figma/analyze/comments.js';
 import { blockingOf, describeBehavior, uiKitTarget } from '../figma/analyze/behavior.js';
-import { compareWithDesign, compareWithImage, probePage, scrollbarGutter } from '../figma/compare.js';
-import { newRunId, runDir } from '../artifacts.js';
+import { compactCompare, compareWithDesign, compareWithImage, probePage, scrollbarGutter } from '../figma/compare.js';
+import { compareMotion, motionTracks } from '../figma/motion.js';
+import { capturePage, captureProto } from '../figma/motion-capture.js';
+import { artifactRef, newRunId, runDir } from '../artifacts.js';
 import { loadSource } from '../media/source.js';
 import { alignHints, measurePairs, measureSpacing, pageBoxes } from '../figma/spacing.js';
 import { gotoAndSettle, sessionAt, withSession } from '../browser/pool.js';
@@ -79,6 +81,44 @@ async function cachedFiles() {
     return 0;
   }
 }
+
+/** Сколько записей в каждом поле-списке или поле-объекте ответа. */
+export const countsOf = (result) =>
+  Object.fromEntries(
+    Object.entries(result).flatMap(([key, value]) => {
+      if (Array.isArray(value)) return [[key, value.length]];
+      return value && typeof value === 'object' ? [[key, Object.keys(value).length]] : [];
+    }),
+  );
+
+/**
+ * Компактный ответ: полный результат в артефакт, в контекст — счётчики и его адрес.
+ *
+ * figma_export семи мобильных кадров с нарезкой отдавал больше 50 тыс. знаков, а figma_behavior и
+ * figma_tokens по холсту не влезали в лимит ответа вовсе. head — то, что нельзя прятать в файл:
+ * например blocking у figma_behavior.
+ */
+export async function compactReply(kind, result, head = {}) {
+  const runId = newRunId(kind);
+  const file = path.join(await runDir(runId), `${kind}.json`);
+  await fs.writeFile(file, JSON.stringify(result, null, 1));
+  return { compact: true, runId, full: artifactRef(file).uri, counts: countsOf(result), ...head };
+}
+
+/** Строка рендера без четырёх адресов на каждую часть: адрес ресурса и число частей. */
+export const compactRender = (render) =>
+  strip({
+    ref: render.ref,
+    name: render.name,
+    size: render.size,
+    image: render.image?.uri,
+    sheet: render.sheet?.uri,
+    parts: render.parts?.length,
+    tiles: render.tiles?.length,
+    clipped: render.clipped,
+    error: render.error,
+    hint: render.hint,
+  });
 
 /**
  * Предупреждение о малом остатке запросов к файлам — в ответ инструмента, который их только что
@@ -436,7 +476,12 @@ const withProject = async (project) => (project && (project.url || project.css |
  * Сверка страницы с кадром — тело figma_compare. Вынесено, чтобы его же вызывал page_ready:
  * готовность догоняет недостающую посекционную сверку сама, а не советует её.
  */
-export async function runFigmaCompare({ figma, sessionId, url, selector, mode = 'both', sections = false, tolerance, threshold, limit, image }) {
+export async function runFigmaCompare({ compact = false, mode, ...args }) {
+  const result = await compareFull({ ...args, mode: mode ?? (compact ? 'semantic' : 'both') });
+  return compact && result.ref ? compactCompare(result, sectionDigest(result)) : result;
+}
+
+async function compareFull({ figma, sessionId, url, selector, mode, sections = false, tolerance, threshold, limit, image }) {
   const client = getRestClient();
   let found;
   try {
@@ -818,6 +863,131 @@ async function findNote(fileKey, { found, editorFailed, client }) {
   /* Совет «снимите кадры через figma_sync» здесь был бы ложным: снять их сейчас тоже нечем. */
   const advice = await channelAdvice(fileKey);
   return `${head} Искать по всему файлу сейчас нечем. ${advice || 'Ни редактор, ни REST не доступны.'}`;
+}
+
+/** Переход с анимацией у узла: нужный по to или первый с длительностью. */
+export function animatedInteraction(node, toId = null) {
+  for (const interaction of node?.interactions || []) {
+    for (const action of (interaction.actions || []).filter(Boolean)) {
+      if (!action.destinationId || !action.transition?.duration) continue;
+      if (toId && action.destinationId !== toId) continue;
+      return { trigger: interaction.trigger?.type, to: action.destinationId, transition: action.transition };
+    }
+  }
+  return null;
+}
+
+/** Кадр верхнего уровня для плеера: первый FRAME под страницей или сам корень снимка. */
+export function playerFrame(snapshot, node) {
+  /* Снимок бывает и кадра, и целой страницы: тогда экран лежит в самом снимке, а не в ancestors. */
+  const above = (snapshot.ancestors || []).find((item) => item.type === 'FRAME');
+  /* В снимках постарше у предков нет рамки: тогда её дочитывает вызывающий по id. */
+  if (above) return { id: above.id, box: above.box ?? null };
+  let top = null;
+  for (let current = node; current; current = snapshot.nodes[current.parent]) {
+    if (['CANVAS', 'PAGE', 'SECTION'].includes(current.type)) break;
+    top = current;
+  }
+  /* Вариант в наборе на экране не стоит: плеер его не откроет. */
+  return top?.type === 'FRAME' && top.box ? { id: top.id, box: top.box } : null;
+}
+
+/** Экран для плеера: по снимку узла, а если он родителей не знает — по остальным снимкам файла. */
+export async function screenOf(snapshot, node, fileKey, opts, snapshots = knownSnapshots) {
+  const direct = playerFrame(snapshot, node);
+  if (direct?.box) return direct;
+  if (direct) {
+    const box = (await ensureNode(refOf(fileKey, direct.id), opts).catch(() => null))?.node?.box;
+    if (box) return { id: direct.id, box };
+  }
+  for await (const other of snapshots(fileKey)) {
+    const same = other.nodes[node.id];
+    const frame = same ? playerFrame(other, same) : null;
+    if (frame?.box) return frame;
+  }
+  return null;
+}
+
+/** Анимация по кадрам — тело motion_frames. */
+export async function runMotionFrames({ figma, to, fps = 12, steps = 1, player = true, url, selector, trigger, triggerSelector, limit }) {
+  const opts = { client: getRestClient(), editor: editorChannel };
+  const first = await ensureNode(figma, opts);
+  const { fileKey } = first;
+  /* Голый id состояния из того же файла (280:8820) — обычный случай, ссылка тоже годится. */
+  const wanted = !to ? null : /^\d+[:-]\d+$/.test(to) ? to.replace('-', ':') : parseFigmaRef(to).nodeId;
+  const segments = [];
+  let current = first;
+  for (let index = 0; index < steps; index += 1) {
+    const step = animatedInteraction(current.node, index === 0 ? wanted : null);
+    if (!step) break;
+    const next = await ensureNode(refOf(fileKey, step.to), opts);
+    const tracks = motionTracks({ snapshot: current.snapshot, rootId: current.node.id }, { snapshot: next.snapshot, rootId: next.node.id }, step.transition, {
+      fps,
+      limit: limit ?? 40,
+    });
+    segments.push({ from: current.node.id, to: step.to, trigger: step.trigger, times: tracks.times, tracks });
+    current = next;
+  }
+  if (!segments.length) {
+    throw new Error('У узла нет перехода с длительностью. figma_behavior покажет его связи; для варианта без связи передайте инстанс со страницы макета.');
+  }
+
+  const reply = { ref: refOf(fileKey, first.node.id), fps };
+  const screen = player || url ? await screenOf(first.snapshot, first.node, fileKey, opts) : null;
+  let sheet = null;
+  if (player) {
+    const inFrame = first.node.type === 'INSTANCE' || first.node.type === 'FRAME';
+    if (!screen?.box || !first.node.box || !inFrame) {
+      reply.player = {
+        skipped: 'Экран с этим узлом не найден: плеер показывает экраны прототипа. Передайте инстанс со страницы макета, а не вариант из набора, и снимите его экран через figma_sync. Числовые треки сняты.',
+      };
+    } else {
+      reply.player = await captureProto({ fileKey, frameId: screen.id, frameBox: screen.box, nodeBox: first.node.box, segments, fps }).catch((err) => ({
+        error: `Плеер не снял кадры: ${err.message}. Числовые треки сняты.`,
+      }));
+      sheet = reply.player.segments?.[0]?.sheet?.path ?? null;
+    }
+  }
+
+  let page = null;
+  if (url) {
+    const textsOf = (segment) => [...new Set(segment.tracks.tracks.map((track) => track.fullText).filter(Boolean))];
+    page = await capturePage({
+      url,
+      selector,
+      trigger,
+      triggerSelector,
+      fps,
+      width: screen?.box?.w ?? first.node.box?.w,
+      segments: segments.map((segment) => ({ times: segment.times, texts: textsOf(segment) })),
+      texts: [],
+    });
+  }
+
+  reply.segments = segments.map((segment, index) => {
+    const shot = reply.player?.segments?.[index];
+    const onPage = page?.segments?.[index];
+    return {
+      from: segment.from,
+      to: segment.to,
+      trigger: segment.trigger,
+      ...segment.tracks,
+      tracks: segment.tracks.tracks.map(({ fullText, ...track }) => track),
+      ...(shot ? { player: shot.skipped ? { skipped: shot.skipped } : { frames: shot.frames, sheet: shot.sheet.uri, measured: shot.measured } } : {}),
+      ...(onPage
+        ? {
+            page: {
+              frames: onPage.frames,
+              sheet: onPage.sheet.uri,
+              measured: onPage.measured,
+              compare: compareMotion({ ...segment.tracks, tracks: segment.tracks.tracks }, { elements: onPage.elements }),
+            },
+          }
+        : {}),
+    };
+  });
+  if (reply.player?.segments) reply.player = { clock: reply.player.clock };
+  return { reply, sheet };
 }
 
 /** Поведение по прототипу — тело figma_behavior; page_ready берёт из него blocking. */
@@ -1345,19 +1515,21 @@ export function register(server) {
         figma: refsSchema,
         project: projectSchema,
         minUses: z.number().optional().describe(d('Значение становится токеном с этого числа использований. По умолчанию 2')),
+        compact: z.boolean().optional().describe(d('Полный ответ в артефакт, в контекст только счётчики и адрес файла')),
       },
     },
-    async ({ figma, project, minUses }) => {
+    async ({ figma, project, minUses, compact = false }) => {
       const client = getRestClient();
       const { frames, requests } = await loadFrames(figma, client);
       const loaded = await withProject(project);
       const tokens = collectTokens(frames, { project: loaded, minUses: minUses ?? 2 });
-      return json({
+      const result = {
         frames: frames.map((frame) => frame.ref),
         ...(requests.tier1 || requests.tier2 || requests.tier3 ? { requests } : {}),
         ...(loaded ? { project: projectSummary(loaded) } : {}),
         ...tokens,
-      });
+      };
+      return json(compact ? await compactReply('figma-tokens', result, { frames: result.frames }) : result);
     },
   );
 
@@ -1463,6 +1635,10 @@ export function register(server) {
           .optional()
           .describe(d('both (по умолчанию) — и смысловое, и попиксельное; semantic — только смысловое; pixel — только попиксельное')),
         sections: z.boolean().optional().describe(d('Попиксельно по каждой секции кадра с поправкой на сдвиг её текстов')),
+        compact: z
+          .boolean()
+          .optional()
+          .describe(d('Только расхождения, без ссылок на картинки и пояснений: дешёвая сверка каждой секции. Без mode значит semantic')),
         tolerance: z.number().optional().describe(d('Допуск смещения в пикселях. По умолчанию 2')),
         threshold: z.number().optional().describe(d('Допустимое расхождение в процентах пикселей')),
         limit: z.number().optional().describe(d('Сколько строк или записей показать')),
@@ -1668,12 +1844,47 @@ export function register(server) {
         figma: refsSchema,
         limit: z.number().optional().describe(d('Сколько строк или записей показать')),
         offset: z.number().optional().describe(d('С какой записи продолжить: значение из подсказки note')),
+        compact: z.boolean().optional().describe(d('Полный ответ в артефакт, в контекст только счётчики, blocking и адрес файла')),
+      },
+    },
+    async ({ compact = false, ...args }) => {
+      const result = await runFigmaBehavior(compact ? { ...args, limit: args.limit ?? 1000 } : args);
+      recordBehavior(result.frames.join(','), result.blocking?.[0]);
+      if (!compact) return json(result);
+      return json(await compactReply('figma-behavior', result, { frames: result.frames, ...(result.blocking ? { blocking: result.blocking } : {}) }));
+    },
+  );
+
+  server.registerTool(
+    'motion_frames',
+    {
+      title: t({ ru: 'Анимация по кадрам', en: 'Animation frame by frame' }),
+      description: t({
+        ru: 'Переход прототипа Figma по кадрам в заданном fps: настоящий плеер на управляемых часах, контакт-лист и числовые треки (слой, свойство, значение в каждом кадре). С url снимает страницу на тех же моментах и показывает расхождения движения.',
+        en: 'A Figma prototype transition frame by frame at a given fps: the real player on a controlled clock, a contact sheet and numeric tracks (layer, property, value per frame). With url it captures the page at the same moments and reports motion differences.',
+      }),
+      inputSchema: {
+        figma: z.string().describe(d('Узел: ссылка figma.com или запись ключ:id')),
+        to: z.string().optional().describe(d('Конечное состояние, если у узла несколько переходов')),
+        fps: z.number().min(1).max(60).optional().describe(d('Кадров в секунду. По умолчанию 12')),
+        steps: z.number().min(1).max(8).optional().describe(d('Сколько переходов цепочки снять подряд. По умолчанию 1')),
+        player: z.boolean().optional().describe(d('false — только числовые треки, без плеера')),
+        url: z.string().optional().describe(d('Страница для сверки движения')),
+        selector: z.string().optional().describe(d('Блок на странице, которому соответствует узел')),
+        trigger: z.enum(['click', 'hover', 'scroll']).optional().describe(d('Что запускает анимацию на странице. По умолчанию click')),
+        triggerSelector: z.string().optional().describe(d('Элемент, на котором срабатывает trigger')),
+        limit: z.number().optional().describe(d('Сколько строк или записей показать')),
+        inline: z.boolean().optional().describe(d('Вложить контакт-лист первого шага в ответ')),
       },
     },
     async (args) => {
-      const result = await runFigmaBehavior(args);
-      recordBehavior(result.frames.join(','), result.blocking?.[0]);
-      return json(result);
+      const result = await runMotionFrames(args);
+      const content = [{ type: 'text', text: JSON.stringify(result.reply) }];
+      if (args.inline && result.sheet) {
+        const image = await inlineImage(result.sheet, 1200);
+        content.push({ type: 'image', data: image.data, mimeType: image.mimeType });
+      }
+      return { content };
     },
   );
 
@@ -1736,9 +1947,20 @@ export function register(server) {
         states: statesSchema,
         maxAgeMin: z.number().optional().describe(d('Прогоны из журнала моложе этого (мин) не повторяются. По умолчанию 30')),
         run: z.enum(['missing', 'all']).optional().describe(d('missing (по умолчанию) — только недостающее и устаревшее; all — всё заново')),
+        waivers: z
+          .array(
+            z.object({
+              check: z.string().describe(d('Категория: controlsCovered, overPinned, page_logs или категория layout_audit')),
+              selector: z.string().min(1).describe(d('Конкретный селектор из находки; для page_logs — её kind')),
+              reason: z.string().min(10).describe(d('Почему это не дефект именно на этом элементе')),
+            }),
+          )
+          .optional()
+          .describe(d('Поштучное списание сигналов: категорию целиком списать нельзя')),
+        checklist: z.string().optional().describe(d('Текст микро-ТЗ страницы: каждый незакрытый пункт "- [ ]" становится блокером')),
       },
     },
-    async ({ url, sessionId, frames = [], widths, states, maxAgeMin, run }) => {
+    async ({ url, sessionId, frames = [], widths, states, maxAgeMin, run, waivers, checklist }) => {
       const target = url || (sessionId ? sessionAt(sessionId).then(({ session }) => session.page.url()) : null);
       const address = await target;
       if (!address || /^about:/.test(address)) throw new Error('Нужен url страницы или sessionId сессии, в которой она открыта.');
@@ -1762,7 +1984,7 @@ export function register(server) {
       };
       const width = Math.max(...(widths?.length ? widths : [1440]));
       const result = await withSession({ viewport: `${width}x900`, animations: 'allow' }, (session) =>
-        pageReady(session, { url: address, frames, widths, states, maxAgeMin, run }, deps),
+        pageReady(session, { url: address, frames, widths, states, maxAgeMin, run, waivers, checklist }, deps),
       );
       return json(result);
     },
@@ -1806,9 +2028,20 @@ export function register(server) {
           .enum(['auto', 'ui'])
           .optional()
           .describe(d('ui — кнопкой Export интерфейса Figma (render, svg); auto переходит сам')),
+        compact: z.boolean().optional().describe(d('Полный ответ в артефакт, в контекст только счётчики и адреса файлов')),
       },
     },
-    async ({ figma, kind = 'render', scale, clip, inline = false, parts = 'auto', geometry = 'render', dropBackground = false, channel = 'auto' }) => {
+    async ({ figma, kind = 'render', scale, clip, inline = false, parts = 'auto', geometry = 'render', dropBackground = false, channel = 'auto', compact = false }) => {
+      const reply = async (res) =>
+        json(
+          compact
+            ? await compactReply('figma-export', res, {
+                ...(res.renders ? { renders: res.renders.map(compactRender) } : {}),
+                ...(res.channel ? { channel: res.channel } : {}),
+                ...(res.restBudget ? { restBudget: res.restBudget } : {}),
+              })
+            : res,
+        );
       if (channel === 'ui') {
         if (kind === 'image') throw new Error('Канал ui выгружает только render и svg: исходники заливок кнопка Export не отдаёт.');
         return json(await runUiExport(figma, { kind, scale: scale ?? 1 }));
@@ -1825,12 +2058,13 @@ export function register(server) {
           return runUiExport(figma, { kind, scale: scale ?? 1, why });
         }
       };
-      if (kind === 'svg') return json(await viaUi(async () => withBudget(await exportSvg(figma, { ...options, geometry, dropBackground }))));
-      if (kind === 'image') return json(await withBudget(await exportImages(figma, { ...options, scales: scale ? [scale] : [1, 2] })));
+      if (kind === 'svg') return reply(await viaUi(async () => withBudget(await exportSvg(figma, { ...options, geometry, dropBackground }))));
+      if (kind === 'image') return reply(await withBudget(await exportImages(figma, { ...options, scales: scale ? [scale] : [1, 2] })));
 
       if (clip && figma.length !== 1) throw new Error('clip относится к одному узлу: передайте ровно одну ссылку.');
       const result = await viaUi(async () => withBudget(await exportRender(figma, { ...options, scale, clip, parts })));
       if (result.channel === 'ui') return json(result);
+      if (compact) return reply(result);
       const content = [{ type: 'text', text: JSON.stringify(result) }, ...linkBlocks(result)];
       if (inline) {
         /* Не больше трёх картинок: части высокого кадра по отдельности читаются, а десяток разом

@@ -11,6 +11,7 @@ STEPS:
   3. dev server on 0.0.0.0 → browser_goto http://host.docker.internal:<port> answers 200.
   4. browser_open a second time with animations: "allow" — the live session; both with keepAlive: true, kept to the end.
   5. README, CLAUDE.md, bundler config — how assets are wired, what the CSS framework does to p and h1..h6; a dictionary of its utilities: tap area, icons, visibility.
+  6. The port is free (netstat and docker ps): another container on 127.0.0.1 gives the stand empty answers. The dev server runs in the background and survives the terminal closing.
 
 ## 0.1 The stand and access
 
@@ -30,7 +31,7 @@ login and password in the stand .env are set for exactly this, and the token is 
 asked for a captcha, a 2FA code or an email confirmation (`editor.state: needs_human`) — give the
 `editor.handoff.url` link to the human: it shows the live screen of the stand browser, the human
 passes the check personally, the stand saves the login; then `action: token` again. Not issued for
-another reason → a question to the human. A missing token is a blocker for phase 2, not a skip: on one landing page the comments were
+another reason → a question to the human. A missing token is a blocker for phase 3, not a skip: on one landing page the comments were
 never read, and the hover of three blocks was invented instead of taken from a comment.
 
 **A login to the editor is not access to the file yet.** `editor.state: ready` only says the stand
@@ -103,11 +104,17 @@ Read `README.md`, `CLAUDE.md`, the bundler config. Find out:
 - which components must not be touched because they are shared across projects;
 - what the project's CSS framework does to base elements;
 - **the framework dictionary**: which of its utilities handle the tap area, icon masks, visibility,
-  the grid. Write it down briefly — the UI kit is checked against it in phase 3.
+  the grid. Write it down briefly — the UI kit is checked against it in phase 4.
 
 > Why. The framework styled `p` and `h1..h6` directly through element selectors. A `font-size` on
 > the parent did not inherit — it lost to the element rule. Half an hour spent on "why 17px
 > instead of 32px".
+
+## 0.5 Port, dev server and sessions
+
+- **The port may be taken by another Docker container on `127.0.0.1`.** The dev server then comes up on `0.0.0.0` of the same port: the page opens on the machine, while the stand gets empty answers via `host.docker.internal`. Before work - `netstat -ano` for the port and `docker ps`. If taken, use another port with a strict `--port`.
+- **The dev server must not live in the agent's terminal.** The tool closes the terminal after each command, and a server the template stops along with it dies between calls. Start it in the background, detached from the terminal.
+- **Stand sessions are limited**: at the cap the least recently used one is evicted. An agent keeps at most two and closes them at the end.
 
 ## Gate
 

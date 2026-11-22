@@ -110,7 +110,7 @@ test('page_ready без кадров: мёртвая кнопка и налож�
     states: [{ name: 'Фильтры', steps: [{ action: 'click', selector: '.filters-toggle' }] }],
   });
   assert.deepEqual(again.ran, []);
-  assert.equal(again.reused.length, 2);
+  assert.deepEqual(again.reused.map((item) => item.check).sort(), ['initial_state', 'interaction_audit', 'layout_audit', 'settled']);
 });
 
 test('interaction_audit hover: краска SVG-потомка — «ответил стилем», правило без изменения — мёртвый ховер, шапка не в счёт', options, async () => {

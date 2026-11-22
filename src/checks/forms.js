@@ -370,8 +370,18 @@ export async function auditForms(session, { selector = 'form', open = [], values
     await perform(session, { action: 'type', selector: field.selector, value: String(value ?? ''), timeout: 5000 });
     /* Уход с поля: часть валидаторов срабатывает на blur. */
     await page.locator(field.selector).first().press('Tab').catch(() => {});
+    /*
+     * Годное значение должно остаться в поле. Поиск ТОПГАН не набирался: компонент поля стирал
+     * значение при перерисовке, а форма выглядела исправной. Маска может значение переписать,
+     * поэтому дефект — только пустое поле; негодные образцы браузер вправе отбросить сам.
+     */
+    if (value && value === validValue(field)) {
+      const now = await page.locator(field.selector).first().inputValue({ timeout: 1000 }).catch(() => null);
+      if (now === '') lostValues.add(field.selector);
+    }
   };
   const validValue = (field) => (field.type === 'checkbox' || field.type === 'radio' ? true : sampleFor(field, 'valid', values));
+  const lostValues = new Set();
 
   await page.route('**/*', handler);
   const forms = [];
@@ -474,6 +484,10 @@ export async function auditForms(session, { selector = 'form', open = [], values
       if (submit !== 'none' && !report.sent.length && !valid.gone) {
         report.issues.push({ step: 'valid', kind: 'notSent', note: 'Годная форма не отправила ни одного запроса. Если отправка идёт не fetch/xhr/переходом — проверьте руками.' });
       }
+      for (const lost of lostValues) {
+        report.issues.push({ step: 'input', kind: 'valueLost', selector: lost, note: 'Введённое значение пропало из поля: компонент стирает его при перерисовке.' });
+      }
+      lostValues.clear();
       forms.push(report);
     }
   } finally {

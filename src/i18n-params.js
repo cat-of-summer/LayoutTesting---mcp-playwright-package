@@ -15,6 +15,27 @@
 import { LANG } from './i18n.js';
 
 const EN = {
+  'Конечное состояние, если у узла несколько переходов': 'The end state when the node has several transitions',
+  'Кадров в секунду. По умолчанию 12': 'Frames per second. Default 12',
+  'Сколько переходов цепочки снять подряд. По умолчанию 1': 'How many transitions of the chain to capture in a row. Default 1',
+  'false — только числовые треки, без плеера': 'false: numeric tracks only, without the player',
+  'Страница для сверки движения': 'The page to compare the motion against',
+  'Блок на странице, которому соответствует узел': 'The block on the page that matches the node',
+  'Что запускает анимацию на странице. По умолчанию click': 'What starts the animation on the page. Default click',
+  'Элемент, на котором срабатывает trigger': 'The element the trigger fires on',
+  'Вложить контакт-лист первого шага в ответ': 'Embed the contact sheet of the first step in the answer',
+  'Дойти до каждого контрола, дождаться конца анимаций и проверить, что сверху: перекрытые кнопки, блоки поверх шапки, кнопки ряда не на одной линии, текст не по центру':
+    'Go to every control, wait for animations to end and check what lies on top: covered buttons, blocks over the header, row buttons off one line, off-center text',
+  'Полный ответ в артефакт, в контекст только счётчики и адрес файла': 'The full answer goes to an artifact, the context gets only counters and the file address',
+  'Только расхождения, без ссылок на картинки и пояснений: дешёвая сверка каждой секции. Без mode значит semantic':
+    'Only the differences, with no image links or explanations: a cheap check of every section. Without mode it means semantic',
+  'Полный ответ в артефакт, в контекст только счётчики, blocking и адрес файла': 'The full answer goes to an artifact, the context gets only counters, blocking and the file address',
+  'Категория: controlsCovered, overPinned, page_logs или категория layout_audit': 'Category: controlsCovered, overPinned, page_logs or a layout_audit category',
+  'Конкретный селектор из находки; для page_logs — её kind': 'The exact selector from the finding; for page_logs, its kind',
+  'Почему это не дефект именно на этом элементе': 'Why this is not a defect on this particular element',
+  'Поштучное списание сигналов: категорию целиком списать нельзя': 'Waive signals one by one: a whole category cannot be waived',
+  'Текст микро-ТЗ страницы: каждый незакрытый пункт "- [ ]" становится блокером': 'The text of the page micro-spec: every open "- [ ]" item becomes a blocker',
+  'Полный ответ в артефакт, в контекст только счётчики и адреса файлов': 'The full answer goes to an artifact, the context gets only counters and file addresses',
   'Снять столько кадров viewport (до 12) сразу после commit, шаг 200 мс: стартовая анимация': 'Capture that many viewport frames (up to 12) right after commit, 200 ms apart: the intro animation',
   'Прогнать по этим ширинам окна сводкой; окно вернётся к исходному': 'Run across these window widths as a summary; the window is restored afterwards',
   'Регулярные выражения по тексту сообщений — соглашения проекта; отфильтрованное считается отдельно в ignored': 'Regular expressions over message texts — project conventions; what is filtered is counted separately in ignored',

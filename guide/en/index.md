@@ -1,6 +1,6 @@
 # Building markup from a design
 
-The order of work: thirteen phases, walked one at a time rather than read all at once.
+The order of work: twelve phases, walked one at a time rather than read all at once.
 
 This guide is assembled from real mistakes — two shipped landing pages and the findings the tools
 surfaced afterwards. Every rule is backed by a case where breaking it cost rework.
@@ -26,8 +26,8 @@ diagnosing it mid-build; the design comments were never read, and the hover was 
 heights were compared instead of the picture, and the page shipped with black icons and a row
 shifted by 32px.
 
-Two sections sit outside the sequence and are read at any time: `rules` — the rules and
-prohibitions on one page, and `symptoms` — the "symptom → tool" table.
+Four sections sit outside the sequence and are read at any time: `rules` - the rules and
+prohibitions on one page, `symptoms` - the "symptom → tool" table, `team` - working with several agents, `economy` - saving context.
 
 The same text is available without a tool call: `GET /skill/layout-by-figma/SKILL.md` on the
 stand — the phase map, the rules and the checklists as one file for an agent skill;
@@ -42,17 +42,16 @@ each phase leads to the next.
 |---|---|---|
 | `setup` | 0 | the stand, reaching the project, Figma access, two sessions, the project's rules |
 | `frames` | 1 | reconnaissance: which frames to build, what is clipped, what is not a frame |
-| `inventory` | 2 | blocks, links, comments, standard elements |
-| `system` | 3 | tokens, components, breakpoints |
-| `assets` | 4 | icons, images, the paint on the node, the color of monochrome icons |
-| `fonts` | 5 | substitution, metrics, subsets |
-| `content` | 6 | text into data, line-break artifacts |
-| `questions` | 7 | what to ask the human before the first line |
-| `motion` | 8 | animations, initial states, element states |
-| `shell` | 9 | header, footer, UI kit |
-| `block` | 10 | the block cycle — the central section |
-| `page` | 11 | the whole page, at every width |
-| `project` | 12 | the whole project and the build |
+| `sections` | 2 | cutting pages into sections, the register, standard elements |
+| `comments` | 3 | every comment becomes a checkable requirement |
+| `system` | 4 | tokens, UI kit, assets, fonts |
+| `behavior` | 5 | animations, scroll, touch, states, questions to the human |
+| `spec` | 6 | page micro-specs, text into data |
+| `shell` | 7 | header and footer |
+| `features` | 8 | shared functionality and module contracts |
+| `block` | 9 | the block cycle - the central section |
+| `page` | 10 | the whole page, at every width |
+| `project` | 11 | the whole project and the build |
 
 ## What is not here
 

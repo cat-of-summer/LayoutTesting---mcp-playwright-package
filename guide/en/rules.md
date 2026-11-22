@@ -1,6 +1,6 @@
 # Rules and prohibitions
 
-If this guide is reduced to one page, this is the page: thirteen rules and ten prohibitions.
+If this guide is reduced to one page, this is the page: sixteen rules and fourteen prohibitions.
 
 All of them come from cases where breaking them cost rework. Next to each one is what it actually
 cost.
@@ -105,6 +105,18 @@ header that stands elsewhere with the menu open. Forms — `form_audit`, open st
 
 *Three of the four bugs of one checkpoint lived in transitions.*
 
+## 14. A signal is waived one by one
+
+A whole category cannot be waived: "controlOverlaps is just reveal" hid covered buttons and a block over the header. A waiver goes through `waivers` of `page_ready`: the check, a specific selector, a reason.
+
+## 15. Behavior is the human's decision
+
+Scroll scenes, hover on touch, "once" hints are not drawn in a frame. The agent does not invent them: the `behavior` phase asks before building.
+
+## 16. Departing from the framework model is a question
+
+A custom scale on top of the framework's, custom breakpoints, an image instead of text are the human's decisions. A `font-size` cap on top of the scale broke the mobile typography of a whole site.
+
 ## Prohibitions
 
 Phrased as "do not do X, because Y" — the things that should stop the hand.
@@ -130,3 +142,7 @@ Phrased as "do not do X, because Y" — the things that should stop the hand.
   in the way, with a ready `next`.
 - **A "done" report is never written after comparing a single width.** Desktop compared means
   mobile not compared; `coverage.notCompared` names such frames.
+- **A Figma canvas is never rendered whole.** Contents via `figma_inspect`, renders frame by frame.
+- **A category of signals is never waived.** Only an element, with a reason.
+- **No glyph means a question to the human,** not a symbol as an image.
+- **Animation is not invented.** Trajectory and rhythm come from `motion_frames`.

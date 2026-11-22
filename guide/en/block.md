@@ -1,10 +1,10 @@
-# Phase 10. The block cycle
+# Phase 9. The block cycle
 
 The central section. The order inside matters: the specification down to the leaves first, then the structure, then the styles, then a comparison of pictures.
 
 ## Checklist
 
-ENTRY: the shell is done, the block's ref in every frame (desktop and mobile) is known.
+ENTRY: the header, footer and shared functionality are done, the block's ref in every frame (desktop and mobile) is known.
 STEPS:
   1. figma_spec(ref, depth ≥ 6) — down to the leaf vectors; unresolved in the answer is empty (otherwise expand).
   2. For every TEXT — font, size, weight, line-height, color, width (fill/hug) from css; the small stuff (dashes, bullets) separately.
@@ -14,14 +14,14 @@ STEPS:
   6. Structure from the tree; subtract nested container offsets on both axes.
   7. Build: no px derived from the frame width, no cover instead of coordinates, state ≠ data.
   8. computed_styles → the edit arrived; if not — matched_rules.
-  9. figma_compare mode: semantic — every difference explained or fixed (not "tolerance"); stepDrift or a growing shift — figma_spacing.
-  10. figma_compare sections: true (or pixel by selector) — picture against picture per section.
+  9. figma_compare compact: true per section - texts, font, case, color, offsets; every difference explained or fixed (not "tolerance"); stepDrift or a growing shift - figma_spacing.
+  10. layout_audit(settled: true); figma_compare sections: true - one pass per width, repeats only for fixed sections.
   11. layout_stress(widths from figma_sync.widths.suggested).
-  12. Live session: hover every interactive element, interaction_audit; silent is empty.
+  12. Live session: hover every interactive element, interaction_audit; silent is empty; motion_frames with url - the motion matches the design.
   13. States: modals and menus — layout_audit with states; forms — form_audit; whatever exists in several states (the header with the menu open) — browser_act with anchors, moved is empty.
   14. Repeat 9–10 after the fixes, on every frame of the block; coverage without notCompared; register block → checks.
 
-## 10.1 Capture the specification — down to the leaves
+## 9.1 Capture the specification — down to the leaves
 
 ```
 figma_spec(the block node, depth: 6..8)
@@ -84,7 +84,7 @@ becomes a column.
 > the mobile node even once. A different height at the same box already said the composition was
 > different.
 
-## 10.2 Structure from the tree, not from the picture
+## 9.2 Structure from the tree, not from the picture
 
 DOM order equals the reading order of the narrowest layout. Rearranging on wide screens is done in
 CSS, not with a second markup. Decoration goes into pseudo-elements and `absolute`, a background
@@ -99,9 +99,9 @@ rectangle becomes the container background, content is never positioned absolute
 child of a nested container, subtract the container's offset on **both** axes: the bottom row of
 a diagram drifted 32px to the right because the block's `y` was subtracted and its `x` was not.
 Recomputing "in the head" while moving numbers into data is where this happens; the picture
-comparison (10.5) is where it gets caught.
+comparison (9.5) is where it gets caught.
 
-## 10.3 Build
+## 9.3 Build
 
 Do not replace design geometry with "clever" techniques. `object-fit: cover` instead of
 coordinates is giving up the design in favour of the browser's guess: the moment the block height
@@ -118,7 +118,7 @@ percentages, `clamp()`, `minmax()`, wrapping.
 **State is not data.** An expanded card in the design is a `hover` or the active slide, not "this
 card has amounts". Tuning behaviour to the section height is not allowed.
 
-## 10.4 Check that the edit actually arrived
+## 9.4 Check that the edit actually arrived
 
 ```
 computed_styles(selector, one characteristic property)
@@ -145,7 +145,7 @@ What to read in the `browser_goto` answer when navigating again to the same addr
 > for in code that had none. `matched_rules` showed the winning rule together with its source — and
 > it became visible that the served CSS really did contain the old declaration.
 
-## 10.5 Compare against the design — the picture, not the heights
+## 9.5 Compare against the design — the picture, not the heights
 
 ```
 figma_compare(sessionId, the block node, mode: "semantic")    → texts, sizes, paint
@@ -221,7 +221,7 @@ In small pills `figma_compare` with `sections: true` checks how the glyphs sit b
 elements have identical content, so the effect will not be visible. Check on different data and tell
 the human.
 
-## 10.6 Stress-test the block — the widths between the frames
+## 9.6 Stress-test the block — the widths between the frames
 
 ```
 layout_stress(sessionId, selectors: [the block selector], widths: [from figma_sync.widths.suggested])
@@ -241,7 +241,7 @@ not skipped.
 > clean. And the header did not survive a menu of 12 items. And at 1068px a side column left the
 > screen — only 1440 and 380 had been checked.
 
-## 10.7 Interaction: measure it, do not look at it
+## 9.7 Interaction: measure it, do not look at it
 
 ```
 browser_goto(..., animations: "allow")   — or the live session from phase 0
@@ -316,13 +316,13 @@ Comparing with the frame does not help here: the menu frame may be drawn with it
 > switching worked. No screenshot of the block was taken — so nobody saw that Swiper had put
 > `position: absolute; left: 0` on the dots container, and they were pressed to the left edge.
 
-## 10.8 Final comparison
+## 9.8 Final comparison
 
-Repeat 10.5 (both steps) after all the fixes.
+Repeat 9.5 (both steps) after all the fixes.
 
 ## Gate
 
-10.4–10.8 are done for the desktop and the mobile node; `unresolved` is empty; differences are
+9.4–9.8 are done for the desktop and the mobile node; `unresolved` is empty; differences are
 either fixed or written down with a justification and the node; every section is compared pixel
 by pixel on every frame, `coverage` has no `notCompared`; every element's hover has been looked
 at in the live session and checked against its variant with `figma_variants` — `missingOnPage` is

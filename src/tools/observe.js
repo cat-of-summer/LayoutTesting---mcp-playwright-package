@@ -10,6 +10,7 @@ import { d } from '../i18n-params.js';
 import { siteRef } from '../artifacts.js';
 import { createSession, closeSession, getSession, gotoAndSettle, sessionAt } from '../browser/pool.js';
 import { pageSnapshot } from '../checks/snapshot.js';
+import { likelyDefects } from '../checks/settled.js';
 import { CONFIG } from '../config.js';
 import { cappedTail, json, profileCoreSchema, text } from './shared.js';
 import { resolveConditions } from '../browser/profiles.js';
@@ -134,7 +135,9 @@ export function register(server) {
           .filter(([name, list]) => name !== 'resourceErrors' || list.length)
           .map(([name, list]) => [name, cappedTail(list.map(clipEntry), cap)]),
       );
-      return json({ scope, ...shown });
+      /* Предупреждения библиотек — отдельной строкой: в общем логе их списывали как шум. */
+      const defects = likelyDefects(rawConsole);
+      return json({ scope, ...(defects.length ? { likelyDefects: defects } : {}), ...shown });
     },
 
   );

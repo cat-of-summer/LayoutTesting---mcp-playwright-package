@@ -228,8 +228,39 @@ function watchInPage({ selector, timeoutMs, ignore = [] }) {
     let changedFrames = 0;
     let still = 0;
 
+    /*
+     * Качество перехода, а не только факт ответа. Табы ТОПГАН на время анимации показывали две
+     * панели и внутренний скроллбар, а раскрытие вакансии дёргало саму карточку. Конечное
+     * состояние у всех было верным, поэтому смотреть надо на кадры между.
+     */
+    const switching = root.matches('[role="tab"], [aria-selected], [aria-expanded], summary');
+    const pageTop = () => root.getBoundingClientRect().top + window.scrollY;
+    const anchorTop = pageTop();
+    const shownPanel = (el) => {
+      const s = getComputedStyle(el);
+      return el.getBoundingClientRect().height > 0 && s.display !== 'none' && s.visibility !== 'hidden' && Number(s.opacity) > 0.05;
+    };
+    const panels = root.matches('[role="tab"], [aria-selected]') ? Array.from(document.querySelectorAll('[role="tabpanel"]')) : [];
+    const box = controlled?.parentElement || null;
+    const hadScroll = box ? box.scrollHeight > box.clientHeight + 1 : false;
+    const quality = { panels: 0, jump: 0, scroll: false };
+    const measure = () => {
+      if (!switching) return;
+      quality.panels = Math.max(quality.panels, panels.filter(shownPanel).length);
+      quality.jump = Math.max(quality.jump, Math.abs(pageTop() - anchorTop));
+      if (box && !hadScroll && /auto|scroll/.test(getComputedStyle(box).overflowY) && box.scrollHeight > box.clientHeight + 1) quality.scroll = true;
+    };
+    const issuesOf = () => {
+      const out = [];
+      if (quality.panels > 1) out.push({ kind: 'twoPanels', panels: quality.panels, note: 'во время перехода видно несколько панелей сразу' });
+      if (quality.scroll) out.push({ kind: 'transientScroll', note: 'на время перехода у контейнера появляется внутренний скролл' });
+      if (quality.jump > 4) out.push({ kind: 'jump', px: Math.round(quality.jump), note: 'сам элемент сдвигается при раскрытии: должен стоять на месте, двигается то, что ниже' });
+      return out;
+    };
+
     const step = () => {
       frames += 1;
+      measure();
       const now = performance.now();
       const current = signature();
       if (current !== last) {
@@ -247,6 +278,7 @@ function watchInPage({ selector, timeoutMs, ignore = [] }) {
       if (elapsed >= timeoutMs) {
         observer.disconnect();
         resolve({
+          quality: issuesOf(),
           changed: { moved: signature() !== before, added, removed, attrs, ...(ambient ? { ambient } : {}) },
           timing: {
             settled: false,
@@ -262,6 +294,7 @@ function watchInPage({ selector, timeoutMs, ignore = [] }) {
       if (still >= 4 && firstChangeMs !== null) {
         observer.disconnect();
         resolve({
+          quality: issuesOf(),
           changed: { moved: signature() !== before, added, removed, attrs, ...(ambient ? { ambient } : {}) },
           timing: {
             settled: true,
@@ -475,6 +508,114 @@ async function act(locator, action) {
 const isSilent = (result) =>
   !result.error && !result.changed.moved && !result.changed.added && !result.changed.removed && !result.changed.attrs.length;
 
+/** Элементы, у которых :hover меняет содержимое, а не только цвет. */
+function pickHoverContent({ maxTargets }) {
+  const CONTENT = ['display', 'visibility', 'opacity', 'height', 'maxHeight', 'transform'];
+  const hosts = new Set();
+  const scan = (list) => {
+    for (const rule of Array.from(list || [])) {
+      if (rule.cssRules?.length && !rule.selectorText) scan(rule.cssRules);
+      if (!rule.selectorText || !rule.selectorText.includes(':hover')) continue;
+      if (!CONTENT.some((prop) => rule.style?.[prop])) continue;
+      for (const part of rule.selectorText.split(',')) {
+        const at = part.indexOf(':hover');
+        if (at < 0) continue;
+        /* Потомок после :hover — значит, меняется содержимое, а не сам элемент. */
+        if (!/^[^\s>+~]*[\s>+~]+\S/.test(part.slice(at + 6))) continue;
+        const host = part.slice(0, at).trim();
+        try {
+          for (const el of document.querySelectorAll(host)) hosts.add(el);
+        } catch {
+          /* Чужой селектор может быть невалиден для querySelectorAll. */
+        }
+      }
+    }
+  };
+  for (const sheet of Array.from(document.styleSheets)) {
+    try {
+      scan(sheet.cssRules);
+    } catch {
+      /* Чужой домен не отдаёт правила. */
+    }
+  }
+  const path = (el) => {
+    const parts = [];
+    for (let node = el; node && node.nodeType === 1 && parts.length < 6; node = node.parentElement) {
+      if (node.id) {
+        parts.unshift(`#${CSS.escape(node.id)}`);
+        break;
+      }
+      const same = node.parentElement ? Array.from(node.parentElement.children).filter((c) => c.tagName === node.tagName) : [];
+      const cls = (node.getAttribute('class') || '').trim().split(/\s+/).filter(Boolean)[0];
+      parts.unshift(`${node.tagName.toLowerCase()}${cls ? `.${CSS.escape(cls)}` : ''}${same.length > 1 ? `:nth-of-type(${same.indexOf(node) + 1})` : ''}`);
+    }
+    return parts.join(' > ');
+  };
+  return [...hosts]
+    .filter((el) => el.getBoundingClientRect().width > 0)
+    .slice(0, maxTargets)
+    .map((el) => path(el));
+}
+
+/** Вид потомков цели и перехват клика: страница не уходит, а видно, отменил ли его обработчик. */
+function armTap(selector) {
+  const root = document.querySelector(selector);
+  if (!root) return null;
+  const read = () =>
+    Array.from(root.querySelectorAll('*'))
+      .slice(0, 120)
+      .map((el) => {
+        const s = getComputedStyle(el);
+        return `${s.display}|${s.visibility}|${s.opacity}|${s.transform}|${Math.round(el.getBoundingClientRect().height)}`;
+      })
+      .join(';');
+  const state = { before: read(), clicked: false, prevented: false };
+  const onClick = (event) => {
+    state.clicked = true;
+    state.prevented = event.defaultPrevented;
+    event.preventDefault();
+  };
+  window.addEventListener('click', onClick);
+  window.__ltTap = () => {
+    window.removeEventListener('click', onClick);
+    delete window.__ltTap;
+    return { clicked: state.clicked, prevented: state.prevented, changed: read() !== state.before, link: Boolean(root.closest('a[href]')) };
+  };
+  const rect = root.getBoundingClientRect();
+  return { x: rect.left + rect.width / 2, y: rect.top + rect.height / 2 };
+}
+
+/**
+ * Hover на тач-устройстве.
+ *
+ * На ТОПГАН переключение карточек работало только наведением, и на телефоне состояние было
+ * недостижимо. Норма такая: первый тап показывает состояние, второй идёт по ссылке. Находки две:
+ * ссылка уходит с первого тапа или тап не меняет ничего. В сессии без касаний проверки нет.
+ */
+export async function auditTouchHover(page, { maxTargets = 12 } = {}) {
+  const touch = await page.evaluate(() => navigator.maxTouchPoints > 0).catch(() => false);
+  if (!touch) return [];
+  const targets = await page.evaluate(pickHoverContent, { maxTargets });
+  const out = [];
+  for (const selector of targets) {
+    await page.locator(selector).first().scrollIntoViewIfNeeded({ timeout: 1500 }).catch(() => {});
+    const point = await page.evaluate(armTap, selector).catch(() => null);
+    if (!point) continue;
+    await page.touchscreen.tap(point.x, point.y).catch(() => {});
+    await page.waitForTimeout(350);
+    const seen = await page.evaluate(() => window.__ltTap?.() ?? null).catch(() => null);
+    if (!seen) continue;
+    if (seen.link && seen.clicked && !seen.prevented) {
+      out.push({ selector, kind: 'navigatesAtOnce', note: 'первый тап сразу идёт по ссылке: состояние из hover на телефоне не увидеть' });
+    } else if (!seen.changed) {
+      out.push({ selector, kind: 'noTouchState', note: 'тап не показывает состояние, которое есть при наведении' });
+    }
+    await page.touchscreen.tap(1, 1).catch(() => {});
+    await page.waitForTimeout(120);
+  }
+  return out;
+}
+
 /* Ховер, изменивший меньше этой доли пикселей цели, на глаз не виден: курсор, сглаживание. */
 const VISIBLE_PIXELS = 0.005;
 
@@ -500,6 +641,7 @@ export async function runInteractions(
   const silent = [];
   const hoverInvisible = [];
   const hoverNone = [];
+  const transitionIssues = [];
 
   for (const target of targets) {
     for (const action of actions) {
@@ -546,6 +688,8 @@ export async function runInteractions(
       }
       const visible = styles.length > 0 || (pixels ?? 0) >= VISIBLE_PIXELS;
 
+      if (action === 'click') for (const issue of result.quality || []) transitionIssues.push({ selector: target.selector, ...issue });
+
       const quiet = isSilent(result);
       let verdict = quiet ? 'молчит' : 'ответил';
       if (quiet && look && visible) verdict = 'ответил стилем';
@@ -580,9 +724,13 @@ export async function runInteractions(
     }
   }
 
+  const touchHover = await auditTouchHover(page, { maxTargets: Math.min(maxTargets, 12) }).catch(() => []);
+
   return {
     found: targets.length,
     probed: results.length,
+    ...(transitionIssues.length ? { transitionIssues: transitionIssues.slice(0, maxItems) } : {}),
+    ...(touchHover.length ? { touchHover } : {}),
     ...(targets.length >= maxTargets
       ? { note: `Показаны первые ${maxTargets} элементов — остальные не проверялись. Сузьте selectors или поднимите maxTargets.` }
       : {}),

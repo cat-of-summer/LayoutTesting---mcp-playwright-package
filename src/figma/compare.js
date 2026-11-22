@@ -108,6 +108,7 @@ export function probePage(rootSelector) {
           ? { control: { selector: cssPath(control), box: { x: controlRect.x - origin.x, y: controlRect.y - origin.y, w: controlRect.width, h: controlRect.height } } }
           : {}),
         style: {
+          fontFamily: style.fontFamily,
           fontSize: style.fontSize,
           fontWeight: style.fontWeight,
           lineHeight: style.lineHeight,
@@ -207,6 +208,7 @@ export function designItems(snapshot, rootId) {
         ...(frame ? { frame: { id: frame.id, name: frame.name, box: rel(frame.box) } } : {}),
         ...(lineHeight && node.text.autoResize !== 'TRUNCATE' ? { lines: Math.max(1, Math.round(node.box.h / lineHeight)) } : {}),
         style: {
+          family: style.family,
           fontSize: style.size,
           fontWeight: style.weight,
           lineHeight: style.lineHeight?.unit === 'px' ? style.lineHeight.value : null,
@@ -570,8 +572,89 @@ const px = (value) => {
   return Number.isFinite(parsed) ? parsed : null;
 };
 
-function styleDiff(design, page) {
+/** Первое семейство из font-family: `"Bebas Neue", sans-serif` → Bebas Neue. */
+export const firstFamily = (value) => String(value || '').split(',')[0].trim().replace(/^["']|["']$/g, '');
+
+/*
+ * Ключ семейства для сравнения. Один шрифт в макете и в проекте часто назван по-разному:
+ * «Bebas Neue Ru» и «Bebas Neue Cyrillic» в файле, BebasNeue в @font-face. Языковые и служебные
+ * суффиксы разницей не считаются, начертание тут не участвует — его сверяет font-weight.
+ */
+const FAMILY_NOISE = /\b(ru|rus|cyr|cyrillic|latin|web|webfont|vf|variable)\b/g;
+export const familyKey = (value) =>
+  firstFamily(value).toLowerCase().replace(FAMILY_NOISE, '').replace(/[^\p{L}\p{N}]/gu, '');
+
+/**
+ * Текст, каким его видит глаз: символы плюс преобразование регистра.
+ *
+ * Сравнивать надо именно это. В макете «ЗАПИСАТЬСЯ» бывает и набрано прописными, и задано
+ * textCase, а на странице — и так, и через text-transform: разные записи одного вида расхождением
+ * не считаются. null — капитель: её вид строкой не передать, сверка по ней не идёт.
+ */
+export function renderedText(text, transform) {
+  const value = String(text || '').replace(/\s+/g, ' ').trim();
+  switch (transform) {
+    case 'upper':
+    case 'uppercase':
+      return value.toUpperCase();
+    case 'lower':
+    case 'lowercase':
+      return value.toLowerCase();
+    case 'title':
+    case 'capitalize':
+      return value.replace(/(^|\s)(\p{L})/gu, (full, lead, letter) => `${lead}${letter.toUpperCase()}`);
+    case 'small_caps':
+    case 'small_caps_forced':
+      return null;
+    default:
+      return value;
+  }
+}
+
+/**
+ * Согласованная подмена шрифта: все тексты семейства макета набраны одним другим семейством.
+ *
+ * Коммерческий шрифт заменяют по договорённости с человеком, и тогда расхождение было бы на
+ * каждом тексте страницы — за такой стеной не видно единственной подписи с чужим шрифтом. Поэтому
+ * подмена называется одной строкой, а находкой остаётся только то, что из неё выбилось.
+ */
+export function fontSubstitutions(pairs, { min = 3, share = 0.75 } = {}) {
+  const seen = new Map();
+  for (const { design, page } of pairs) {
+    const from = familyKey(design.style?.family);
+    const to = familyKey(page.style?.fontFamily);
+    if (!from || !to) continue;
+    const entry = seen.get(from) || { design: firstFamily(design.style.family), total: 0, to: new Map() };
+    entry.total += 1;
+    const target = entry.to.get(to) || { page: firstFamily(page.style.fontFamily), count: 0 };
+    target.count += 1;
+    entry.to.set(to, target);
+    seen.set(from, entry);
+  }
+  const accepted = new Map();
+  const list = [];
+  for (const [from, entry] of seen) {
+    const [to, top] = [...entry.to.entries()].sort((a, b) => b[1].count - a[1].count)[0];
+    if (to === from || top.count < min || top.count / entry.total < share) continue;
+    accepted.set(from, to);
+    list.push({ design: entry.design, page: top.page, texts: top.count, of: entry.total });
+  }
+  return { accepted, list };
+}
+
+function styleDiff(design, page, substitutions = new Map()) {
   const out = {};
+  const from = familyKey(design.style.family);
+  const to = familyKey(page.style.fontFamily);
+  if (from && to && from !== to && substitutions.get(from) !== to) {
+    out['font-family'] = { design: firstFamily(design.style.family), page: firstFamily(page.style.fontFamily) };
+  }
+  /* Страница без вычисленного transform — разобранный заранее снимок: сравнивать не с чем. */
+  if (page.style.textTransform !== undefined) {
+    const want = renderedText(design.text, design.style.textTransform);
+    const have = renderedText(page.text, page.style.textTransform);
+    if (want !== null && want !== have) out['text-case'] = { design: clip(want, 30), page: clip(have, 30) };
+  }
   const size = px(page.style.fontSize);
   if (design.style.fontSize && size !== null && Math.abs(design.style.fontSize - size) > 0.5) {
     out['font-size'] = { design: `${round(design.style.fontSize)}px`, page: page.style.fontSize };
@@ -821,11 +904,12 @@ export function compareGeometry(design, page, { tolerance = 2 } = {}) {
   const lead = confirmLead(design, pairs, { tolerance });
   const findings = [];
   const pairOf = new Map();
+  const fonts = fontSubstitutions(pairs);
 
   for (const pair of pairs) {
     const boxes = pairBoxes(pair, lead?.y ?? 0);
     const shift = pairShift(boxes);
-    const styles = styleDiff(pair.design, pair.page);
+    const styles = styleDiff(pair.design, pair.page, fonts.accepted);
     const worst = Math.max(Math.abs(shift.x), Math.abs(shift.y), boxes.loose ? 0 : Math.abs(shift.w));
     const lines =
       pair.design.lines && pair.page.lines && pair.design.lines !== pair.page.lines
@@ -932,6 +1016,7 @@ export function compareGeometry(design, page, { tolerance = 2 } = {}) {
     matched: pairs.length,
     findings: all,
     ...(lead ? { lead } : {}),
+    ...(fonts.list.length ? { fontSubstitutions: fonts.list } : {}),
     onlyDesign: onlyDesign.slice(0, 15).map((item) => ({ node: item.id, text: clip(item.text, 40) })),
     onlyPage: onlyPage.slice(0, 15).map((item) => ({ selector: item.selector, text: clip(item.text, 40) })),
     ...(absent.length ? { onlyDesignBlocks: absent.slice(0, 5) } : {}),
@@ -1044,6 +1129,15 @@ export async function compareWithDesign({
       ...(semantic.findings.length > limit ? { note: truncatedNote(semantic.findings.length, limit) } : {}),
       onlyDesign: semantic.onlyDesign,
       onlyPage: semantic.onlyPage,
+      ...(semantic.fontSubstitutions
+        ? {
+            fontSubstitutions: semantic.fontSubstitutions,
+            fontSubstitutionsNote: t({
+              ru: 'Семейство макета везде набрано другим шрифтом. Если подмену не согласовали с человеком - это расхождение, а не допуск.',
+              en: 'A design family is set in another font throughout. Unless the substitution was agreed with the human, this is a discrepancy rather than a tolerance.',
+            }),
+          }
+        : {}),
       ...(semantic.rowNoise ? { rowNoise: semantic.rowNoise } : {}),
       ...(semantic.onlyDesignBlocks
         ? {
@@ -1151,6 +1245,76 @@ export async function compareWithDesign({
   }
 
   return out;
+}
+
+/**
+ * Сжатый ответ сверки: только расхождения, без картинок и пояснений.
+ *
+ * Смысловую сверку на ТОПГАН заменили замерами высот ради экономии токенов, и приёмка нашла наезды
+ * текста, чужие цвета и шрифты. Чтобы её можно было требовать на каждой секции, ответ должен быть
+ * дешёвым: ни одной ссылки на артефакт, повторяющиеся подсказки убраны, счётчики на месте.
+ */
+export function compactCompare(result, digest = {}) {
+  const tight = ({ hint, ...finding }) => {
+    if (finding.lines) {
+      const { note, ...lines } = finding.lines;
+      finding.lines = lines;
+    }
+    if (finding.textBox) {
+      const { note, ...size } = finding.textBox;
+      finding.textBox = size;
+    }
+    return finding;
+  };
+  const { semantic, paint, coverage } = result;
+  const notes = ['chromeNote', 'originNote', 'widthNote', 'heightNote', 'scrollbarNote', 'contentNote'].filter((key) => result[key]);
+  return {
+    compact: true,
+    runId: result.runId,
+    ref: result.ref,
+    frame: result.frame,
+    ...(semantic
+      ? {
+          semantic: {
+            matched: semantic.matched,
+            found: semantic.found,
+            findings: semantic.findings.map(tight),
+            ...(semantic.note ? { note: semantic.note } : {}),
+            ...(semantic.onlyDesign.length ? { onlyDesign: semantic.onlyDesign } : {}),
+            ...(semantic.onlyPage.length ? { onlyPage: semantic.onlyPage } : {}),
+            ...(semantic.onlyDesignBlocks ? { onlyDesignBlocks: semantic.onlyDesignBlocks } : {}),
+            ...(semantic.fontSubstitutions ? { fontSubstitutions: semantic.fontSubstitutions } : {}),
+          },
+        }
+      : {}),
+    ...(paint
+      ? {
+          paint: {
+            matched: paint.matched,
+            found: paint.found,
+            findings: paint.findings,
+            ...(paint.note ? { note: paint.note } : {}),
+            ...(paint.unmatched
+              ? { unmatched: { shifted: paint.unmatched.shifted?.count ?? 0, notFound: paint.unmatched.notFound?.count ?? 0 } }
+              : {}),
+          },
+        }
+      : {}),
+    ...(result.pixel ? { pixel: { match: result.pixel.match, diffPercentage: result.pixel.diffPercentage, ...(result.pixel.error ? { error: result.pixel.error } : {}) } } : {}),
+    ...(digest.worst ? { sections: digest.worst } : {}),
+    ...(notes.length ? { notes: Object.fromEntries(notes.map((key) => [key, result[key]])) } : {}),
+    ...(coverage
+      ? {
+          coverage: {
+            semantic: coverage.semantic,
+            pixel: coverage.pixel,
+            sections: coverage.sections,
+            ...(coverage.widthWarning ? { widthWarning: coverage.widthWarning } : {}),
+            ...(coverage.notCompared ? { notCompared: coverage.notCompared.length } : {}),
+          },
+        }
+      : {}),
+  };
 }
 
 /**

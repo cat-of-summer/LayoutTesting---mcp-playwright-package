@@ -488,6 +488,24 @@ export async function findNode(fileKey, nodeId, { cacheDir = DIRS.figma } = {}) 
   return null;
 }
 
+/**
+ * Снимки файла, свежие первыми, по одному: обход обычно кончается на первых же.
+ *
+ * Снимок узла через REST не знает своих родителей, а снимок страницы, где этот узел лежит, знает.
+ * Версия тут не фильтр: в кэше живут снятия разных дней, а на каком экране стоит узел, от правки
+ * макета почти не зависит. Для значений узла такой снимок не годится, для этого вопроса годится.
+ */
+export async function* knownSnapshots(fileKey, { cacheDir = DIRS.figma } = {}) {
+  const meta = await readMeta(fileKey, { cacheDir });
+  const entries = Object.values(meta?.roots || {})
+    .filter((entry) => entry.model === MODEL)
+    .sort((a, b) => String(b.fetchedAt).localeCompare(String(a.fetchedAt)));
+  for (const entry of entries) {
+    const snapshot = await readJson(path.join(cacheDir, fileKey, entry.file));
+    if (snapshot?.nodes) yield snapshot;
+  }
+}
+
 /** Имена кадров и их страниц, известные по снятиям файла: id → { name, page }. */
 export async function frameIndex(fileKey, { cacheDir = DIRS.figma } = {}) {
   return (await readMeta(fileKey, { cacheDir }))?.frames || {};

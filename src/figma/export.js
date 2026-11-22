@@ -137,14 +137,18 @@ export async function contactSheet(tiles, out, { thumb = 360, columns = 4, label
     const meta = await sharp(image).metadata();
     cells.push({ image, w: meta.width, h: meta.height, text: `${tile.id} ${tile.name || ''}`.slice(0, 48) });
   }
-  const rows = Math.ceil(cells.length / columns);
-  const cellH = thumb + label;
+  /* Высота ряда — по самой высокой плитке: широкие кадры анимации иначе тонут в пустых полях. */
+  const rowTops = [8];
+  for (let i = 0; i < cells.length; i += columns) {
+    const tallest = Math.max(...cells.slice(i, i + columns).map((cell) => cell.h));
+    rowTops.push(rowTops.at(-1) + label + tallest + 8);
+  }
   const width = columns * (thumb + 8) + 8;
-  const height = rows * (cellH + 8) + 8;
+  const height = rowTops.at(-1);
   const composites = [];
   cells.forEach((cell, i) => {
     const left = 8 + (i % columns) * (thumb + 8);
-    const top = 8 + Math.floor(i / columns) * (cellH + 8);
+    const top = rowTops[Math.floor(i / columns)];
     composites.push({ input: cell.image, left, top: top + label });
     const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="${thumb}" height="${label}"><rect width="100%" height="100%" fill="#222"/><text x="6" y="${label - 9}" font-family="sans-serif" font-size="14" fill="#fff">${escapeXml(cell.text)}</text></svg>`;
     composites.push({ input: Buffer.from(svg), left, top });
@@ -183,6 +187,31 @@ async function renderTiles(group, id, found, options, dir) {
     }),
     inner,
   };
+}
+
+/**
+ * Пачки рендера для канала редактора: по числу узлов и по площади в пикселях.
+ *
+ * Plugin API оборвать нельзя, поэтому операция, не уложившаяся в editorJobMs, закрывает вкладку.
+ * Холст ТОПГАН в 11.5 тыс. узлов одной операцией не успел за 120 с и потерял весь результат. Узел
+ * крупнее предела идёт отдельной пачкой: дробить его не на что.
+ */
+export function renderBatches(items, { size = 5, maxPixels = 16_000_000 } = {}) {
+  const batches = [];
+  let batch = [];
+  let pixels = 0;
+  for (const item of items) {
+    const area = (item.node?.box?.w ?? 0) * (item.node?.box?.h ?? 0) * (item.scale ?? 1) ** 2;
+    if (batch.length && (batch.length >= size || pixels + area > maxPixels)) {
+      batches.push(batch);
+      batch = [];
+      pixels = 0;
+    }
+    batch.push(item);
+    pixels += area;
+  }
+  if (batch.length) batches.push(batch);
+  return batches;
 }
 
 export async function exportRender(refs, { client = getRestClient(), cacheDir = DIRS.figma, editor = null, scale, clip, parts = 'auto' } = {}) {
@@ -230,16 +259,31 @@ export async function exportRender(refs, { client = getRestClient(), cacheDir = 
       await withChannels(
         { editor, client, state, fileKey: group.fileKey },
         async () => {
-          const res = await editor.render(
-            group.fileKey,
-            missing.map((item) => ({ id: item.id, scale: item.scale, format: 'png' })),
-          );
-          for (const item of missing) {
-            if (res[item.id]?.base64) await writeFile(item.cached, Buffer.from(res[item.id].base64, 'base64'));
-            else {
-              item.error = `Редактор не отрисовал узел: ${res[item.id]?.error || 'нет ответа'}.`;
-              item.hint = hiddenHint(item.snapshot, item.id);
+          let done = 0;
+          for (const batch of renderBatches(missing)) {
+            let res;
+            try {
+              res = await editor.render(
+                group.fileKey,
+                batch.map((item) => ({ id: item.id, scale: item.scale, format: 'png' })),
+              );
+            } catch (err) {
+              /* Ничего не снято — обычный переход на REST. Снятое терять нельзя: оно уже в кэше. */
+              if (!done) throw err;
+              for (const item of missing.slice(done)) {
+                item.error = `Редактор отказал после ${done} из ${missing.length} узлов: ${err.message}`;
+                item.hint = 'Уже снятые узлы в ответе. Остальные запросите отдельным вызовом, по несколько кадров.';
+              }
+              return;
             }
+            for (const item of batch) {
+              if (res[item.id]?.base64) await writeFile(item.cached, Buffer.from(res[item.id].base64, 'base64'));
+              else {
+                item.error = `Редактор не отрисовал узел: ${res[item.id]?.error || 'нет ответа'}.`;
+                item.hint = hiddenHint(item.snapshot, item.id);
+              }
+            }
+            done += batch.length;
           }
         },
         async () => {

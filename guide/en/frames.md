@@ -8,7 +8,7 @@ ENTRY: phase 0 is closed, every link of the task is at hand.
 STEPS:
   1. figma_sync(every link in one call) — frame summary, path of each node, widths.suggested.
   2. For every id from the task — path: a frame or a child node? A child → its parent in figma_inspect.
-  3. figma_structure(canvas, depth: 1) + figma_export(kind: "render") — identify by eye; parts: "children" for tall frames.
+  3. figma_inspect(canvas, depth: 1) + figma_export(frames in batches of 4-7, kind: "render", compact: true) - identify by eye; parts: "children" for tall frames. Never render a whole canvas.
   4. Nodes with [clip] in the outline — what the parent cuts off: clipped in the figma_export answer.
   5. Table frame → width → what it is → build or not; show it to the human.
 
@@ -22,7 +22,7 @@ One call per file — after that the analysis reads the snapshot and never calls
 limit on Starter is ten requests a minute, and twenty a month on a View/Collab seat.
 
 The answer carries `path` for every frame (where it sits in the file) and, when two frames of
-different widths were pulled, `widths.suggested`: the widths for the runs of phases 10–12. Write
+different widths were pulled, `widths.suggested`: the widths for the runs of phases 9–11. Write
 them down: "there is no tablet design" does not mean "the tablet is not checked".
 
 A link without a node-id returns the list of pages and frames. More than a hundred frames on a
@@ -31,7 +31,7 @@ page — `page` and `offset` in `figma_sync`, not guessing neighbouring ids.
 ## 1.2 Identify the frames
 
 ```
-figma_structure(canvas, depth: 1)                          → what is on the canvas
+figma_inspect(canvas, depth: 1)                            → what lies on the canvas
 figma_export(kind: "render", scale: 0.5)                   → identify them by eye
 figma_export(tall frame, parts: "children")                → one part per top-level child frame
 ```
@@ -70,6 +70,10 @@ What to expect:
 A table: frame → width → what it is (a page, a state, a draft, reference material) → do we build
 it or not. As separate rows — nodes of which only a part is visible (`clipped`), and elements
 that are not in the frame but implied (header, footer, modals): where they were found.
+
+## 1.4 A large canvas
+
+A canvas of 11.5k nodes cannot be rendered whole: the operation misses its deadline, the editor tab closes and the channel is unavailable to all agents for a while. Canvas contents come from `figma_inspect(canvas, depth: 1)`, renders go frame by frame, in batches of 4-7. A client link may point at a Figma page rather than a frame: that is normal, and the map "site page, state, service" is drawn up here.
 
 ## Gate
 

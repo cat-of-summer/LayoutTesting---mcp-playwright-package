@@ -53,6 +53,13 @@ const HANDOFF = 'figma-login';
 const COOLDOWN_MS = 5 * 60 * 1000;
 
 /**
+ * Пауза после операции, не уложившейся в срок. Таймаут говорит о тяжести запроса, а не о поломке
+ * канала: вкладка уже закрыта, следующий вызов откроет файл заново. Пять минут простоя на всех
+ * агентов из-за одного тяжёлого рендера стоили дороже самого рендера.
+ */
+const TIMEOUT_COOLDOWN_MS = 30 * 1000;
+
+/**
  * Сколько помнить, что файл открыт только на просмотр или не открыт вовсе. Права выдаёт человек,
  * и через полчаса проверить снова дешевле, чем заставлять его звать figma_status с refresh.
  */
@@ -218,6 +225,9 @@ async function ensureSession() {
   return current;
 }
 
+/** Имя сохранённого входа, если он есть: плеер прототипа открывает закрытые файлы под ним. */
+export const savedEditorState = async () => ((await stateExists()) ? editorStateName() : null);
+
 /**
  * Годится ли канал прямо сейчас.
  *
@@ -248,6 +258,7 @@ async function fileUsable(fileKey, { copy: mayCopy = true } = {}) {
   const copy = await readCopy(fileKey);
   if (copy) {
     const entry = files.get(fileKey);
+    if (entry?.state === 'timeout') return !fresh(entry, TIMEOUT_COOLDOWN_MS);
     return !(entry?.state === 'error' && fresh(entry, COOLDOWN_MS));
   }
   if (accessProbe) {
@@ -259,6 +270,7 @@ async function fileUsable(fileKey, { copy: mayCopy = true } = {}) {
   if (!entry) return true;
   if (entry.state === 'view_only' && fresh(entry, ACCESS_TTL_MS)) return mayCopy ? obtainCopy(fileKey) : false;
   if (entry.state === 'view_only' || entry.state === 'no_access') return !fresh(entry, ACCESS_TTL_MS);
+  if (entry.state === 'timeout') return !fresh(entry, TIMEOUT_COOLDOWN_MS);
   if (entry.state === 'error') return !fresh(entry, COOLDOWN_MS);
   return true;
 }
@@ -842,8 +854,8 @@ async function inFile(fileKey, fn, arg) {
         await closeEditor('timeout');
         throw failFile(
           fileKey,
-          'error',
-          `Plugin API в редакторе не ответил за ${Math.round(FIGMA.editorJobMs / 1000)} с: вкладка закрыта, следующий вызов откроет файл заново.`,
+          'timeout',
+          `Plugin API в редакторе не ответил за ${Math.round(FIGMA.editorJobMs / 1000)} с: вкладка закрыта, канал снова доступен через ${TIMEOUT_COOLDOWN_MS / 1000} с. Запрос был слишком тяжёлым: дробите его на меньшие узлы.`,
         );
       }
       throw failFile(fileKey, 'error', `Plugin API в редакторе отказал: ${err.message}`);

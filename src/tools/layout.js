@@ -18,6 +18,7 @@ import { json, statesSchema, stepSchema, text } from './shared.js';
 import { inStates, inStatesAcrossWidths } from '../checks/states.js';
 import { interactionScope, layoutSignature, recordForms, recordInteraction, recordLayout } from '../checks/ready.js';
 import { auditForms } from '../checks/forms.js';
+import { auditSettled } from '../checks/settled.js';
 import { t } from '../i18n.js';
 
 export function register(server) {
@@ -50,9 +51,13 @@ export function register(server) {
           .array(z.string())
           .optional()
           .describe(d('Не считать controlOverlaps для этих блоков — намеренные наложения своего UI kit')),
+        settled: z
+          .boolean()
+          .optional()
+          .describe(d('Дойти до каждого контрола, дождаться конца анимаций и проверить, что сверху: перекрытые кнопки, блоки поверх шапки, кнопки ряда не на одной линии, текст не по центру')),
       },
     },
-    async ({ sessionId, minTarget, contrastRatio, maxItems, categories, include, exclude, widths, states, inkMargin, overlapIgnore }) => {
+    async ({ sessionId, minTarget, contrastRatio, maxItems, categories, include, exclude, widths, states, inkMargin, overlapIgnore, settled = false }) => {
       const session = getSession(sessionId);
       const options = {
         minTarget,
@@ -77,6 +82,7 @@ export function register(server) {
       if (!include?.length && !categories?.length) {
         recordLayout(url, result, layoutSignature(widths?.length ? widths : [session.page.viewportSize()?.width], states));
       }
+      if (settled) return json({ ...result, settled: await auditSettled(session.page, maxItems ? { maxItems } : {}) });
       return json(result);
     },
   );
