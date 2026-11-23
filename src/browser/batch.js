@@ -14,6 +14,7 @@ import { z } from 'zod';
 import { ACTIONS, perform, suggestAction } from './act.js';
 import { evaluateOnPage } from './evaluate.js';
 import { takeScreenshot } from '../checks/visual.js';
+import { isLiveSession } from './stabilize.js';
 import { newRunId, slug } from '../artifacts.js';
 import { downloadCommand, exportFile } from '../exports.js';
 
@@ -107,6 +108,7 @@ async function shoot(session, step, i, runId) {
     runId,
     name: `${slug(name)}__${slug(session.key)}`,
     fullPage: step.fullPage ?? false,
+    reveal: !isLiveSession(session) || step.fullPage === true,
     selector: step.selector,
     clip: step.clip,
     hide: step.hide,

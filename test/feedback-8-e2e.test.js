@@ -67,6 +67,28 @@ const PAGES = {
     <style>#m{position:relative;width:400px;height:200px}#t{position:absolute;top:60px;opacity:0;transition:top .5s linear,opacity .5s linear}#m.on #t{top:0;opacity:1}#j{position:absolute;top:100px}</style>
     <div id="m"><p id="t" style="margin:0">Первый абзац</p><p id="j" style="margin:0">Рывок</p></div><button id="go">Пуск</button>
     <script>go.onclick=()=>{m.classList.add('on');const s=performance.now();const f=()=>{const k=Math.min(1,(performance.now()-s)/500);j.style.top=(100-100*k)+'px';if(k<1)requestAnimationFrame(f)};requestAnimationFrame(f)}</script>`,
+  '/round.html': `${head}
+    <div style="position:relative;width:300px;height:200px;margin:40px">
+      <div id="decor" style="position:absolute;inset:0;background:#eee"></div>
+      <button id="free" style="position:absolute;left:20px;top:20px;width:48px;height:48px;border-radius:50%;border:0;background:#000"></button>
+      <button id="pill" style="position:absolute;left:90px;top:20px;width:160px;height:40px;border-radius:999px;border:0;background:#000"></button>
+      <button id="buried" style="position:absolute;left:20px;top:100px;width:48px;height:48px;border-radius:50%;border:0;background:#000"></button>
+      <div id="lid" style="position:absolute;left:14px;top:94px;width:60px;height:60px"></div>
+    </div>
+    <button id="float" style="position:fixed;right:20px;bottom:20px;width:56px;height:56px;border-radius:50%;border:0;background:#000;z-index:5"></button>
+    <div style="height:2000px;background:#ddd"></div>`,
+  '/trim.html': `${head}
+    <style>.b{display:flex;align-items:center;justify-content:center;width:220px;height:48px;padding:0;border:0;margin:8px;background:#000;color:#fff;font:700 24px/1 Arial}.t{display:block;text-box:trim-both cap alphabetic}</style>
+    <button id="lower" class="b"><span class="t">запись</span></button>
+    <button id="upper" class="b"><span class="t">ЗАПИСЬ</span></button>
+    <button id="plain" class="b">запись</button>
+    <button id="ex" class="b"><span style="display:block;text-box:trim-both ex alphabetic">запись</span></button>
+    <button id="shifted" class="b" style="padding-bottom:10px"><span class="t">запись</span></button>`,
+  '/scene.html': `${head}
+    <div style="height:1600px"></div><section id="s" style="height:300px"></section>
+    <img id="lazy" loading="lazy" width="10" height="10" src="/pixel.svg"><div style="height:600px"></div>
+    <script>window.started=0;window.maxY=0;addEventListener('scroll',()=>{maxY=Math.max(maxY,scrollY)});new IntersectionObserver((e)=>{if(e[0].isIntersecting)started+=1}).observe(document.getElementById('s'))</script>`,
+  '/pixel.svg': '<svg xmlns="http://www.w3.org/2000/svg" width="10" height="10"><rect width="10" height="10"/></svg>',
   '/warn.html': `${head}<p>Текст</p><script>console.warn('Swiper Loop Warning: The number of slides is not enough for loop mode')</script>`,
 };
 
@@ -101,7 +123,7 @@ test.before(async () => {
   motion = await import('../src/figma/motion.js');
   server = http.createServer((req, res) => {
     const body = PAGES[req.url.split('?')[0]];
-    res.writeHead(body ? 200 : 404, { 'Content-Type': 'text/html; charset=utf-8' });
+    res.writeHead(body ? 200 : 404, { 'Content-Type': req.url.endsWith('.svg') ? 'image/svg+xml' : 'text/html; charset=utf-8' });
     res.end(body ?? '');
   });
   await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
@@ -188,6 +210,121 @@ test('page_ready: перекрытая кнопка - блокер, поштуч
   assert.ok(!second.blockers?.some((item) => item.selector === '#under'), JSON.stringify(second.blockers));
   assert.ok(second.waived.some((item) => item.selector === '#under'));
   assert.deepEqual(second.unusedWaivers, [{ check: 'controlsCovered', selector: '#nope' }]);
+});
+
+test('круглая кнопка: фон в углах рамки - не перекрытие, настоящая крышка находится', options, async () => {
+  const report = await withPage('/round.html', (session) => settled.auditSettled(session.page));
+  const covered = report.controlsCovered.map((item) => item.selector);
+  assert.ok(!covered.includes('#free'), JSON.stringify(report.controlsCovered));
+  assert.ok(!covered.includes('#pill'), JSON.stringify(report.controlsCovered));
+  assert.ok(covered.includes('#buried'), JSON.stringify(report.controlsCovered));
+  assert.equal(report.controlsCovered.find((item) => item.selector === '#buried').by, '#lid');
+});
+
+test('круглая закреплённая кнопка: страница за её углами не лежит поверх неё', options, async () => {
+  const report = await withPage('/round.html', (session) => settled.auditSettled(session.page));
+  assert.deepEqual(report.overPinned.filter((item) => item.pinned === '#float'), []);
+});
+
+test('посадка текста: text-box-trim и строчные не считаются сдвигом, настоящий сдвиг виден', options, async () => {
+  const report = await withPage('/trim.html', (session) => settled.auditSettled(session.page));
+  const found = report.glyphOffset.map((item) => item.selector);
+  for (const id of ['#lower', '#upper', '#plain', '#ex']) assert.ok(!found.includes(id), `${id}: ${JSON.stringify(report.glyphOffset)}`);
+  const shifted = report.glyphOffset.find((item) => item.selector === '#shifted');
+  assert.ok(shifted && shifted.offset < -1, JSON.stringify(report.glyphOffset));
+  assert.match(shifted.trim, /trim-both cap alphabetic/);
+});
+
+test('живая сессия: переход не прокручивает страницу и не запускает сцены, картинки грузятся', options, async () => {
+  const session = await pool.createSession({ viewport: '800x600', animations: 'allow' });
+  try {
+    const navigation = await pool.gotoAndSettle(session, `${base}/scene.html`);
+    const state = await session.page.evaluate(() => ({ started: window.started, maxY: window.maxY, y: scrollY, image: document.getElementById('lazy').naturalWidth }));
+    assert.deepEqual(state, { started: 0, maxY: 0, y: 0, image: 10 });
+    assert.match(navigation.scrollNote, /не прокручивалась/);
+  } finally {
+    await pool.closeSession(session.id);
+  }
+});
+
+test('замороженная сессия и page_ready по-прежнему проявляют страницу целиком', options, async () => {
+  const frozen = await pool.createSession({ viewport: '800x600' });
+  try {
+    const navigation = await pool.gotoAndSettle(frozen, `${base}/scene.html`);
+    assert.ok((await frozen.page.evaluate(() => window.maxY)) > 0);
+    assert.equal(navigation.scrollNote, undefined);
+  } finally {
+    await pool.closeSession(frozen.id);
+  }
+  const live = await pool.createSession({ viewport: '800x600', animations: 'allow' });
+  try {
+    await ready.pageReady(live, { url: `${base}/scene.html`, run: 'all', widths: [800] });
+    assert.equal(live.revealOnGoto, true);
+    await pool.gotoAndSettle(live, `${base}/scene.html`);
+    assert.ok((await live.page.evaluate(() => window.maxY)) > 0);
+  } finally {
+    await pool.closeSession(live.id);
+  }
+});
+
+test('screenshot в живой сессии: видимая область без прокрутки, целиком только по просьбе', options, async () => {
+  const { createServer } = await import('../src/server.js');
+  const { Client } = await import('@modelcontextprotocol/sdk/client/index.js');
+  const { InMemoryTransport } = await import('@modelcontextprotocol/sdk/inMemory.js');
+  const [clientSide, serverSide] = InMemoryTransport.createLinkedPair();
+  const mcp = await createServer();
+  await mcp.connect(serverSide);
+  const client = new Client({ name: 'live-shot', version: '1' });
+  await client.connect(clientSide);
+  const call = async (name, args) => {
+    const res = await client.callTool({ name, arguments: args });
+    const body = res.content.find((item) => item.type === 'text')?.text ?? '';
+    if (res.isError) throw new Error(`${name}: ${body}`);
+    return JSON.parse(body);
+  };
+  const url = `${base}/scene.html`;
+  const scrolled = (sessionId) => pool.getSession(sessionId).page.evaluate(() => ({ started: window.started, maxY: window.maxY }));
+
+  const { sessionId: live } = await call('browser_open', { viewport: '800x600', animations: 'allow', url });
+  try {
+    const shot = await call('screenshot', { sessionId: live });
+    assert.equal(shot.height, 600);
+    assert.match(shot.scrollNote, /видимая область/);
+
+    const below = await call('screenshot', { sessionId: live, clip: { x: 0, y: 1500, width: 200, height: 200 } });
+    assert.match(below.scrollNote, /без прокрутки/);
+
+    await call('browser_act', { sessionId: live, steps: [{ action: 'screenshot', clip: { x: 0, y: 1500, width: 200, height: 200 } }] });
+    assert.equal((await scrolled(live)).maxY, 0, 'ни кадр, ни clip, ни шаг пакета страницу не прокрутили');
+
+    const visible = await call('screenshot', { sessionId: live, fullPage: false });
+    assert.equal(visible.scrollNote, undefined);
+
+    /* Проход по странице нужен только при блоках, скрытых до прокрутки. */
+    await pool.getSession(live).page.evaluate(() => {
+      document.getElementById('s').style.opacity = '0';
+    });
+    const whole = await call('screenshot', { sessionId: live, fullPage: true });
+    assert.ok(whole.height > 2000);
+    assert.match(whole.scrollNote, /могли запуститься/);
+    assert.ok((await scrolled(live)).maxY > 0);
+  } finally {
+    await call('browser_close', { sessionId: live });
+  }
+
+  const { sessionId: frozen } = await call('browser_open', { viewport: '800x600', url });
+  try {
+    const shot = await call('screenshot', { sessionId: frozen });
+    assert.ok(shot.height > 2000, 'замороженная сессия по-прежнему снимает страницу целиком');
+    assert.equal(shot.scrollNote, undefined);
+
+    /* Разовое оживление одной страницы в замороженной сессии считается живым. */
+    await call('browser_goto', { sessionId: frozen, url, animations: 'allow' });
+    assert.equal((await call('screenshot', { sessionId: frozen })).height, 600);
+  } finally {
+    await call('browser_close', { sessionId: frozen });
+    await client.close();
+  }
 });
 
 test('страница по кадрам: CSS-переход и анимация на rAF идут по управляемым часам', options, async () => {

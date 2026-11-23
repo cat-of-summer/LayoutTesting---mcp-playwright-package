@@ -87,6 +87,8 @@ So the second session — live, `animations: "allow"` — opens **right away** a
 That is where every hover, the intro animation (`browser_goto` with `frames`), the modals and
 `interaction_audit` are checked.
 
+The live session does not scroll the page on navigation: "reach it and it plays" scenes wait for a real scroll, and blocks below the first screen may stay hidden (`scrollNote` in the answer). `screenshot` in a live session captures the visible area, and an explicit `fullPage: true` scrolls the page and starts the scenes.
+
 Both sessions open with `keepAlive: true`. Without it a session closes after 15 minutes idle, and
 code gets written between checks — the mobile session closed between two comparisons, and
 `keepAlive` was learned from the error text.

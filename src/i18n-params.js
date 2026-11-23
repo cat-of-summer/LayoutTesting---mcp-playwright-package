@@ -279,8 +279,8 @@ const EN = {
   'Разбирать только эти блоки — шапка и подвал иначе набивают счётчики своими находками':
     'Inspect only these blocks — the header and the footer otherwise pad the counters with their own findings',
   'Не разбирать эти блоки': 'Skip these blocks',
-  'Страница целиком, а не видимая область. По умолчанию true':
-    'The whole page rather than the visible area. Default true',
+  'Страница целиком, а не видимая область. По умолчанию true, в живой сессии false':
+    'The whole page rather than the visible area. Default true, false in a live session',
   'Снять прямоугольник страницы в CSS-пикселях — когда подходящего элемента для selector нет':
     'Capture a rectangle of the page in CSS pixels — when there is no element a selector could target',
 

@@ -745,8 +745,11 @@ export async function gotoAndSettle(
   /* Запоминаем, как открыта текущая страница: layout_audit по этому признаку предупреждает, что
      движение на ней не проверялось. */
   session.motionFrozen = stabilizePage && killMotion;
+  /* Живая сессия не прокручивается: иначе переход сам запускает сцены по скроллу. Проверкам,
+     которым нужна страница целиком (page_ready), это включает session.revealOnGoto. */
+  const scroll = killMotion || Boolean(session.revealOnGoto);
   if (stabilizePage) {
-    ({ images, stubbed, revealed } = await stabilize(session.page, { pseudoLoc: session.profile.pseudoLoc, killMotion }));
+    ({ images, stubbed, revealed } = await stabilize(session.page, { pseudoLoc: session.profile.pseudoLoc, killMotion, scroll }));
   }
 
   // Патчи агента возвращаем последними: они должны перебивать и стили страницы,
@@ -813,6 +816,12 @@ export async function gotoAndSettle(
    * точечно именно потому, что ответ об этом молчал.
    */
   Object.assign(result, motionFacts(session, { revealed }));
+  if (stabilizePage && !scroll) {
+    result.scrollNote = t({
+      ru: 'Страница не прокручивалась: сцены по скроллу ещё не запущены, а блоки ниже первого экрана могут быть скрыты до прокрутки.',
+      en: 'The page was not scrolled: scroll scenes have not started yet, and blocks below the first screen may stay hidden until scrolled to.',
+    });
+  }
   if (timedOut) {
     result.navigationTimedOut = true;
     result.note = `Событие "${waitUntil}" не наступило за ${timeout} мс — проверки идут по тому, что отрисовано.`;

@@ -1,6 +1,7 @@
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import sharp from 'sharp';
+import { t } from '../i18n.js';
 import { compare as odiffCompare } from 'odiff-bin';
 import { CONFIG } from '../config.js';
 import { artifactRef, baselinePath, runDir, slug } from '../artifacts.js';
@@ -170,6 +171,35 @@ async function withHidden(page, selectors, report, fn) {
 }
 
 /**
+ * Что снимок сделал с живой страницей: об этом надо сказать в ответе.
+ *
+ * Без явного fullPage живая сессия снимает видимую область, и агент, ждавший страницу целиком,
+ * должен это видеть. Явный fullPage проходит по странице, если на ней есть скрытые до прокрутки
+ * блоки, и этим запускает сцены по скроллу.
+ */
+export function liveShotNote({ live, fullPage, selector, clip, viewportHeight }) {
+  if (!live || selector) return null;
+  if (fullPage === true) {
+    return t({
+      ru: 'Снята вся страница: блоки, скрытые до прокрутки, стенд проявляет проходом по ней, поэтому сцены по скроллу могли запуститься.',
+      en: 'The whole page was captured: the stand reveals blocks hidden until scrolled by walking the page, so scroll scenes may have started.',
+    });
+  }
+  if (clip) {
+    if (fullPage === false || clip.y + clip.height <= viewportHeight) return null;
+    return t({
+      ru: 'Область ниже первого экрана снята без прокрутки: блоки, появляющиеся по скроллу, могут быть скрыты. Проявить их - fullPage: true вместе с clip.',
+      en: 'The area below the first screen was captured without scrolling: blocks revealed on scroll may be hidden. To reveal them, pass fullPage: true with clip.',
+    });
+  }
+  if (fullPage === false) return null;
+  return t({
+    ru: 'Снята видимая область: живая сессия не прокручивает страницу, чтобы не запустить сцены. Вся страница - fullPage: true.',
+    en: 'The visible area was captured: a live session does not scroll the page, so scenes do not start. For the whole page pass fullPage: true.',
+  });
+}
+
+/**
  * Снимок страницы. Маска закрывает заведомо нестабильные зоны (часы, баннеры),
  * иначе они краснят каждый прогон визуальной регрессии.
  */
@@ -189,6 +219,8 @@ export async function takeScreenshot(page, {
   timeout = undefined,
   placeholders = true,
   placeholderSize = 1000,
+  /* false — не проходить по странице перед кадром: в живой сессии проход запускает сцены. */
+  reveal = true,
 } = {}) {
   const spec = FORMATS[format];
   if (!spec) throw new Error(`Неизвестный формат: ${format}. Доступны: ${Object.keys(FORMATS).join(', ')}.`);
@@ -211,7 +243,7 @@ export async function takeScreenshot(page, {
    * Поэтому обе поправки повторяем перед каждым кадром.
    */
   if (placeholders) await placeholderBrokenMedia(page, { size: placeholderSize });
-  if (fullPage && !selector && !clip) await revealAll(page);
+  if (reveal && fullPage && !selector && !clip) await revealAll(page);
 
   /*
    * clip задан в координатах страницы, а без fullPage Playwright меряет его от окна и молча
@@ -230,7 +262,7 @@ export async function takeScreenshot(page, {
     if (trimmed.trimmed) clipNote = `clip обрезан по размеру страницы ${doc.w}×${doc.h}: снято ${trimmed.clip.width}×${trimmed.clip.height} вместо ${clip.width}×${clip.height}.`;
     clip = trimmed.clip;
     /* Ниже первого экрана появляющиеся по прокрутке блоки ещё не проявлены. */
-    if (clip.y + clip.height > doc.viewH) await revealAll(page);
+    if (reveal && clip.y + clip.height > doc.viewH) await revealAll(page);
   }
 
   // Снимаем в буфер, а не сразу в файл: перекодировать и уменьшить всё равно нужно

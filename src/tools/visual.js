@@ -12,7 +12,9 @@ import { DIRS, BROWSERS } from '../config.js';
 import { newRunId, publicUrl, slug } from '../artifacts.js';
 import { createSession, closeSession, getSession, gotoAndSettle, summarizeFailures } from '../browser/pool.js';
 import { profileKey } from '../browser/profile.js';
+import { isLiveSession } from '../browser/stabilize.js';
 import {
+  liveShotNote,
   takeScreenshot,
   compareWithBaseline,
   inlineImage,
@@ -34,13 +36,13 @@ export function register(server) {
     {
       title: t({ ru: 'Скриншот', en: "Screenshot" }),
       description: t({
-        ru: "Снимок страницы или элемента. По умолчанию снимается страница целиком, а не видимая область: на длинной странице это кадр в тысячи точек, и для разбора обычно нужен selector или clip. Возвращает адрес артефакта (path — внутри контейнера, с хоста — download или saveTo). Картинку вкладывает только при inline: true; tiles: true — кусками в натуральную величину. Если часть ресурсов не загрузилась, в ответе будет warnings — снимок тогда неполный.",
-        en: "A screenshot of the page or of one element. By default the whole page is captured rather than the visible area: on a long page that is a frame thousands of pixels tall, so a selector or a clip is usually what you want. Returns the artifact address (path is inside the container; from the host use download or saveTo). The image is embedded only with inline: true; tiles: true embeds it in full-size pieces. If some resources failed to load the response carries warnings — the shot is incomplete then.",
+        ru: "Снимок страницы или элемента. По умолчанию снимается страница целиком, а в живой сессии (animations: \"allow\") - видимая область: прокрутка запустила бы сцены по скроллу. На длинной странице полный кадр - это тысячи точек, и для разбора обычно нужен selector или clip. Возвращает адрес артефакта (path — внутри контейнера, с хоста — download или saveTo). Картинку вкладывает только при inline: true; tiles: true — кусками в натуральную величину. Если часть ресурсов не загрузилась, в ответе будет warnings — снимок тогда неполный.",
+        en: "A screenshot of the page or of one element. By default the whole page is captured, and in a live session (animations: \"allow\") the visible area: scrolling would start scroll scenes. On a long page a full frame is thousands of pixels tall, so a selector or a clip is usually what you want. Returns the artifact address (path is inside the container; from the host use download or saveTo). The image is embedded only with inline: true; tiles: true embeds it in full-size pieces. If some resources failed to load the response carries warnings — the shot is incomplete then.",
       }),
       inputSchema: {
         sessionId: z.string(),
         name: z.string().optional(),
-        fullPage: z.boolean().optional().describe(d('Страница целиком, а не видимая область. По умолчанию true')),
+        fullPage: z.boolean().optional().describe(d('Страница целиком, а не видимая область. По умолчанию true, в живой сессии false')),
         selector: z.string().optional().describe(d('Снять только этот элемент')),
         clip: z
           .object({ x: z.number(), y: z.number(), width: z.number(), height: z.number() })
@@ -72,7 +74,7 @@ export function register(server) {
     async ({
       sessionId,
       name = 'screenshot',
-      fullPage = true,
+      fullPage,
       selector,
       clip,
       mask,
@@ -87,10 +89,14 @@ export function register(server) {
       runId,
     }) => {
       const session = getSession(sessionId);
+      /* В живой сессии страницу прокручивают только по явной просьбе: проход запускает сцены. */
+      const live = isLiveSession(session);
+      const scrollNote = liveShotNote({ live, fullPage, selector, clip, viewportHeight: session.page.viewportSize()?.height ?? 0 });
       const shot = await takeScreenshot(session.page, {
         runId: runId || newRunId(slug(name)),
         name: `${slug(name)}__${slug(session.key)}`,
-        fullPage,
+        fullPage: fullPage ?? !live,
+        reveal: !live || fullPage === true,
         selector,
         clip,
         mask,
@@ -111,7 +117,7 @@ export function register(server) {
        */
       const failures = summarizeFailures(session.logs.network.slice(session.logMarks?.network || 0));
       /* path — путь в контейнере стенда, с хоста он не открывается; download — готовая команда. */
-      const payload = { ...shot, ...(shot.url ? { download: downloadCommand(shot.url) } : {}), ...(failures ? { warnings: failures } : {}) };
+      const payload = { ...shot, ...(shot.url ? { download: downloadCommand(shot.url) } : {}), ...(failures ? { warnings: failures } : {}), ...(scrollNote ? { scrollNote } : {}) };
       if (saveTo) payload.savedTo = await exportFile(shot.path, saveTo, { url: shot.url });
 
       /* Куски заменяют уменьшенную картинку: вкладывать то же самое дважды незачем. */

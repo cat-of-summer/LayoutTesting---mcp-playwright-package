@@ -299,6 +299,8 @@ export async function pageReady(session, { url, frames = [], widths, states, max
   const reuse = (entry) => run !== 'all' && fresh(entry, maxAgeMin);
   const book = waiverBook(waivers);
   const logStart = session.logs.console.length;
+  /* Сессия живая, но проверкам нужна страница целиком, с проявленными блоками ниже экрана. */
+  session.revealOnGoto = true;
 
   /* Начальное состояние — на нетронутой странице: стабилизация уже прокручивает её. */
   let initial = pageRuns(url)?.initial;

@@ -148,20 +148,43 @@ async function collectSettled({ maxControls, maxItems, glyphPx, rowPx }, quiet) 
     const mine = el.closest('a, button');
     return Boolean(mine && mine === hit.closest('a, button'));
   };
+  /*
+   * Лежит ли точка на самом элементе. Углы рамки круглой кнопки — уже не кнопка: там виден фон под
+   * ней, и он выглядел как перекрытие. Браузер учитывает скругление и clip-path при поиске по точке,
+   * поэтому элемента нет в стопке — значит, точка мимо его формы, и перекрывать там нечего.
+   */
+  const onShape = (el, stack) => stack.some((node) => node === el || el.contains(node));
+  /* Отступ точки от угла рамки так, чтобы она попала внутрь скругления. */
+  const cornerInsets = (el) => {
+    const rect = el.getBoundingClientRect();
+    const style = getComputedStyle(el);
+    const read = (name) => {
+      const [h, v = h] = style[`border${name}Radius`].split(' ');
+      const px = (value, size) => (value.endsWith('%') ? (parseFloat(value) / 100) * size : parseFloat(value) || 0);
+      return { x: px(h, rect.width), y: px(v, rect.height) };
+    };
+    const [tl, tr, bl, br] = ['TopLeft', 'TopRight', 'BottomLeft', 'BottomRight'].map(read);
+    /* Браузер ужимает радиусы, которые не помещаются: 999px у пилюли — это половина её высоты. */
+    const fit = (size, a, b) => (a + b > 0 ? size / (a + b) : 1);
+    const scale = Math.min(1, fit(rect.width, tl.x, tr.x), fit(rect.width, bl.x, br.x), fit(rect.height, tl.y, bl.y), fit(rect.height, tr.y, br.y));
+    return [tl, tr, bl, br].map((radius) => ({ x: radius.x * scale * 0.35 + 1, y: radius.y * scale * 0.35 + 1 }));
+  };
   const coveredBy = (el) => {
     const box = visibleRect(el);
     if (!box) return null;
     const inset = Math.min(6, (box.right - box.left) * 0.2, (box.bottom - box.top) * 0.2);
     const center = [(box.left + box.right) / 2, (box.top + box.bottom) / 2];
+    const [tl, tr, bl, br] = cornerInsets(el).map((corner) => ({ x: Math.max(inset, corner.x), y: Math.max(inset, corner.y) }));
     const corners = [
-      [box.left + inset, box.top + inset],
-      [box.right - inset, box.top + inset],
-      [box.left + inset, box.bottom - inset],
-      [box.right - inset, box.bottom - inset],
+      [box.left + tl.x, box.top + tl.y],
+      [box.right - tr.x, box.top + tr.y],
+      [box.left + bl.x, box.bottom - bl.y],
+      [box.right - br.x, box.bottom - br.y],
     ];
     const foreign = ([x, y]) => {
-      const hit = document.elementFromPoint(x, y);
-      if (!hit || own(el, hit)) return null;
+      const stack = document.elementsFromPoint(x, y);
+      const hit = stack[0];
+      if (!hit || own(el, hit) || !onShape(el, stack)) return null;
       /* Закреплённый слой уедет при прокрутке: его перекрытие считает отдельный проход. */
       if (pinnedOf(hit) && pinnedOf(hit) !== pinnedOf(el)) return null;
       return hit;
@@ -234,8 +257,9 @@ async function collectSettled({ maxControls, maxItems, glyphPx, rowPx }, quiet) 
           for (let row = 1; row <= 3; row += 1) {
             const x = box.left + ((box.right - box.left) * col) / 6;
             const y = box.top + ((box.bottom - box.top) * row) / 4;
-            const hit = document.elementFromPoint(x, y);
-            if (!hit || el.contains(hit) || hit.contains(el) || pinnedOf(hit)) continue;
+            const stack = document.elementsFromPoint(x, y);
+            const hit = stack[0];
+            if (!hit || el.contains(hit) || hit.contains(el) || pinnedOf(hit) || !onShape(el, stack)) continue;
             counts.set(hit, (counts.get(hit) || 0) + 1);
           }
         }
@@ -344,14 +368,43 @@ async function collectSettled({ maxControls, maxItems, glyphPx, rowPx }, quiet) 
     const rects = Array.from(range.getClientRects()).filter((item) => item.width && item.height);
     if (!rects.length || new Set(rects.map((item) => Math.round(item.top))).size !== 1) continue;
     context.font = `${ownerStyle.fontStyle} ${ownerStyle.fontWeight} ${ownerStyle.fontSize} ${ownerStyle.fontFamily}`;
-    const metrics = context.measureText(transformed(nodes[0].nodeValue.trim(), ownerStyle));
-    if (!metrics.actualBoundingBoxAscent) continue;
-    /* Хвосты букв не в счёт: глаз центрирует строку по высоте заглавных, а не по «у» и «р». */
+    const shownText = transformed(nodes[0].nodeValue.trim(), ownerStyle);
+    const metrics = context.measureText(shownText);
+    const cyrillic = /[а-яё]/i.test(shownText);
+    const cap = context.measureText(cyrillic ? 'Н' : 'H').actualBoundingBoxAscent;
+    const ex = context.measureText(cyrillic ? 'х' : 'x').actualBoundingBoxAscent;
+    if (!cap) continue;
+    /*
+     * Центрируется не чернила этой строки, а высота шрифта: у "запись" и "ЗАПИСЬ" в одной кнопке
+     * базовая линия одна, хотя строчные ниже. Поэтому опора — от базовой линии до высоты заглавных.
+     * С text-box-trim опору назвал сам автор: коробка текста обрезана по его краям, и сверять надо
+     * её центр, иначе правильно обрезанный текст строчными выглядит съехавшим.
+     */
+    let over = cap;
+    let under = 0;
+    let trimmed = null;
+    for (let node = owner; node && el.contains(node); node = node.parentElement) {
+      const box = getComputedStyle(node);
+      if (!box.textBoxTrim || box.textBoxTrim === 'none') continue;
+      const [overEdge, underEdge = 'text'] = (box.textBoxEdge === 'auto' ? 'text' : box.textBoxEdge).split(/\s+/);
+      const edgeOver = overEdge === 'cap' ? cap : overEdge === 'ex' ? ex : metrics.fontBoundingBoxAscent;
+      const edgeUnder = underEdge === 'alphabetic' ? 0 : metrics.fontBoundingBoxDescent;
+      over = box.textBoxTrim === 'trim-end' ? metrics.fontBoundingBoxAscent : edgeOver;
+      under = box.textBoxTrim === 'trim-start' ? metrics.fontBoundingBoxDescent : edgeUnder;
+      trimmed = `${box.textBoxTrim} ${box.textBoxEdge}`;
+      break;
+    }
     const baseline = rects[0].top + metrics.fontBoundingBoxAscent;
-    const inkCenter = baseline - metrics.actualBoundingBoxAscent / 2;
+    const inkCenter = baseline + (under - over) / 2;
     const offset = Math.round((inkCenter - (rect.top + rect.height / 2)) * 10) / 10;
     if (Math.abs(offset) <= glyphPx) continue;
-    glyphOffset.push({ selector: cssPath(el), text: label(el), offset, font: ownerStyle.fontFamily.split(',')[0].replace(/["']/g, '') });
+    glyphOffset.push({
+      selector: cssPath(el),
+      text: label(el),
+      offset,
+      font: ownerStyle.fontFamily.split(',')[0].replace(/["']/g, ''),
+      ...(trimmed ? { trim: trimmed } : {}),
+    });
   }
 
   return {

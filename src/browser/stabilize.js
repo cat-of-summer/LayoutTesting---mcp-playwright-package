@@ -124,6 +124,16 @@ export async function applyThrottle(page, profile) {
   return true;
 }
 
+/**
+ * Живая ли страница в сессии: движение на ней не заморожено.
+ *
+ * Смотреть надо на последний переход, а не только на условие сессии: browser_goto с
+ * animations: "allow" оживляет одну страницу в замороженной сессии. До первого перехода
+ * остаётся условие самой сессии.
+ */
+export const isLiveSession = (session) =>
+  session.motionFrozen === undefined ? session.profile?.animations === 'allow' : !session.motionFrozen;
+
 export async function stabilize(
   page,
   {
@@ -134,10 +144,16 @@ export async function stabilize(
      * По умолчанию да: без этого визуальная регрессия краснеет на каждом прогоне. Но
      * проверить саму анимацию в такой странице нельзя — через сто миллисекунд элемент уже
      * в конечном состоянии, и transitionDuration в вычисленных стилях сведён к нулю.
-     * Остальная стабилизация при killMotion: false остаётся: она про полноту кадра
-     * (шрифты, ленивые картинки, блоки по прокрутке), а не про движение.
+     * Шрифты и ленивые картинки при killMotion: false догружаются всё равно: это полнота кадра.
      */
     killMotion = true,
+    /**
+     * Прокручивать ли страницу, чтобы проявить блоки по скроллу.
+     *
+     * В живой сессии — нет: проход по странице сам запускает сцены "дошёл - играет", и к первому
+     * взгляду агента они уже доиграли. Смотреть такую анимацию было не на чем.
+     */
+    scroll = killMotion,
     waitFonts = true,
     settleMs = 150,
     imagesTimeoutMs = 5000,
@@ -166,9 +182,9 @@ export async function stabilize(
       .catch(() => {});
   }
 
-  const images = await loadLazyImages(page, imagesTimeoutMs);
+  const images = await loadLazyImages(page, imagesTimeoutMs, { scroll });
   const stubbed = placeholders ? await placeholderBrokenMedia(page, { size: placeholderSize }) : null;
-  const revealed = await revealAll(page);
+  const revealed = scroll ? await revealAll(page) : null;
 
   if (settleMs) await page.waitForTimeout(settleMs);
 
@@ -335,10 +351,13 @@ export async function revealAll(page, { initDelayMs = 200, maxCandidates = 3000 
  *
  * Возвращает сводку: сколько не доехало и сколько битых — молча пустой кадр хуже,
  * чем кадр с честной пометкой.
+ *
+ * scroll: false — только снять ленивость: так картинки грузятся, а страница остаётся на месте.
+ * Картинки, которым src подставляет наблюдатель, тогда дождутся настоящей прокрутки.
  */
-export async function loadLazyImages(page, timeoutMs = 5000) {
+export async function loadLazyImages(page, timeoutMs = 5000, { scroll = true } = {}) {
   return page
-    .evaluate(async (timeout) => {
+    .evaluate(async ({ timeout, scrollPage }) => {
       const imgs = Array.from(document.images);
 
       for (const img of imgs) {
@@ -350,13 +369,15 @@ export async function loadLazyImages(page, timeoutMs = 5000) {
 
       // Прокрутка нужна и после снятия loading: часть скриптов подставляет настоящий
       // src по IntersectionObserver, и без появления в кадре он не подставится.
-      const startY = window.scrollY;
-      const step = Math.max(200, window.innerHeight);
-      for (let y = 0; y < document.documentElement.scrollHeight; y += step) {
-        window.scrollTo(0, y);
-        await new Promise((r) => requestAnimationFrame(r));
+      if (scrollPage) {
+        const startY = window.scrollY;
+        const step = Math.max(200, window.innerHeight);
+        for (let y = 0; y < document.documentElement.scrollHeight; y += step) {
+          window.scrollTo(0, y);
+          await new Promise((r) => requestAnimationFrame(r));
+        }
+        window.scrollTo(0, startY);
       }
-      window.scrollTo(0, startY);
 
       const pending = imgs.filter((i) => !i.complete);
       await Promise.all(
@@ -372,6 +393,6 @@ export async function loadLazyImages(page, timeoutMs = 5000) {
 
       const broken = imgs.filter((i) => i.complete && i.naturalWidth === 0).length;
       return { total: imgs.length, stillPending: imgs.filter((i) => !i.complete).length, broken };
-    }, timeoutMs)
+    }, { timeout: timeoutMs, scrollPage: scroll })
     .catch(() => null);
 }
